@@ -358,6 +358,12 @@ sudo usermod -aG dialout $USER
 ├── config.json                     # 設定ファイル（オプション、なければデフォルト値）
 ├── logs/                           # 月次ログファイル（自動生成）
 │   └── service-YYYY-MM.log
+├── templates/                      # Brother P-touch ラベルテンプレート (.lbx)
+│   └── siknue/                     # 信濃エリア用テンプレート
+├── deploy/
+│   ├── setup.sh                    # Pi ワンライナーセットアップスクリプト
+│   └── avahi/
+│       └── raku-sika-hub.service   # mDNS サービス定義（raku-sika-hub.local）
 └── internal/
     ├── app/
     │   └── app.go                  # App コンテナ。全コンポーネントの統合
@@ -383,38 +389,73 @@ sudo usermod -aG dialout $USER
 
 ## Raspberry Pi デプロイ
 
-### systemd サービス登録
-
-```ini
-# /etc/systemd/system/raku-sika-hub.service
-[Unit]
-Description=RakuSika Hub - Scale & Printer Gateway
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/raku-sika-hub
-ExecStart=/home/pi/raku-sika-hub/raku-sika-hub
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+### ワンライナーセットアップ
 
 ```bash
-sudo cp raku-sika-hub.service /etc/systemd/system/
+git clone https://github.com/deervery/raku-sika-hub.git
+cd raku-sika-hub
+# Go ビルド（Pi上）or 開発PCからクロスコンパイルしてバイナリを配置
+go build -o raku-sika-hub .
+
+# hostname, avahi(mDNS), dialout, systemd を一括設定
+sudo bash deploy/setup.sh
+```
+
+これにより:
+- ホスト名が `raku-sika-hub` に変更される
+- **`raku-sika-hub.local`** で LAN 内から名前解決可能になる（avahi/mDNS）
+- シリアルポートのパーミッション設定（dialout グループ）
+- systemd サービスが登録・有効化される
+
+```bash
+# サービス起動
+sudo systemctl start raku-sika-hub
+
+# 動作確認（LAN 内の別マシンから）
+curl http://raku-sika-hub.local:19800/
+
+# ログ確認
+journalctl -u raku-sika-hub -f
+tail -f logs/service-*.log
+```
+
+### 手動セットアップ
+
+<details>
+<summary>deploy/setup.sh を使わない場合</summary>
+
+#### ホスト名 & mDNS 設定
+
+```bash
+# ホスト名変更
+sudo hostnamectl set-hostname raku-sika-hub
+sudo sed -i 's/127\.0\.1\.1.*$/127.0.1.1\traku-sika-hub/' /etc/hosts
+
+# avahi サービス定義を配置
+sudo cp deploy/avahi/raku-sika-hub.service /etc/avahi/services/
+sudo systemctl restart avahi-daemon
+
+# 確認（別マシンから）
+ping raku-sika-hub.local
+```
+
+#### systemd サービス登録
+
+```bash
+sudo cp deploy/raku-sika-hub.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable raku-sika-hub
 sudo systemctl start raku-sika-hub
-
-# ログ確認
-sudo journalctl -u raku-sika-hub -f
-
-# アプリケーションログ
-tail -f /home/pi/raku-sika-hub/logs/service-*.log
 ```
+
+#### シリアルポートパーミッション
+
+```bash
+sudo usermod -aG dialout $USER
+# 再ログイン必要
+```
+
+</details>
 
 ### Brother QL-800/QL-820 プリンタセットアップ（未検証）
 
@@ -427,19 +468,15 @@ sudo usermod -aG lpadmin pi
 pip3 install brother_ql
 ```
 
-### シリアルポートパーミッション
-
-```bash
-sudo usermod -aG dialout pi
-# 再ログイン必要
-```
-
 ## lite 側の接続設定
 
 `raku-sika-lite` の `lib/hooks/useScale.tsx`（19行目付近）で WebSocket URL を変更:
 
 ```typescript
-// Raspberry Pi に接続する場合
+// mDNS で名前解決（推奨）
+const SCALE_WS_URL = 'ws://raku-sika-hub.local:19800';
+
+// または IP 直指定
 const SCALE_WS_URL = 'ws://192.168.x.x:19800';
 ```
 

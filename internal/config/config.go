@@ -10,18 +10,21 @@ import (
 
 // Config holds the application configuration loaded from config.json.
 type Config struct {
-	VID         string `json:"vid"`
-	PID         string `json:"pid"`
-	Port        string `json:"port"`
-	BaudRate    int    `json:"baudRate"`
-	DataBits    int    `json:"dataBits"`
-	Parity      string `json:"parity"`
-	StopBits    int    `json:"stopBits"`
-	PrinterName string `json:"printerName"`
-	FontPath    string `json:"fontPath"`
-	MaxClients  int    `json:"maxClients"`
-	ListenAddr  string `json:"listenAddr"`
-	LogLevel    string `json:"logLevel"`
+	VID             string   `json:"vid"`
+	PID             string   `json:"pid"`
+	Port            string   `json:"port"`
+	BaudRate        int      `json:"baudRate"`
+	DataBits        int      `json:"dataBits"`
+	Parity          string   `json:"parity"`
+	StopBits        int      `json:"stopBits"`
+	PrinterName     string   `json:"printerName"`
+	FontPath        string   `json:"fontPath"`
+	MaxClients      int      `json:"maxClients"`
+	ListenAddr      string   `json:"listenAddr"`
+	LogLevel        string   `json:"logLevel"`
+	ScaleDriver     string   `json:"scaleDriver"`
+	AllowAllOrigins bool     `json:"allowAllOrigins"`
+	AllowedOrigins  []string `json:"allowedOrigins"`
 }
 
 // Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
@@ -38,6 +41,15 @@ func Default() Config {
 		MaxClients:  1,
 		ListenAddr:  "0.0.0.0:19800",
 		LogLevel:    "INFO",
+		ScaleDriver: strings.TrimSpace(os.Getenv("SCALE_DRIVER")),
+		AllowedOrigins: []string{
+			"localhost:*",
+			"127.0.0.1:*",
+			"192.168.50.*",
+			"preview.rakusika.com",
+			"rakusika.com",
+			"*.rakusika.com",
+		},
 	}
 }
 
@@ -95,6 +107,17 @@ func applyEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("LOG_LEVEL")); v != "" {
 		cfg.LogLevel = v
 	}
+	if v := strings.TrimSpace(os.Getenv("SCALE_DRIVER")); v != "" {
+		cfg.ScaleDriver = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); v != "" {
+		cfg.AllowedOrigins = splitCSV(v)
+	}
+	if v := strings.TrimSpace(os.Getenv("ALLOW_ALL_ORIGINS")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.AllowAllOrigins = b
+		}
+	}
 	if v := strings.TrimSpace(os.Getenv("BAUD_RATE")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.BaudRate = n
@@ -115,4 +138,17 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.MaxClients = n
 		}
 	}
+}
+
+func splitCSV(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
 }

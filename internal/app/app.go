@@ -42,7 +42,7 @@ func New(cfg config.Config) (*App, error) {
 
 	prn := printer.NewBrother(cfg.PrinterName, cfg.FontPath, logger)
 	handler := ws.NewHandler(scaleClient, prn, hub, logger)
-	wsServer := ws.NewServer(hub, handler, logger, cfg.ListenAddr, cfg.MaxClients)
+	wsServer := ws.NewServer(hub, handler, logger, cfg.ListenAddr, cfg.MaxClients, cfg.AllowedOrigins, cfg.AllowAllOrigins)
 
 	return &App{
 		cfg:         cfg,
@@ -57,7 +57,21 @@ func New(cfg config.Config) (*App, error) {
 
 // Run starts the application and blocks until the context is cancelled.
 func (a *App) Run(ctx context.Context) error {
-	a.logger.Info("starting raku-sika-hub (listen=%s, maxClients=%d)", a.cfg.ListenAddr, a.cfg.MaxClients)
+	printerName := a.cfg.PrinterName
+	if printerName == "" {
+		printerName = "(cups fallback)"
+	}
+	scaleDriver := a.cfg.ScaleDriver
+	if scaleDriver == "" {
+		scaleDriver = "auto"
+	}
+	a.logger.Info(
+		"starting raku-sika-hub (listen=%s, printer=%s, maxClients=%d, scaleDriver=%s)",
+		a.cfg.ListenAddr,
+		printerName,
+		a.cfg.MaxClients,
+		scaleDriver,
+	)
 
 	a.scaleClient.Start(ctx)
 

@@ -109,7 +109,9 @@ cat > config.json << 'EOF'
   "printerName": "Brother_QL-820NWB",
   "maxClients": 1,
   "listenAddr": "0.0.0.0:19800",
-  "logLevel": "INFO"
+  "logLevel": "INFO",
+  "scaleDriver": "mock",
+  "allowedOrigins": ["localhost:*", "127.0.0.1:*", "192.168.50.*"]
 }
 EOF
 ./raku-sika-hub
@@ -117,6 +119,7 @@ EOF
 
 `PRINTER_NAME` 環境変数を設定した場合は、`config.json` の `printerName` より優先される。
 `printerName` / `PRINTER_NAME` を未指定にすると、hub は起動時と印刷時に CUPS の default destination を参照し、未設定なら `lpstat -p` の先頭プリンタへフォールバックする。
+`MAX_CLIENTS`, `SCALE_DRIVER`, `ALLOWED_ORIGINS`, `ALLOW_ALL_ORIGINS` も環境変数で上書きできる。
 
 ### ポートを明示指定する場合
 
@@ -144,6 +147,9 @@ EOF
 | `maxClients` | `1` | WebSocket 同時接続数上限（v1: 1台） |
 | `listenAddr` | `"0.0.0.0:19800"` | WebSocket サーバーのリッスンアドレス |
 | `logLevel` | `"INFO"` | ログレベル（`ERROR` / `WARN` / `INFO`） |
+| `scaleDriver` | `""` | 起動ログに出すスケールドライバモード。systemd では `mock` / `real` 等を設定可能 |
+| `allowedOrigins` | `["localhost:*", "127.0.0.1:*", "192.168.50.*", ...]` | 開発時に許可する WebSocket Origin パターン |
+| `allowAllOrigins` | `false` | `true` で WebSocket Origin 制限を無効化 |
 
 ## WebSocket API（WSA 互換）
 
@@ -151,22 +157,29 @@ EOF
 
 ```
 ws://raku-sika-hub.local:19800
+ws://192.168.50.40:19800
 ```
 
 接続直後にサーバーから `connection_status` メッセージが自動送信される。
 スケールの接続状態が変化した場合も、全クライアントにブロードキャストされる。
 
+HTTP ヘルスチェックは同じ 19800 番ポートの `GET /health` で受ける。`/` は WebSocket Upgrade 用で、通常の `curl /` には 426 が返る。
+
 ### CORS
 
 以下のオリジンからの接続を許可:
 - `localhost:*` / `127.0.0.1:*`
+- `192.168.50.*`
 - `rakusika.com` / `*.rakusika.com`
 - `preview.rakusika.com`
 
+必要なら `ALLOW_ALL_ORIGINS=true` で開発中だけ無効化できる。
+
 ### 接続制限（v1: 単一クライアント）
 
-v1 は単一クライアント接続のみ対応（`maxClients: 1`）。
-2台目以降の接続は HTTP 429 で拒否される:
+v1 の推奨デフォルトは単一クライアント接続（`maxClients: 1`）。
+制限は WebSocket Upgrade リクエストのみに適用される。HTTP `GET /health` は 429 にならない。
+2台目以降の WebSocket 接続は HTTP 429 で拒否される:
 ```
 Too Many Connections: 既に別のクライアントが接続中です。既存の接続を切断してから再試行してください。
 ```
@@ -363,7 +376,8 @@ raku-sika-hub running (press Ctrl+C to stop)
 ログファイル (`logs/service-YYYY-MM.log`):
 ```
 [INFO] starting raku-sika-hub (listen=0.0.0.0:19800, maxClients=1)
-[INFO] WebSocket server starting on 0.0.0.0:19800 (max clients: 1)
+[INFO] starting raku-sika-hub (listen=0.0.0.0:19800, printer=Brother_QL-820NWB, maxClients=1, scaleDriver=mock)
+[INFO] WebSocket server starting on 0.0.0.0:19800 (max clients: 1, allowAllOrigins=false, allowedOrigins=[localhost:* 127.0.0.1:* 192.168.50.* preview.rakusika.com rakusika.com *.rakusika.com])
 [INFO] port detect: FTDI_NOT_FOUND: デバイスが見つかりません (VID:0403 PID:6015)
 ```
 → 3秒ごとに port detect ログ、クラッシュしない
@@ -493,6 +507,9 @@ sudo systemctl start raku-sika-hub
 # 動作確認（LAN 内の別マシンから）
 curl http://raku-sika-hub.local:19800/health
 
+# WebSocket 接続確認
+wscat -c ws://192.168.50.40:19800
+
 # ログ確認
 journalctl -u raku-sika-hub -f
 tail -f logs/service-*.log
@@ -547,6 +564,8 @@ sudo usermod -aG lpadmin rakusika
 sudo systemctl edit raku-sika-hub
 # [Service]
 # Environment=PRINTER_NAME=Brother_QL-820NWB
+# Environment=MAX_CLIENTS=3
+# Environment=SCALE_DRIVER=mock
 
 # または brother_ql (Python)
 pip3 install brother_ql

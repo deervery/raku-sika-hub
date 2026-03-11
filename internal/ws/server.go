@@ -85,22 +85,26 @@ func (c *WSClient) Send(msg any) {
 
 // Server is the WebSocket HTTP server.
 type Server struct {
-	hub        *Hub
-	handler    *Handler
-	httpSrv    *http.Server
-	logger     *logging.Logger
-	listenAddr string
-	maxClients int
+	hub             *Hub
+	handler         *Handler
+	httpSrv         *http.Server
+	logger          *logging.Logger
+	listenAddr      string
+	maxClients      int
+	originPatterns  []string
+	allowAllOrigins bool
 }
 
 // NewServer creates a new WebSocket Server.
-func NewServer(hub *Hub, handler *Handler, logger *logging.Logger, listenAddr string, maxClients int) *Server {
+func NewServer(hub *Hub, handler *Handler, logger *logging.Logger, listenAddr string, maxClients int, originPatterns []string, allowAllOrigins bool) *Server {
 	return &Server{
-		hub:        hub,
-		handler:    handler,
-		logger:     logger,
-		listenAddr: listenAddr,
-		maxClients: maxClients,
+		hub:             hub,
+		handler:         handler,
+		logger:          logger,
+		listenAddr:      listenAddr,
+		maxClients:      maxClients,
+		originPatterns:  originPatterns,
+		allowAllOrigins: allowAllOrigins,
 	}
 }
 
@@ -118,7 +122,13 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 	}
 
-	s.logger.Info("WebSocket server starting on %s (max clients: %d)", s.listenAddr, s.maxClients)
+	s.logger.Info(
+		"WebSocket server starting on %s (max clients: %d, allowAllOrigins=%t, allowedOrigins=%v)",
+		s.listenAddr,
+		s.maxClients,
+		s.allowAllOrigins,
+		s.originPatterns,
+	)
 	err := s.httpSrv.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("http listen: %w", err)
@@ -158,15 +168,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{
-			"localhost:*",
-			"127.0.0.1:*",
-			"preview.rakusika.com",
-			"rakusika.com",
-			"*.rakusika.com",
-		},
-	})
+	acceptOptions := &websocket.AcceptOptions{}
+	if !s.allowAllOrigins {
+		acceptOptions.OriginPatterns = s.originPatterns
+	}
+
+	conn, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
 		s.logger.Warn("ws accept: %v (remote=%s)", err, r.RemoteAddr)
 		return

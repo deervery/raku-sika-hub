@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Brother QL-800/QL-820 printer setup for Raspberry Pi
+# Brother QL-820 printer setup for Raspberry Pi
 # Run as: sudo bash deploy/setup-printer.sh
 #
 # Prerequisites: Brother QL printer connected via USB
@@ -9,7 +9,7 @@ set -e
 echo "=== Brother QL printer setup ==="
 
 DEPLOY_USER="${SUDO_USER:-rakusika}"
-PRINTER_NAME="${1:-Brother_QL-800}"
+PRINTER_NAME="${1:-Brother_QL-820NWB}"
 
 # 1. Install CUPS and Brother driver
 echo "[1/4] Installing CUPS and printer driver"

@@ -106,7 +106,7 @@ cat > config.json << 'EOF'
   "dataBits": 7,
   "parity": "even",
   "stopBits": 1,
-  "printerName": "Brother_QL-800",
+  "printerName": "Brother_QL-820NWB",
   "maxClients": 1,
   "listenAddr": "0.0.0.0:19800",
   "logLevel": "INFO"
@@ -114,6 +114,9 @@ cat > config.json << 'EOF'
 EOF
 ./raku-sika-hub
 ```
+
+`PRINTER_NAME` 環境変数を設定した場合は、`config.json` の `printerName` より優先される。
+`printerName` / `PRINTER_NAME` を未指定にすると、hub は起動時と印刷時に CUPS の default destination を参照し、未設定なら `lpstat -p` の先頭プリンタへフォールバックする。
 
 ### ポートを明示指定する場合
 
@@ -136,7 +139,7 @@ EOF
 | `dataBits` | `7` | データビット（A&D デフォルト: 7） |
 | `parity` | `"even"` | パリティ（A&D デフォルト: even） |
 | `stopBits` | `1` | ストップビット |
-| `printerName` | `"Brother_QL-800"` | CUPS 上のプリンタ名 |
+| `printerName` | `""` | CUPS 上のプリンタ名。未指定時は CUPS default destination を優先し、なければ `lpstat -p` の先頭プリンタを使用 |
 | `fontPath` | `""` (自動検出) | 日本語フォントパス（ラベル画像生成用） |
 | `maxClients` | `1` | WebSocket 同時接続数上限（v1: 1台） |
 | `listenAddr` | `"0.0.0.0:19800"` | WebSocket サーバーのリッスンアドレス |
@@ -488,7 +491,7 @@ sudo bash deploy/setup.sh
 sudo systemctl start raku-sika-hub
 
 # 動作確認（LAN 内の別マシンから）
-curl http://raku-sika-hub.local:19800/
+curl http://raku-sika-hub.local:19800/health
 
 # ログ確認
 journalctl -u raku-sika-hub -f
@@ -533,12 +536,17 @@ sudo usermod -aG dialout $USER
 
 </details>
 
-### Brother QL-800/QL-820 プリンタセットアップ（未検証）
+### Brother QL-820/QL-820NWB プリンタセットアップ（未検証）
 
 ```bash
 sudo apt-get install printer-driver-ptouch cups
 sudo usermod -aG lpadmin rakusika
-# CUPS Web UI: http://localhost:631/admin → Add Printer → Brother QL-800 or QL-820
+# CUPS Web UI: http://localhost:631/admin → Add Printer → Brother QL-820 or QL-820NWB
+
+# systemd で明示したい場合
+sudo systemctl edit raku-sika-hub
+# [Service]
+# Environment=PRINTER_NAME=Brother_QL-820NWB
 
 # または brother_ql (Python)
 pip3 install brother_ql

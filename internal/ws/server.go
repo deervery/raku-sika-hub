@@ -107,6 +107,7 @@ func NewServer(hub *Hub, handler *Handler, logger *logging.Logger, listenAddr st
 // Start begins listening on the configured address.
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/", s.handleWS)
 
 	s.httpSrv = &http.Server{
@@ -123,6 +124,19 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("http listen: %w", err)
 	}
 	return nil
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	snapshot := s.handler.SnapshotHealth()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
+		s.logger.Warn("health encode: %v", err)
+	}
 }
 
 // Stop gracefully shuts down the HTTP server.

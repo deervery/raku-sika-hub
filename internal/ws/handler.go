@@ -19,6 +19,15 @@ type Handler struct {
 	logger      *logging.Logger
 }
 
+type HealthSnapshot struct {
+	Connected         bool     `json:"connected"`
+	Port              string   `json:"port"`
+	PrinterConnected  bool     `json:"printerConnected"`
+	ConfiguredPrinter string   `json:"configuredPrinter"`
+	SelectedPrinter   string   `json:"selectedPrinter"`
+	AvailablePrinters []string `json:"availablePrinters"`
+}
+
 // NewHandler creates a new Handler.
 func NewHandler(scaleClient *scale.Client, printer *printer.Brother, hub *Hub, logger *logging.Logger) *Handler {
 	return &Handler{
@@ -212,6 +221,38 @@ func (h *Handler) handleHealth(ctx context.Context, client *WSClient, req Reques
 		Port:             h.scaleClient.PortName(),
 		PrinterConnected: h.printer.IsAvailable(),
 	})
+}
+
+// SnapshotHealth returns the current health state for HTTP endpoints.
+func (h *Handler) SnapshotHealth() HealthSnapshot {
+	status, err := h.printer.Status()
+	if err != nil {
+		h.logger.Warn("printer status snapshot failed: %v", err)
+	}
+
+	return HealthSnapshot{
+		Connected:         h.scaleClient.Connected(),
+		Port:              h.scaleClient.PortName(),
+		PrinterConnected:  err == nil && printerReady(status),
+		ConfiguredPrinter: status.ConfiguredName,
+		SelectedPrinter:   status.SelectedName,
+		AvailablePrinters: status.Available,
+	}
+}
+
+func printerReady(status printer.PrinterStatus) bool {
+	if status.SelectedName == "" {
+		return false
+	}
+	if status.Source != "configured" {
+		return true
+	}
+	for _, name := range status.Available {
+		if name == status.SelectedName {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Request) {

@@ -17,7 +17,7 @@ type App struct {
 	logger      *logging.Logger
 	hub         *ws.Hub
 	scaleClient *scale.Client
-	printer     *printer.Brother
+	printer     printer.Driver
 	handler     *ws.Handler
 	wsServer    *ws.Server
 }
@@ -40,7 +40,16 @@ func New(cfg config.Config) (*App, error) {
 		})
 	})
 
-	prn := printer.NewBrother(cfg.PrinterName, cfg.FontPath, logger)
+	prn, err := printer.NewDriver(printer.DriverConfig{
+		DriverName:      cfg.PrinterDriver,
+		PrinterName:     cfg.PrinterName,
+		FontPath:        cfg.FontPath,
+		PrinterAddress:  cfg.PrinterAddress,
+		TemplateMapPath: cfg.TemplateMapPath,
+	}, logger)
+	if err != nil {
+		return nil, fmt.Errorf("create printer driver: %w", err)
+	}
 	handler := ws.NewHandler(scaleClient, prn, hub, logger)
 	wsServer := ws.NewServer(hub, handler, logger, cfg.ListenAddr, cfg.MaxClients, cfg.AllowedOrigins, cfg.AllowAllOrigins)
 
@@ -66,11 +75,14 @@ func (a *App) Run(ctx context.Context) error {
 		scaleDriver = "auto"
 	}
 	a.logger.Info(
-		"starting raku-sika-hub (listen=%s, printer=%s, maxClients=%d, scaleDriver=%s)",
+		"starting raku-sika-hub (listen=%s, printer=%s, maxClients=%d, scaleDriver=%s, printerDriver=%s, printerAddress=%s, templateMap=%s)",
 		a.cfg.ListenAddr,
 		printerName,
 		a.cfg.MaxClients,
 		scaleDriver,
+		a.cfg.PrinterDriver,
+		a.cfg.PrinterAddress,
+		a.cfg.TemplateMapPath,
 	)
 
 	a.scaleClient.Start(ctx)

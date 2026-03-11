@@ -18,6 +18,9 @@ type Config struct {
 	Parity          string   `json:"parity"`
 	StopBits        int      `json:"stopBits"`
 	PrinterName     string   `json:"printerName"`
+	PrinterDriver   string   `json:"printerDriver"`
+	PrinterAddress  string   `json:"printerAddress"`
+	TemplateMapPath string   `json:"templateMapPath"`
 	FontPath        string   `json:"fontPath"`
 	MaxClients      int      `json:"maxClients"`
 	ListenAddr      string   `json:"listenAddr"`
@@ -30,18 +33,21 @@ type Config struct {
 // Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
 func Default() Config {
 	return Config{
-		VID:         "0403",
-		PID:         "6015",
-		Port:        "",
-		BaudRate:    2400,
-		DataBits:    7,
-		Parity:      "even",
-		StopBits:    1,
-		PrinterName: "",
-		MaxClients:  1,
-		ListenAddr:  "0.0.0.0:19800",
-		LogLevel:    "INFO",
-		ScaleDriver: strings.TrimSpace(os.Getenv("SCALE_DRIVER")),
+		VID:             "0403",
+		PID:             "6015",
+		Port:            "",
+		BaudRate:        2400,
+		DataBits:        7,
+		Parity:          "even",
+		StopBits:        1,
+		PrinterName:     "Brother_QL-820NWB",
+		PrinterDriver:   "ptouch_template",
+		PrinterAddress:  "",
+		TemplateMapPath: "templates/siknue/template-map.json",
+		MaxClients:      1,
+		ListenAddr:      "0.0.0.0:19800",
+		LogLevel:        "INFO",
+		ScaleDriver:     strings.TrimSpace(os.Getenv("SCALE_DRIVER")),
 		AllowedOrigins: []string{
 			"localhost:*",
 			"127.0.0.1:*",
@@ -97,6 +103,15 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("PRINTER_NAME")); v != "" {
 		cfg.PrinterName = v
+	}
+	if v := strings.TrimSpace(os.Getenv("PRINTER_DRIVER")); v != "" {
+		cfg.PrinterDriver = v
+	}
+	if v := strings.TrimSpace(os.Getenv("PRINTER_ADDRESS")); v != "" {
+		cfg.PrinterAddress = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TEMPLATE_MAP_PATH")); v != "" {
+		cfg.TemplateMapPath = v
 	}
 	if v := strings.TrimSpace(os.Getenv("FONT_PATH")); v != "" {
 		cfg.FontPath = v

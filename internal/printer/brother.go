@@ -53,6 +53,10 @@ func (b *Brother) IsAvailable() bool {
 
 // Status returns the current CUPS printer resolution.
 func (b *Brother) Status() (PrinterStatus, error) {
+	return resolveCUPSPrinterStatus(b.name)
+}
+
+func resolveCUPSPrinterStatus(name string) (PrinterStatus, error) {
 	availableOut, err := exec.Command("lpstat", "-p").CombinedOutput()
 	if err != nil {
 		return PrinterStatus{}, fmt.Errorf("lpstat -p failed: %w: %s", err, strings.TrimSpace(string(availableOut)))
@@ -66,14 +70,14 @@ func (b *Brother) Status() (PrinterStatus, error) {
 
 	available := parseAvailablePrinters(string(availableOut))
 	status := PrinterStatus{
-		ConfiguredName: b.name,
+		ConfiguredName: name,
 		DefaultName:    defaultName,
 		Available:      available,
 	}
 
 	switch {
-	case b.name != "":
-		status.SelectedName = b.name
+	case name != "":
+		status.SelectedName = name
 		status.Source = "configured"
 	case defaultName != "":
 		status.SelectedName = defaultName
@@ -84,7 +88,6 @@ func (b *Brother) Status() (PrinterStatus, error) {
 	default:
 		status.Source = "unresolved"
 	}
-
 	return status, nil
 }
 
@@ -190,6 +193,10 @@ func (b *Brother) PrintLabel(data LabelData) error {
 // CanRenderLabels reports whether the label renderer is available.
 func (b *Brother) CanRenderLabels() bool {
 	return b.renderer != nil
+}
+
+func (b *Brother) CanPrintLabels() bool {
+	return b.CanRenderLabels()
 }
 
 // classifyLpError maps lp output to specific error codes with Japanese messages.

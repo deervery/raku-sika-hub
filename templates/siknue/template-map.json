@@ -1,0 +1,56 @@
+{
+  "delimiter": "\t",
+  "printStartCommand": "^FF",
+  "templates": {
+    "traceable": {
+      "key": 1,
+      "fields": [
+        "productName",
+        "productQuantity",
+        "deadlineDate",
+        "storageTemperature",
+        "individualNumber",
+        "captureLocation",
+        "qrCode"
+      ]
+    },
+    "non_traceable": {
+      "key": 2,
+      "fields": [
+        "productName",
+        "productQuantity",
+        "deadlineDate",
+        "storageTemperature",
+        "attentionText"
+      ]
+    },
+    "processed": {
+      "key": 3,
+      "fields": [
+        "productName",
+        "productQuantity",
+        "deadlineDate",
+        "storageTemperature",
+        "productIngredient",
+        "nutritionUnit",
+        "caloriesQuantity",
+        "proteinQuantity",
+        "fatQuantity",
+        "carbohydratesQuantity",
+        "saltEquivalentQuantity",
+        "attentionText"
+      ]
+    },
+    "pet": {
+      "key": 4,
+      "fields": [
+        "productName",
+        "productQuantity",
+        "deadlineDate",
+        "storageTemperature",
+        "productIngredient",
+        "attentionText"
+      ]
+    }
+  }
+}

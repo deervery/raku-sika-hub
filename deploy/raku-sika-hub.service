@@ -11,6 +11,9 @@ Restart=always
 RestartSec=5
 Environment=HOME=/home/rakusika
 # Environment=PRINTER_NAME=Brother_QL-820NWB
+# Environment=PRINTER_DRIVER=ptouch_template
+# Environment=PRINTER_ADDRESS=192.168.50.40:9100
+# Environment=TEMPLATE_MAP_PATH=templates/siknue/template-map.json
 # Environment=MAX_CLIENTS=3
 # Environment=SCALE_DRIVER=mock
 # Environment=ALLOWED_ORIGINS=localhost:*,127.0.0.1:*,192.168.50.*

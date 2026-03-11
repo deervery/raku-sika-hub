@@ -14,7 +14,7 @@ import (
 // Handler processes incoming WebSocket messages.
 type Handler struct {
 	scaleClient *scale.Client
-	printer     *printer.Brother
+	printer     printer.Driver
 	hub         *Hub
 	logger      *logging.Logger
 }
@@ -29,7 +29,7 @@ type HealthSnapshot struct {
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(scaleClient *scale.Client, printer *printer.Brother, hub *Hub, logger *logging.Logger) *Handler {
+func NewHandler(scaleClient *scale.Client, printer printer.Driver, hub *Hub, logger *logging.Logger) *Handler {
 	return &Handler{
 		scaleClient: scaleClient,
 		printer:     printer,
@@ -344,12 +344,12 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 	}
 
 	// Check renderer availability.
-	if !h.printer.CanRenderLabels() {
+	if !h.printer.CanPrintLabels() {
 		client.Send(PrintErrorResponse{
 			Type:      "print_error",
 			RequestID: req.RequestID,
 			Code:      "PRINTER_ERROR",
-			Message:   "ラベルレンダラが初期化されていません。日本語フォントをインストールしてください: sudo apt-get install fonts-noto-cjk",
+			Message:   "印刷ドライバがラベル印刷を処理できません。printerDriver / templateMap / fontPath 設定を確認してください。",
 		})
 		return
 	}

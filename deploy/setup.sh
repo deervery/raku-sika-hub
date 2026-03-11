@@ -33,7 +33,7 @@ echo "  → avahi-daemon configured. raku-sika-hub.local is now resolvable."
 
 # 3. Serial port permission
 echo "[3/4] Adding user to dialout group (serial port access)"
-DEPLOY_USER="${SUDO_USER:-pi}"
+DEPLOY_USER="${SUDO_USER:-rakusika}"
 if id -nG "$DEPLOY_USER" | grep -qw dialout; then
     echo "  → $DEPLOY_USER is already in dialout group"
 else

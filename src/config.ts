@@ -19,6 +19,8 @@ export interface HubConfig {
   ftdiProductId: string;
   /** Printer name */
   printerName: string;
+  /** Max concurrent WebSocket clients (v1: single client) */
+  maxClients: number;
   /** Log level */
   logLevel: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG';
 }
@@ -34,6 +36,7 @@ const defaults: HubConfig = {
   ftdiVendorId: '0403',
   ftdiProductId: '6015',
   printerName: 'Brother QL-800',
+  maxClients: 1,
   logLevel: 'INFO',
 };
 
@@ -50,6 +53,7 @@ export function loadConfig(): HubConfig {
     ftdiVendorId: env.FTDI_VID || defaults.ftdiVendorId,
     ftdiProductId: env.FTDI_PID || defaults.ftdiProductId,
     printerName: env.PRINTER_NAME || defaults.printerName,
+    maxClients: parseInt(env.MAX_CLIENTS || '', 10) || defaults.maxClients,
     logLevel: (env.LOG_LEVEL as HubConfig['logLevel']) || defaults.logLevel,
   };
 }

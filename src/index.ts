@@ -58,7 +58,7 @@ async function main() {
   // Create handler
   const handler = createHandler(scale, printer, deviceState);
 
-  // Create WebSocket server
+  // Create WebSocket server (v1: single client limit)
   const server = createWsServer((ws) => {
     // Send initial connection status on connect (WSA-compatible behavior)
     handler.sendConnectionStatus(ws);
@@ -68,7 +68,7 @@ async function main() {
       console.log('[WS] Received:', raw);
       handler.handleMessage(ws, raw);
     });
-  });
+  }, config.maxClients);
 
   // Broadcast device state changes to all clients
   deviceState.onUpdate((state) => {

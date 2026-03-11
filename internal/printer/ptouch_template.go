@@ -158,6 +158,34 @@ func (p *PtouchTemplate) CanPrintLabels() bool {
 	return p.registry != nil
 }
 
+func (p *PtouchTemplate) Queue() (QueueStatus, error) {
+	status, err := p.Status()
+	if err != nil {
+		return QueueStatus{}, err
+	}
+	if p.address != "" {
+		return queueStatusForDirect(status.SelectedName, status.Source, p.address), nil
+	}
+	if status.SelectedName == "" {
+		return QueueStatus{}, printerConfigError(status)
+	}
+	return readCUPSQueue(status.SelectedName, status.Source)
+}
+
+func (p *PtouchTemplate) ClearQueue() (QueueStatus, error) {
+	status, err := p.Status()
+	if err != nil {
+		return QueueStatus{}, err
+	}
+	if p.address != "" {
+		return queueStatusForDirect(status.SelectedName, status.Source, p.address), nil
+	}
+	if status.SelectedName == "" {
+		return QueueStatus{}, printerConfigError(status)
+	}
+	return clearCUPSQueue(status.SelectedName, status.Source)
+}
+
 func (p *PtouchTemplate) sendPayload(selectedName string, payload []byte) error {
 	p.logger.Info("ptouch payload: printer=%q address=%q bytes=%d", selectedName, p.address, len(payload))
 
@@ -180,7 +208,8 @@ func (p *PtouchTemplate) sendPayload(selectedName string, payload []byte) error 
 	cmd := exec.Command("lp", "-d", selectedName, "-o", "raw")
 	cmd.Stdin = bytes.NewReader(payload)
 	out, err := cmd.CombinedOutput()
-	p.logger.Info("lp output (ptouch template, printer=%q): %s", selectedName, strings.TrimSpace(string(out)))
+	outText := strings.TrimSpace(string(out))
+	p.logger.Info("lp output (ptouch template, printer=%q): %s", selectedName, outText)
 	if err != nil {
 		return classifyLpError(string(out), PrinterStatus{
 			ConfiguredName: p.name,
@@ -188,6 +217,13 @@ func (p *PtouchTemplate) sendPayload(selectedName string, payload []byte) error 
 			Available:      []string{selectedName},
 			Source:         "ptouch-template-cups",
 		})
+	}
+	jobID := parseLPRequestID(outText)
+	if jobID == "" {
+		return fmt.Errorf("PRINTER_ERROR: CUPS ジョブIDを取得できませんでした: %s", outText)
+	}
+	if err := waitForCUPSJobToLeaveQueue(selectedName, jobID, 12*time.Second); err != nil {
+		return err
 	}
 	return nil
 }

@@ -20,6 +20,8 @@ type Driver interface {
 	TestPrint() error
 	PrintLabel(data LabelData) error
 	CanPrintLabels() bool
+	Queue() (QueueStatus, error)
+	ClearQueue() (QueueStatus, error)
 }
 
 type DriverConfig struct {

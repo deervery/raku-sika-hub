@@ -38,6 +38,14 @@ func NewHandler(scaleClient *scale.Client, printer printer.Driver, hub *Hub, log
 	}
 }
 
+func (h *Handler) PrinterQueue() (printer.QueueStatus, error) {
+	return h.printer.Queue()
+}
+
+func (h *Handler) ClearPrinterQueue() (printer.QueueStatus, error) {
+	return h.printer.ClearQueue()
+}
+
 // HandleMessage parses and dispatches a WebSocket request.
 func (h *Handler) HandleMessage(ctx context.Context, client *WSClient, raw []byte) {
 	// Empty message check

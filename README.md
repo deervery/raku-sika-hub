@@ -197,6 +197,7 @@ ws://192.168.50.40:19800
 スケールの接続状態が変化した場合も、全クライアントにブロードキャストされる。
 
 HTTP ヘルスチェックは同じ 19800 番ポートの `GET /health` で受ける。`/` は WebSocket Upgrade 用で、通常の `curl /` には 426 が返る。
+印刷キュー確認は `GET /printer/queue`、全削除は `DELETE /printer/queue`。どちらも `ALLOWED_ORIGINS` に一致する Origin からの HTTP 呼び出しを許可する。
 
 ## P-touch Template 運用
 
@@ -375,6 +376,15 @@ sudo apt-get install fonts-noto-cjk
 # Brother プリンタドライバ
 sudo apt-get install printer-driver-ptouch cups
 ```
+
+### プリンタキュー API
+
+```bash
+curl http://127.0.0.1:19800/printer/queue
+curl -X DELETE http://127.0.0.1:19800/printer/queue
+```
+
+`ptouch_template` + CUPS 経由では、hub は `lp` の受理だけで成功扱いせず、投入した job が CUPS キューから流れるまで待ってから `print_ok` を返す。ジョブが停滞した場合は `print_error` を返し、`/printer/queue` で残件確認と削除ができる。
 
 ### フォント設定
 

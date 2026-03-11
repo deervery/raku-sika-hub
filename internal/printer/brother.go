@@ -199,6 +199,28 @@ func (b *Brother) CanPrintLabels() bool {
 	return b.CanRenderLabels()
 }
 
+func (b *Brother) Queue() (QueueStatus, error) {
+	status, err := b.Status()
+	if err != nil {
+		return QueueStatus{}, err
+	}
+	if status.SelectedName == "" {
+		return QueueStatus{}, printerConfigError(status)
+	}
+	return readCUPSQueue(status.SelectedName, status.Source)
+}
+
+func (b *Brother) ClearQueue() (QueueStatus, error) {
+	status, err := b.Status()
+	if err != nil {
+		return QueueStatus{}, err
+	}
+	if status.SelectedName == "" {
+		return QueueStatus{}, printerConfigError(status)
+	}
+	return clearCUPSQueue(status.SelectedName, status.Source)
+}
+
 // classifyLpError maps lp output to specific error codes with Japanese messages.
 func classifyLpError(output string, status PrinterStatus) error {
 	output = strings.TrimSpace(output)

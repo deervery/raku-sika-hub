@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,6 +115,7 @@ func NewServer(hub *Hub, handler *Handler, logger *logging.Logger, listenAddr st
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/printer/queue", s.handlePrinterQueue)
 	mux.HandleFunc("/", s.handleWS)
 
 	s.httpSrv = &http.Server{
@@ -137,6 +141,9 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if s.handleCORS(w, r, http.MethodGet) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -147,6 +154,111 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
 		s.logger.Warn("health encode: %v", err)
 	}
+}
+
+func (s *Server) handlePrinterQueue(w http.ResponseWriter, r *http.Request) {
+	if s.handleCORS(w, r, http.MethodGet, http.MethodDelete) {
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	switch r.Method {
+	case http.MethodGet:
+		status, err := s.handler.PrinterQueue()
+		if err != nil {
+			s.writePrinterQueueError(w, err)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			s.logger.Warn("printer queue encode: %v", err)
+		}
+	case http.MethodDelete:
+		status, err := s.handler.ClearPrinterQueue()
+		if err != nil {
+			s.writePrinterQueueError(w, err)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			s.logger.Warn("printer queue clear encode: %v", err)
+		}
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) writePrinterQueueError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if msg := err.Error(); msg != "" {
+		switch {
+		case containsAny(msg, "PRINTER_NOT_CONFIGURED:", "unknown destination"):
+			status = http.StatusBadRequest
+		case containsAny(msg, "PRINTER_PERMISSION_DENIED:", "Permission denied"):
+			status = http.StatusForbidden
+		}
+	}
+	w.WriteHeader(status)
+	if encodeErr := json.NewEncoder(w).Encode(map[string]string{"message": err.Error()}); encodeErr != nil {
+		s.logger.Warn("printer queue error encode: %v", encodeErr)
+	}
+}
+
+func containsAny(text string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if pattern != "" && strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request, methods ...string) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return false
+	}
+
+	if !s.allowAllOrigins && !originAllowed(origin, s.originPatterns) {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return true
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Vary", "Origin")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Methods", strings.Join(methods, ", "))
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
+	return false
+}
+
+func originAllowed(origin string, patterns []string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Host
+	if host == "" {
+		return false
+	}
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if ok, _ := path.Match(pattern, host); ok {
+			return true
+		}
+		if hostOnly := strings.Split(host, ":")[0]; hostOnly != host {
+			if ok, _ := path.Match(pattern, hostOnly); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Stop gracefully shuts down the HTTP server.

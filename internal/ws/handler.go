@@ -263,6 +263,8 @@ func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Req
 		code := ErrCodeUnknownError
 		if strings.HasPrefix(errMsg, "PRINTER_NOT_CONFIGURED:") {
 			code = "PRINTER_NOT_CONFIGURED"
+		} else if strings.HasPrefix(errMsg, "PRINTER_OFFLINE:") {
+			code = "PRINTER_OFFLINE"
 		} else if strings.HasPrefix(errMsg, "PRINTER_PERMISSION_DENIED:") {
 			code = "PRINTER_PERMISSION_DENIED"
 		} else if strings.HasPrefix(errMsg, "PRINTER_DISABLED:") {
@@ -381,6 +383,8 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		code := "PRINTER_ERROR"
 		if strings.HasPrefix(errMsg, "PRINTER_NOT_CONFIGURED:") {
 			code = "PRINTER_NOT_CONFIGURED"
+		} else if strings.HasPrefix(errMsg, "PRINTER_OFFLINE:") {
+			code = "PRINTER_OFFLINE"
 		} else if strings.HasPrefix(errMsg, "PRINTER_PERMISSION_DENIED:") {
 			code = "PRINTER_PERMISSION_DENIED"
 		} else if strings.HasPrefix(errMsg, "PRINTER_DISABLED:") {

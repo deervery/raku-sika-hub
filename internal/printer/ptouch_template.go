@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +48,10 @@ func (p *PtouchTemplate) IsAvailable() bool {
 	if err != nil {
 		return false
 	}
-	return validateTemplateStatus(status, p.address) == nil
+	if err := validateTemplateStatus(status, p.address); err != nil {
+		return false
+	}
+	return p.probeReachable(status.SelectedName) == nil
 }
 
 func (p *PtouchTemplate) Status() (PrinterStatus, error) {
@@ -121,6 +126,9 @@ func (p *PtouchTemplate) PrintLabel(data LabelData) error {
 	if err := validateTemplateStatus(status, p.address); err != nil {
 		return err
 	}
+	if err := p.probeReachable(status.SelectedName); err != nil {
+		return err
+	}
 
 	entry, ok := p.registry.Entry(data.Template)
 	if !ok {
@@ -182,6 +190,90 @@ func (p *PtouchTemplate) sendPayload(selectedName string, payload []byte) error 
 		})
 	}
 	return nil
+}
+
+func (p *PtouchTemplate) probeReachable(selectedName string) error {
+	if p.address != "" {
+		return probeTCPAddress(p.address)
+	}
+
+	deviceURI, err := lookupCUPSDeviceURI(selectedName)
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: CUPS デバイスURIの取得に失敗しました: %s", err)
+	}
+	if deviceURI == "" {
+		return nil
+	}
+
+	address, err := endpointFromDeviceURI(deviceURI)
+	if err != nil {
+		p.logger.Warn("printer probe skipped: printer=%q uri=%q err=%v", selectedName, deviceURI, err)
+		return nil
+	}
+	if err := probeTCPAddress(address); err != nil {
+		return fmt.Errorf(
+			"PRINTER_OFFLINE: プリンタとの通信確認に失敗しました。 printer=%q uri=%q address=%q err=%s",
+			selectedName,
+			deviceURI,
+			address,
+			err,
+		)
+	}
+	return nil
+}
+
+func probeTCPAddress(address string) error {
+	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return nil
+}
+
+func lookupCUPSDeviceURI(selectedName string) (string, error) {
+	out, err := exec.Command("lpstat", "-v", selectedName).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	line := strings.TrimSpace(string(out))
+	prefix := "device for " + selectedName + ":"
+	if !strings.HasPrefix(line, prefix) {
+		return "", fmt.Errorf("unexpected lpstat -v output: %s", line)
+	}
+	return strings.TrimSpace(strings.TrimPrefix(line, prefix)), nil
+}
+
+func endpointFromDeviceURI(deviceURI string) (string, error) {
+	u, err := url.Parse(deviceURI)
+	if err != nil {
+		return "", err
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("uri has no host")
+	}
+
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "ipp", "ipps":
+			port = "631"
+		case "socket":
+			port = "9100"
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return "", fmt.Errorf("unsupported scheme: %s", u.Scheme)
+		}
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return "", fmt.Errorf("invalid port: %s", port)
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func validateTemplateStatus(status PrinterStatus, address string) error {

@@ -3,6 +3,7 @@ package printer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/text/encoding/japanese"
@@ -47,7 +48,7 @@ func TestLoadTemplateRegistryAndRenderPayload(t *testing.T) {
 	}
 
 	got := string(payload)
-	want := "^TS001鹿肉\t2kg\t1234^FF"
+	want := string(append(templateModeSwitchCommand(), []byte("^II^TS001鹿肉\t2kg\t1234^FF")...))
 	if got != want {
 		t.Fatalf("unexpected payload: got %q want %q", got, want)
 	}
@@ -95,9 +96,13 @@ func TestRenderPayloadEncodesShiftJIS(t *testing.T) {
 		t.Fatalf("decode Shift_JIS payload: %v", err)
 	}
 
-	want := "^TS001鹿肉\t1234-56-78-90^FF"
-	if decoded != want {
-		t.Fatalf("unexpected decoded payload: got %q want %q", decoded, want)
+	mode := string(templateModeSwitchCommand())
+	if !strings.HasPrefix(string(payload), mode) {
+		t.Fatalf("payload does not start with template mode switch: %q", payload)
+	}
+	want := "^II^TS001鹿肉\t1234-56-78-90^FF"
+	if strings.TrimPrefix(decoded, mode) != want {
+		t.Fatalf("unexpected decoded payload: got %q want %q", strings.TrimPrefix(decoded, mode), want)
 	}
 }
 
@@ -124,7 +129,7 @@ func TestRenderPayloadIncludesProcessedAndPetFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderPayload(processed) failed: %v", err)
 	}
-	if got, want := string(processedPayload), "^TS003ソーセージ\t0.3g\t加熱食肉製品\t要冷凍^FF"; got != want {
+	if got, want := string(processedPayload), string(append(templateModeSwitchCommand(), []byte("^II^TS003ソーセージ\t0.3g\t加熱食肉製品\t要冷凍^FF")...)); got != want {
 		t.Fatalf("unexpected processed payload: got %q want %q", got, want)
 	}
 
@@ -139,7 +144,7 @@ func TestRenderPayloadIncludesProcessedAndPetFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderPayload(pet) failed: %v", err)
 	}
-	if got, want := string(petPayload), "^TS004ペットフード\t100gあたり\t加熱して与えてください^FF"; got != want {
+	if got, want := string(petPayload), string(append(templateModeSwitchCommand(), []byte("^II^TS004ペットフード\t100gあたり\t加熱して与えてください^FF")...)); got != want {
 		t.Fatalf("unexpected pet payload: got %q want %q", got, want)
 	}
 }

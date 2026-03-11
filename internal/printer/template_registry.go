@@ -70,8 +70,17 @@ func (r *TemplateRegistry) RenderPayload(entry TemplateEntry, data LabelData) ([
 		values = append(values, sanitizeTemplateValue(labelFieldValue(data, field)))
 	}
 
-	payload := fmt.Sprintf("^TS%03d%s%s", entry.Key, strings.Join(values, r.Delimiter), r.PrintStartCommand)
-	return encodeTemplatePayload(payload, r.Encoding)
+	body := fmt.Sprintf("^II^TS%03d%s%s", entry.Key, strings.Join(values, r.Delimiter), r.PrintStartCommand)
+	encodedBody, err := encodeTemplatePayload(body, r.Encoding)
+	if err != nil {
+		return nil, err
+	}
+
+	// Force the printer into P-touch Template mode for every job.
+	// Brother's command reference allows ESC i a '3' as a dynamic mode switch.
+	payload := append([]byte{}, templateModeSwitchCommand()...)
+	payload = append(payload, encodedBody...)
+	return payload, nil
 }
 
 func (r *TemplateRegistry) TestLabelData(templateName string) (LabelData, error) {
@@ -246,4 +255,8 @@ func normalizeEncodingName(name string) string {
 	name = strings.ReplaceAll(name, "-", "")
 	name = strings.ReplaceAll(name, "_", "")
 	return name
+}
+
+func templateModeSwitchCommand() []byte {
+	return []byte{0x1b, 0x69, 0x61, 0x33}
 }

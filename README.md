@@ -229,6 +229,7 @@ hub は `.lbx` 自体を読み込まない。実行時に使うのは `template-
 
 `fields` の順番が、そのまま P-touch Template へ流し込む順番になる。Windows 側テンプレート修正時に差し込み順が変わったら、この JSON も更新する。
 `encoding` は P-touch Template へ送る文字コード。現在の Siknue テンプレートは日本語文字化けを避けるため `shift_jis` を前提にしている。
+hub は各ジョブ送信時に `ESC i a '3'` で P-touch Template モードへ切り替え、続けて `^II` で初期化してから `^TS...^FF` を送る。プリンタ本体に文字化けしたテキストが表示される場合は、まず hub が古いバイナリのまま動いていないか確認する。
 
 `processed` と `pet` は `raku-sika-lite` のテンプレートプリセットと同じ差し込み順に合わせる:
 - `processed`: `productName`, `productQuantity`, `deadlineDate`, `storageTemperature`, `productIngredient`, `nutritionUnit`, `caloriesQuantity`, `proteinQuantity`, `fatQuantity`, `carbohydratesQuantity`, `saltEquivalentQuantity`, `isHeatedMeatProducts`, `attentionText`

@@ -13,6 +13,10 @@ export interface HubConfig {
   parity: 'none' | 'even' | 'odd';
   /** Serial stop bits */
   stopBits: 1 | 2;
+  /** FTDI vendor ID for auto-detection */
+  ftdiVendorId: string;
+  /** FTDI product ID for auto-detection */
+  ftdiProductId: string;
   /** Printer name */
   printerName: string;
   /** Log level */
@@ -27,6 +31,8 @@ const defaults: HubConfig = {
   dataBits: 7,
   parity: 'even',
   stopBits: 1,
+  ftdiVendorId: '0403',
+  ftdiProductId: '6015',
   printerName: 'Brother QL-800',
   logLevel: 'INFO',
 };
@@ -41,6 +47,8 @@ export function loadConfig(): HubConfig {
     dataBits: (parseInt(env.DATA_BITS || '', 10) as 7 | 8) || defaults.dataBits,
     parity: (env.PARITY as 'none' | 'even' | 'odd') || defaults.parity,
     stopBits: (parseInt(env.STOP_BITS || '', 10) as 1 | 2) || defaults.stopBits,
+    ftdiVendorId: env.FTDI_VID || defaults.ftdiVendorId,
+    ftdiProductId: env.FTDI_PID || defaults.ftdiProductId,
     printerName: env.PRINTER_NAME || defaults.printerName,
     logLevel: (env.LOG_LEVEL as HubConfig['logLevel']) || defaults.logLevel,
   };

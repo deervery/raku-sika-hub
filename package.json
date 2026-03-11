@@ -22,6 +22,7 @@
   },
   "homepage": "https://github.com/deervery/raku-sika-hub#readme",
   "dependencies": {
+    "serialport": "^13.0.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {

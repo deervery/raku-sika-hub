@@ -24,13 +24,17 @@ interface HealthRequest extends BaseRequest {
 interface StatusRequest extends BaseRequest {
   type: 'status';
 }
+interface PrintTestRequest extends BaseRequest {
+  type: 'print_test';
+}
 
 type ScaleRequest =
   | WeighRequest
   | TareRequest
   | ZeroRequest
   | HealthRequest
-  | StatusRequest;
+  | StatusRequest
+  | PrintTestRequest;
 
 // Response types (WSA-compatible)
 interface WeightResponse {
@@ -164,6 +168,19 @@ export function createHandler(
     }
   }
 
+  async function handlePrintTest(ws: WebSocket, requestId: string): Promise<void> {
+    try {
+      await printer.testPrint();
+      send(ws, { type: 'print_test_ok', requestId });
+    } catch (err) {
+      send(ws, {
+        type: 'print_test_error',
+        requestId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   async function handleHealth(ws: WebSocket, requestId: string): Promise<void> {
     const state = deviceState.get();
     const msg: HealthOkResponse = {
@@ -206,6 +223,9 @@ export function createHandler(
         break;
       case 'status':
         sendConnectionStatus(ws);
+        break;
+      case 'print_test':
+        handlePrintTest(ws, requestId);
         break;
       default:
         send(ws, {

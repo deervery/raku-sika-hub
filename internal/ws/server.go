@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -115,6 +116,7 @@ func NewServer(hub *Hub, handler *Handler, logger *logging.Logger, listenAddr st
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/printer/preview", s.handlePrinterPreview)
 	mux.HandleFunc("/printer/queue", s.handlePrinterQueue)
 	mux.HandleFunc("/", s.handleWS)
 
@@ -184,6 +186,39 @@ func (s *Server) handlePrinterQueue(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handlePrinterPreview(w http.ResponseWriter, r *http.Request) {
+	if s.handleCORS(w, r, http.MethodPost) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	pngData, err := s.handler.PreviewLabel(raw)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errorCodeForPrintError(err) == ErrCodeInvalidRequest {
+			status = http.StatusBadRequest
+		}
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(pngData); err != nil {
+		s.logger.Warn("printer preview write: %v", err)
 	}
 }
 

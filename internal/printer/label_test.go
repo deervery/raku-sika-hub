@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestBuildRows_AllTemplates verifies that buildRows produces non-empty rows for each template.
-func TestBuildRows_AllTemplates(t *testing.T) {
+// TestBuildRows_SupportedTemplates verifies that buildRows produces non-empty rows for each supported template.
+func TestBuildRows_SupportedTemplates(t *testing.T) {
 	r := &LabelRenderer{} // font not needed for buildRows
 
 	templates := []struct {
@@ -18,72 +18,26 @@ func TestBuildRows_AllTemplates(t *testing.T) {
 		{
 			name: "traceable_deer",
 			data: LabelData{
-				Template:           "traceable_deer",
-				ProductName:        "鹿肉（モモ）",
-				ProductQuantity:    "2.35 kg",
-				DeadlineDate:       "2026年3月18日",
-				StorageTemperature: "-18℃以下",
-				IndividualNumber:   "1234-56-78-90",
-				CaptureLocation:    "長野県信濃町",
-				QRCode:             "https://rakusika.com/t/abc/def",
+				Template:        "traceable_deer",
+				ProductName:     "鹿肉（モモ）",
+				ProductQuantity: "2.35 kg",
+				DeadlineDate:    "2026年3月18日",
+				StorageMethod:   "-4℃以下で保存",
+				IndividualID:    "1234-56-78-90",
+				CaptureLocation: "長野県信濃町",
+				QRCode:          "https://rakusika.com/t/abc/def",
 			},
-			minRows: 7, // name + qty + deadline + storage + sep + individual + capture + spacer + qr
-		},
-		{
-			name: "traceable_bear",
-			data: LabelData{
-				Template:           "traceable_bear",
-				ProductName:        "クマ肉（モモ）",
-				ProductQuantity:    "2.35 kg",
-				DeadlineDate:       "2026年3月18日",
-				StorageTemperature: "-18℃以下",
-				IndividualNumber:   "1234-56-78-90",
-				CaptureLocation:    "長野県信濃町",
-				QRCode:             "https://rakusika.com/t/abc/def",
-			},
-			minRows: 7,
-		},
-		{
-			name: "non_traceable_deer",
-			data: LabelData{
-				Template:           "non_traceable_deer",
-				ProductName:        "鹿肉（ロース）",
-				ProductQuantity:    "1.80 kg",
-				DeadlineDate:       "2026年3月20日",
-				StorageTemperature: "4℃以下",
-			},
-			minRows: 4,
-		},
-		{
-			name: "processed",
-			data: LabelData{
-				Template:               "processed",
-				ProductName:            "鹿肉カレー",
-				ProductQuantity:        "200g",
-				DeadlineDate:           "2026年6月30日",
-				StorageTemperature:     "常温",
-				ProductIngredient:      "鹿肉、玉ねぎ、にんじん",
-				NutritionUnit:          "1食(200g)あたり",
-				CaloriesQuantity:       "250 kcal",
-				ProteinQuantity:        "15.0 g",
-				FatQuantity:            "8.0 g",
-				CarbohydratesQuantity:  "30.0 g",
-				SaltEquivalentQuantity: "2.5 g",
-			},
-			minRows: 10,
+			minRows: 11,
 		},
 		{
 			name: "pet",
 			data: LabelData{
-				Template:           "pet",
-				ProductName:        "ペット用 鹿肉ジャーキー",
-				ProductQuantity:    "50g",
-				DeadlineDate:       "2026年12月31日",
-				StorageTemperature: "常温",
-				ProductIngredient:  "鹿肉",
-				AttentionText:      "ペット用です。人間の食品ではありません。",
+				Template:        "pet",
+				ProductName:     "ペット用 鹿肉ジャーキー",
+				ProductQuantity: "50g",
+				DeadlineDate:    "2026年12月31日",
 			},
-			minRows: 5,
+			minRows: 7,
 		},
 	}
 
@@ -116,11 +70,8 @@ func TestRequiredFields(t *testing.T) {
 		template string
 		expected []string
 	}{
-		{"traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber"}},
-		{"traceable_bear", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber"}},
-		{"non_traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
-		{"processed", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
-		{"pet", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
+		{"traceable_deer", []string{"productName", "captureLocation", "productQuantity", "deadlineDate", "individualId", "qrCode"}},
+		{"pet", []string{"productName", "productQuantity", "deadlineDate"}},
 	}
 
 	for _, tt := range tests {
@@ -140,7 +91,7 @@ func TestRequiredFields(t *testing.T) {
 
 // TestValidTemplates checks template key validation.
 func TestValidTemplates(t *testing.T) {
-	for _, key := range []string{"traceable", "traceable_deer", "traceable_bear", "non_traceable", "non_traceable_deer", "processed", "pet"} {
+	for _, key := range []string{"traceable_deer", "pet"} {
 		if !ValidTemplates[key] {
 			t.Errorf("expected %q to be valid", key)
 		}
@@ -161,14 +112,14 @@ func TestRender_WithFont(t *testing.T) {
 	}
 
 	data := LabelData{
-		Template:           "traceable_deer",
-		ProductName:        "鹿肉（モモ）",
-		ProductQuantity:    "2.35 kg",
-		DeadlineDate:       "2026年3月18日",
-		StorageTemperature: "-18℃以下",
-		IndividualNumber:   "1234-56-78-90",
-		CaptureLocation:    "長野県信濃町",
-		QRCode:             "https://rakusika.com/t/abc/def",
+		Template:        "traceable_deer",
+		ProductName:     "鹿肉（モモ）",
+		ProductQuantity: "2.35 kg",
+		DeadlineDate:    "2026年3月18日",
+		StorageMethod:   "-4℃以下で保存",
+		IndividualID:    "1234-56-78-90",
+		CaptureLocation: "長野県信濃町",
+		QRCode:          "https://rakusika.com/t/abc/def",
 	}
 
 	path, err := renderer.Render(data)

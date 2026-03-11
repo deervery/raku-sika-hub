@@ -46,6 +46,17 @@ func (h *Handler) ClearPrinterQueue() (printer.QueueStatus, error) {
 	return h.printer.ClearQueue()
 }
 
+func (h *Handler) PreviewLabel(raw []byte) ([]byte, error) {
+	_, data, err := h.parsePrintRequest(raw)
+	if err != nil {
+		return nil, err
+	}
+	if !h.printer.CanPrintLabels() {
+		return nil, fmt.Errorf("PRINTER_ERROR: 印刷ドライバがラベルプレビューを処理できません。printerDriver / fontPath 設定を確認してください。")
+	}
+	return h.printer.PreviewLabel(data)
+}
+
 // HandleMessage parses and dispatches a WebSocket request.
 func (h *Handler) HandleMessage(ctx context.Context, client *WSClient, raw []byte) {
 	// Empty message check
@@ -309,105 +320,21 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		return
 	}
 
-	// Validate template.
-	if !printer.ValidTemplates[req.Template] {
+	copies, data, err := h.parsePrintRequest(raw)
+	if err != nil {
 		client.Send(PrintErrorResponse{
 			Type:      "print_error",
 			RequestID: req.RequestID,
-			Code:      ErrCodeInvalidRequest,
-			Message:   "不明なテンプレート: \"" + req.Template + "\"。使用可能: traceable_deer, traceable_bear, non_traceable_deer, processed, pet",
+			Code:      errorCodeForPrintError(err),
+			Message:   err.Error(),
 		})
 		return
 	}
 
-	// Validate copies.
-	copies := req.Copies
-	if copies < 1 {
-		copies = 1
-	}
-	if copies > printer.MaxCopies {
-		client.Send(PrintErrorResponse{
-			Type:      "print_error",
-			RequestID: req.RequestID,
-			Code:      ErrCodeInvalidRequest,
-			Message:   fmt.Sprintf("印刷部数は1〜%dの範囲で指定してください。", printer.MaxCopies),
-		})
-		return
-	}
-
-	// Validate required fields.
-	required := printer.RequiredFields(req.Template)
-	var missing []string
-	for _, f := range required {
-		if req.Data[f] == "" {
-			missing = append(missing, f)
-		}
-	}
-	if len(missing) > 0 {
-		client.Send(PrintErrorResponse{
-			Type:      "print_error",
-			RequestID: req.RequestID,
-			Code:      ErrCodeInvalidRequest,
-			Message:   "必須フィールドが不足しています: " + strings.Join(missing, ", "),
-		})
-		return
-	}
-
-	// Check renderer availability.
-	if !h.printer.CanPrintLabels() {
-		client.Send(PrintErrorResponse{
-			Type:      "print_error",
-			RequestID: req.RequestID,
-			Code:      "PRINTER_ERROR",
-			Message:   "印刷ドライバがラベル印刷を処理できません。printerDriver / templateMap / fontPath 設定を確認してください。",
-		})
-		return
-	}
-
-	// Build LabelData from request.
-	data := printer.LabelData{
-		Template:               req.Template,
-		Copies:                 copies,
-		ProductName:            req.Data["productName"],
-		ProductQuantity:        req.Data["productQuantity"],
-		DeadlineDate:           req.Data["deadlineDate"],
-		StorageTemperature:     req.Data["storageTemperature"],
-		IndividualID:           req.Data["individualId"],
-		IndividualNumber:       req.Data["individualNumber"],
-		CaptureLocation:        req.Data["captureLocation"],
-		QRCode:                 req.Data["qrCode"],
-		ProductIngredient:      req.Data["productIngredient"],
-		NutritionUnit:          req.Data["nutritionUnit"],
-		CaloriesQuantity:       req.Data["caloriesQuantity"],
-		ProteinQuantity:        req.Data["proteinQuantity"],
-		FatQuantity:            req.Data["fatQuantity"],
-		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
-		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
-		IsHeatedMeatProducts:   req.Data["isHeatedMeatProducts"],
-		AttentionText:          req.Data["attentionText"],
-	}
-	if data.IndividualNumber == "" {
-		data.IndividualNumber = data.IndividualID
-	}
-	if data.IndividualID == "" {
-		data.IndividualID = data.IndividualNumber
-	}
-
-	err := h.printer.PrintLabel(data)
+	err = h.printer.PrintLabel(data)
 	if err != nil {
 		errMsg := err.Error()
-		code := "PRINTER_ERROR"
-		if strings.HasPrefix(errMsg, "PRINTER_NOT_CONFIGURED:") {
-			code = "PRINTER_NOT_CONFIGURED"
-		} else if strings.HasPrefix(errMsg, "PRINTER_OFFLINE:") {
-			code = "PRINTER_OFFLINE"
-		} else if strings.HasPrefix(errMsg, "PRINTER_PERMISSION_DENIED:") {
-			code = "PRINTER_PERMISSION_DENIED"
-		} else if strings.HasPrefix(errMsg, "PRINTER_DISABLED:") {
-			code = "PRINTER_DISABLED"
-		} else if strings.HasPrefix(errMsg, "PRINTER_PAPER_ERROR:") {
-			code = "PRINTER_PAPER_ERROR"
-		}
+		code := errorCodeForPrintError(err)
 		client.Send(PrintErrorResponse{
 			Type:      "print_error",
 			RequestID: req.RequestID,
@@ -424,6 +351,89 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		Message:   fmt.Sprintf("ラベルを%d部印刷しました", copies),
 		Copies:    copies,
 	})
+}
+
+func (h *Handler) parsePrintRequest(raw []byte) (int, printer.LabelData, error) {
+	var req PrintRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return 0, printer.LabelData{}, fmt.Errorf("印刷リクエストのJSONパースに失敗しました。")
+	}
+
+	if !printer.ValidTemplates[req.Template] {
+		return 0, printer.LabelData{}, fmt.Errorf("不明なテンプレート: %q。使用可能: traceable_deer, pet", req.Template)
+	}
+
+	copies := req.Copies
+	if copies < 1 {
+		copies = 1
+	}
+	if copies > printer.MaxCopies {
+		return 0, printer.LabelData{}, fmt.Errorf("印刷部数は1〜%dの範囲で指定してください。", printer.MaxCopies)
+	}
+
+	var missing []string
+	for _, field := range printer.RequiredFields(req.Template) {
+		if missingRequiredField(req.Data, field) {
+			missing = append(missing, field)
+		}
+	}
+	if len(missing) > 0 {
+		return 0, printer.LabelData{}, fmt.Errorf("必須フィールドが不足しています: %s", strings.Join(missing, ", "))
+	}
+
+	if !h.printer.CanPrintLabels() {
+		return 0, printer.LabelData{}, fmt.Errorf("PRINTER_ERROR: 印刷ドライバがラベル印刷を処理できません。printerDriver / fontPath 設定を確認してください。")
+	}
+
+	data := printer.LabelData{
+		Template:           req.Template,
+		Copies:             copies,
+		ProductName:        req.Data["productName"],
+		ProductQuantity:    req.Data["productQuantity"],
+		DeadlineDate:       req.Data["deadlineDate"],
+		StorageTemperature: req.Data["storageTemperature"],
+		StorageMethod:      req.Data["storageMethod"],
+		IndividualID:       req.Data["individualId"],
+		IndividualNumber:   req.Data["individualNumber"],
+		CaptureLocation:    req.Data["captureLocation"],
+		QRCode:             req.Data["qrCode"],
+	}
+	if data.IndividualID == "" {
+		data.IndividualID = data.IndividualNumber
+	}
+	if data.IndividualNumber == "" {
+		data.IndividualNumber = data.IndividualID
+	}
+	return copies, data, nil
+}
+
+func missingRequiredField(data map[string]string, field string) bool {
+	switch field {
+	case "individualId":
+		return strings.TrimSpace(data["individualId"]) == "" && strings.TrimSpace(data["individualNumber"]) == ""
+	default:
+		return strings.TrimSpace(data[field]) == ""
+	}
+}
+
+func errorCodeForPrintError(err error) string {
+	errMsg := err.Error()
+	code := "PRINTER_ERROR"
+	switch {
+	case strings.HasPrefix(errMsg, "PRINTER_NOT_CONFIGURED:"):
+		code = "PRINTER_NOT_CONFIGURED"
+	case strings.HasPrefix(errMsg, "PRINTER_OFFLINE:"):
+		code = "PRINTER_OFFLINE"
+	case strings.HasPrefix(errMsg, "PRINTER_PERMISSION_DENIED:"):
+		code = "PRINTER_PERMISSION_DENIED"
+	case strings.HasPrefix(errMsg, "PRINTER_DISABLED:"):
+		code = "PRINTER_DISABLED"
+	case strings.HasPrefix(errMsg, "PRINTER_PAPER_ERROR:"):
+		code = "PRINTER_PAPER_ERROR"
+	case strings.Contains(errMsg, "JSONパース"), strings.Contains(errMsg, "不明なテンプレート"), strings.Contains(errMsg, "必須フィールド"), strings.Contains(errMsg, "印刷部数"):
+		code = ErrCodeInvalidRequest
+	}
+	return code
 }
 
 // classifyScaleError maps scale errors to specific error codes with Japanese messages.

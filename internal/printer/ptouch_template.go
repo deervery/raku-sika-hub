@@ -154,6 +154,10 @@ func (p *PtouchTemplate) PrintLabel(data LabelData) error {
 	return nil
 }
 
+func (p *PtouchTemplate) PreviewLabel(data LabelData) ([]byte, error) {
+	return nil, fmt.Errorf("PRINTER_ERROR: ptouch_template ではプレビューを生成できません。printerDriver=cups_png を使用してください")
+}
+
 func (p *PtouchTemplate) CanPrintLabels() bool {
 	return p.registry != nil
 }

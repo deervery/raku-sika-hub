@@ -27,8 +27,8 @@ func TestLoad_UsesEnvOverrideWithoutConfigFile(t *testing.T) {
 	if cfg.PrinterName != "Brother_QL-820NWB" {
 		t.Fatalf("expected PRINTER_NAME override, got %q", cfg.PrinterName)
 	}
-	if cfg.PrinterDriver != "ptouch_template" {
-		t.Fatalf("expected default ptouch_template driver, got %q", cfg.PrinterDriver)
+	if cfg.PrinterDriver != "cups_png" {
+		t.Fatalf("expected default cups_png driver, got %q", cfg.PrinterDriver)
 	}
 }
 

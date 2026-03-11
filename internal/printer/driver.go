@@ -19,6 +19,7 @@ type Driver interface {
 	LogStatus(context string)
 	TestPrint() error
 	PrintLabel(data LabelData) error
+	PreviewLabel(data LabelData) ([]byte, error)
 	CanPrintLabels() bool
 	Queue() (QueueStatus, error)
 	ClearQueue() (QueueStatus, error)

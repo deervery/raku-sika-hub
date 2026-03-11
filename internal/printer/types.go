@@ -3,7 +3,7 @@ package printer
 // LabelData holds the data for label printing.
 // Field names match the lite frontend's LabelData type in lib/labels/constants.ts.
 type LabelData struct {
-	Template           string `json:"template"`           // traceable_deer, traceable_bear, non_traceable_deer, processed, pet
+	Template           string `json:"template"`           // traceable_deer, pet
 	Copies             int    `json:"copies"`             // number of copies (default 1, max 30)
 	ProductName        string `json:"productName"`        // 品名
 	ProductQuantity    string `json:"productQuantity"`    // 内容量 e.g. "2.35 kg"
@@ -13,42 +13,38 @@ type LabelData struct {
 	// Traceable fields
 	IndividualID     string `json:"individualId"`     // b-PAC placeholder alias for formatted display value
 	IndividualNumber string `json:"individualNumber"` // 個体識別番号 e.g. "1234-56-78-90"
-	CaptureLocation  string `json:"captureLocation"`  // 捕獲場所
+	CaptureLocation  string `json:"captureLocation"`  // 捕獲地
 	QRCode           string `json:"qrCode"`           // QRコード URL
 
-	// Processed / Pet fields
-	ProductIngredient      string `json:"productIngredient"`      // 原材料名
-	NutritionUnit          string `json:"nutritionUnit"`          // 栄養成分表示単位 e.g. "100gあたり"
-	CaloriesQuantity       string `json:"caloriesQuantity"`       // エネルギー
-	ProteinQuantity        string `json:"proteinQuantity"`        // たんぱく質
-	FatQuantity            string `json:"fatQuantity"`            // 脂質
-	CarbohydratesQuantity  string `json:"carbohydratesQuantity"`  // 炭水化物
-	SaltEquivalentQuantity string `json:"saltEquivalentQuantity"` // 食塩相当量
-	IsHeatedMeatProducts   string `json:"isHeatedMeatProducts"`   // 加熱食肉製品区分
+	// Legacy template fields kept for template registry compatibility.
+	ProductIngredient      string `json:"productIngredient"`
+	NutritionUnit          string `json:"nutritionUnit"`
+	CaloriesQuantity       string `json:"caloriesQuantity"`
+	ProteinQuantity        string `json:"proteinQuantity"`
+	FatQuantity            string `json:"fatQuantity"`
+	CarbohydratesQuantity  string `json:"carbohydratesQuantity"`
+	SaltEquivalentQuantity string `json:"saltEquivalentQuantity"`
+	IsHeatedMeatProducts   string `json:"isHeatedMeatProducts"`
+	AttentionText          string `json:"attentionText"`
 
-	// Misc
-	AttentionText string `json:"attentionText"` // 注意書き
+	StorageMethod string `json:"storageMethod"` // 保存方法
 }
 
 // ValidTemplates lists the supported template keys.
 var ValidTemplates = map[string]bool{
-	"traceable":          true,
-	"traceable_deer":     true,
-	"traceable_bear":     true,
-	"non_traceable":      true,
-	"non_traceable_deer": true,
-	"processed":          true,
-	"pet":                true,
+	"traceable_deer": true,
+	"pet":            true,
 }
 
 // RequiredFields returns the required field names for each template.
 func RequiredFields(template string) []string {
-	common := []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}
 	switch template {
-	case "traceable", "traceable_deer", "traceable_bear":
-		return append(common, "individualNumber")
+	case "traceable_deer":
+		return []string{"productName", "captureLocation", "productQuantity", "deadlineDate", "individualId", "qrCode"}
+	case "pet":
+		return []string{"productName", "productQuantity", "deadlineDate"}
 	default:
-		return common
+		return nil
 	}
 }
 

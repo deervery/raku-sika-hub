@@ -10,9 +10,9 @@ type Request struct {
 type PrintRequest struct {
 	Type      string            `json:"type"`
 	RequestID string            `json:"requestId,omitempty"`
-	Template  string            `json:"template"`  // traceable, non_traceable, processed, pet
-	Copies    int               `json:"copies"`    // 1-30
-	Data      map[string]string `json:"data"`      // label field values
+	Template  string            `json:"template"` // traceable_deer, pet
+	Copies    int               `json:"copies"`   // 1-30
+	Data      map[string]string `json:"data"`     // label field values
 }
 
 // PrintOKResponse is sent when a label print succeeds.

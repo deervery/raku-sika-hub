@@ -1,6 +1,7 @@
 package printer
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -188,6 +189,19 @@ func (b *Brother) PrintLabel(data LabelData) error {
 
 	b.logger.Info("label printed: %d copies via lp (printer=%q)", copies, status.SelectedName)
 	return nil
+}
+
+func (b *Brother) PreviewLabel(data LabelData) ([]byte, error) {
+	if b.renderer == nil {
+		return nil, fmt.Errorf("PRINTER_ERROR: ラベルレンダラが初期化されていません。" +
+			"日本語フォントをインストールしてください: sudo apt-get install fonts-noto-cjk")
+	}
+
+	var buf bytes.Buffer
+	if err := b.renderer.EncodePNG(&buf, data); err != nil {
+		return nil, fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // CanRenderLabels reports whether the label renderer is available.

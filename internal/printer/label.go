@@ -1,11 +1,13 @@
 package printer
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,17 +23,32 @@ import (
 const (
 	labelWidthPx = 732 // 62mm at 300 DPI
 	labelDPI     = 300
-	marginPx     = 30
+	marginPx     = 24
 	contentWidth = labelWidthPx - 2*marginPx
 )
 
 // Font sizes at 300 DPI.
 const (
-	fontSizeTitle    = 16 // product name
-	fontSizeBody     = 12 // regular fields
-	fontSizeSmall    = 10 // sub-fields like nutrition
+	fontSizeTitle    = 13 // tuned to fit 62mm labels reliably
+	fontSizeBody     = 10
+	fontSizeSmall    = 9
 	fontSizeSep      = 10 // separator text
-	lineSpacingRatio = 1.6
+	lineSpacingRatio = 1.45
+)
+
+const (
+	fixedPetStorageMethod          = "直射日光と高温多湿を避けて保管してください。"
+	fixedTraceableStorageMethod    = "-4℃以下で保存"
+	fixedProcessorName             = "(株)札幌カネシン水産"
+	fixedProcessorFacilityLocation = "北海道訓子府町大町113"
+	fixedMetalDetectorStatus       = "検査済み"
+	fixedHeatedInstruction         = "加熱用"
+)
+
+const (
+	tableLabelWidthPx = 188
+	tableCellPadding  = 8
+	tableBorderGray   = 120
 )
 
 // LabelRenderer generates label images for printing.
@@ -51,9 +68,37 @@ func NewLabelRenderer(fontPath string) (*LabelRenderer, error) {
 
 // Render generates a label PNG image and returns the temporary file path.
 func (r *LabelRenderer) Render(data LabelData) (string, error) {
+	tmpFile, err := os.CreateTemp("", "label-*.png")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	defer tmpFile.Close()
+
+	if err := r.EncodePNG(tmpFile, data); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+	return tmpFile.Name(), nil
+}
+
+func (r *LabelRenderer) EncodePNG(w io.Writer, data LabelData) error {
+	return r.encodePNG(w, data)
+}
+
+func (r *LabelRenderer) encodePNG(w io.Writer, data LabelData) error {
+	img, err := r.renderImage(data)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(w, img); err != nil {
+		return fmt.Errorf("encode png: %w", err)
+	}
+	return nil
+}
+
+func (r *LabelRenderer) renderImage(data LabelData) (*image.RGBA, error) {
 	rows := r.buildRows(data)
 
-	// Calculate total height.
 	height := marginPx
 	for _, row := range rows {
 		height += row.height()
@@ -67,18 +112,7 @@ func (r *LabelRenderer) Render(data LabelData) (string, error) {
 	for _, row := range rows {
 		y = row.draw(img, r, y)
 	}
-
-	tmpFile, err := os.CreateTemp("", "label-*.png")
-	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
-	}
-	defer tmpFile.Close()
-
-	if err := png.Encode(tmpFile, img); err != nil {
-		os.Remove(tmpFile.Name())
-		return "", fmt.Errorf("encode png: %w", err)
-	}
-	return tmpFile.Name(), nil
+	return img, nil
 }
 
 // row is a renderable label element.
@@ -220,8 +254,9 @@ func (s separatorRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 
 // qrRow renders a QR code image.
 type qrRow struct {
-	url  string
-	size int // pixels
+	url        string
+	size       int // pixels
+	alignRight bool
 }
 
 func (q qrRow) height() int {
@@ -239,13 +274,15 @@ func (q qrRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 	}
 
 	// Decode QR PNG to image.
-	qrImg, err := png.Decode(strings.NewReader(string(qrPng)))
+	qrImg, err := png.Decode(bytes.NewReader(qrPng))
 	if err != nil {
 		return y + q.height()
 	}
 
-	// Center the QR code.
 	x := (labelWidthPx - q.size) / 2
+	if q.alignRight {
+		x = labelWidthPx - marginPx - q.size
+	}
 	offset := image.Pt(x, y+5)
 	draw.Draw(img, image.Rect(offset.X, offset.Y, offset.X+q.size, offset.Y+q.size),
 		qrImg, image.Point{}, draw.Over)
@@ -263,94 +300,203 @@ func (s spacerRow) draw(_ *image.RGBA, _ *LabelRenderer, y int) int {
 	return y + s.px
 }
 
-// buildRows creates the row list for the given template and data.
-func (r *LabelRenderer) buildRows(data LabelData) []row {
-	var rows []row
+// tableRow renders a two-column table row with borders.
+type tableRow struct {
+	label    string
+	value    string
+	fontSize float64
+}
 
-	// Common header for all templates.
-	rows = append(rows,
-		textRow{value: data.ProductName, fontSize: fontSizeTitle},
-		textRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
-	)
+func (t tableRow) lineHeight() int {
+	return int(t.fontSize * lineSpacingRatio * float64(labelDPI) / 72)
+}
 
-	switch data.Template {
-	case "traceable", "traceable_deer", "traceable_bear":
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-			separatorRow{},
-			textRow{label: "個体識別番号", value: data.IndividualNumber, fontSize: fontSizeBody},
-		)
-		if data.CaptureLocation != "" {
-			rows = append(rows, textRow{label: "捕獲場所", value: data.CaptureLocation, fontSize: fontSizeBody})
-		}
-		if data.QRCode != "" {
-			rows = append(rows,
-				spacerRow{px: 10},
-				qrRow{url: data.QRCode, size: 200},
-			)
-		}
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
-		}
-
-	case "non_traceable", "non_traceable_deer":
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-		)
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
-		}
-
-	case "processed":
-		if data.ProductIngredient != "" {
-			rows = append(rows, multiLineRow{label: "原材料名", value: data.ProductIngredient, fontSize: fontSizeSmall})
-		}
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-		)
-		// Nutrition table.
-		nutritionLabel := "栄養成分表示"
-		if data.NutritionUnit != "" {
-			nutritionLabel += "（" + data.NutritionUnit + "）"
-		}
-		rows = append(rows, separatorRow{text: nutritionLabel})
-		if data.CaloriesQuantity != "" {
-			rows = append(rows, textRow{label: "エネルギー", value: data.CaloriesQuantity, fontSize: fontSizeSmall})
-		}
-		if data.ProteinQuantity != "" {
-			rows = append(rows, textRow{label: "たんぱく質", value: data.ProteinQuantity, fontSize: fontSizeSmall})
-		}
-		if data.FatQuantity != "" {
-			rows = append(rows, textRow{label: "脂質", value: data.FatQuantity, fontSize: fontSizeSmall})
-		}
-		if data.CarbohydratesQuantity != "" {
-			rows = append(rows, textRow{label: "炭水化物", value: data.CarbohydratesQuantity, fontSize: fontSizeSmall})
-		}
-		if data.SaltEquivalentQuantity != "" {
-			rows = append(rows, textRow{label: "食塩相当量", value: data.SaltEquivalentQuantity, fontSize: fontSizeSmall})
-		}
-		rows = append(rows, separatorRow{})
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
-		}
-
-	case "pet":
-		if data.ProductIngredient != "" {
-			rows = append(rows, multiLineRow{label: "原材料名", value: data.ProductIngredient, fontSize: fontSizeSmall})
-		}
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-		)
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
-		}
+func (t tableRow) wrapLines(text string, width int) []string {
+	if text == "" {
+		return []string{""}
 	}
 
-	return rows
+	charWidth := t.fontSize * float64(labelDPI) / 72 * 0.55
+	charsPerLine := int(float64(width) / charWidth)
+	if charsPerLine < 1 {
+		charsPerLine = 1
+	}
+
+	var lines []string
+	runes := []rune(text)
+	for len(runes) > 0 {
+		end := charsPerLine
+		if end > len(runes) {
+			end = len(runes)
+		}
+		lines = append(lines, string(runes[:end]))
+		runes = runes[end:]
+	}
+	return lines
+}
+
+func (t tableRow) height() int {
+	labelWidth := tableLabelWidthPx - 2*tableCellPadding
+	valueWidth := contentWidth - tableLabelWidthPx - 2*tableCellPadding
+
+	labelLines := t.wrapLines(t.label, labelWidth)
+	valueLines := t.wrapLines(t.value, valueWidth)
+	lineCount := len(labelLines)
+	if len(valueLines) > lineCount {
+		lineCount = len(valueLines)
+	}
+	if lineCount < 1 {
+		lineCount = 1
+	}
+	return lineCount*t.lineHeight() + tableCellPadding*2
+}
+
+func (t tableRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
+	face := r.makeFace(t.fontSize)
+	defer face.Close()
+
+	rowHeight := t.height()
+	left := marginPx
+	right := labelWidthPx - marginPx
+	splitX := left + tableLabelWidthPx
+	bottom := y + rowHeight
+
+	border := color.RGBA{R: tableBorderGray, G: tableBorderGray, B: tableBorderGray, A: 255}
+	for x := left; x < right; x++ {
+		img.Set(x, y, border)
+		img.Set(x, bottom-1, border)
+	}
+	for py := y; py < bottom; py++ {
+		img.Set(left, py, border)
+		img.Set(right-1, py, border)
+		img.Set(splitX, py, border)
+	}
+
+	labelLines := t.wrapLines(t.label, tableLabelWidthPx-2*tableCellPadding)
+	valueLines := t.wrapLines(t.value, contentWidth-tableLabelWidthPx-2*tableCellPadding)
+	lineHeight := t.lineHeight()
+	baseline := y + tableCellPadding + int(t.fontSize*float64(labelDPI)/72)
+	for _, line := range labelLines {
+		drawString(img, face, line, left+tableCellPadding, baseline)
+		baseline += lineHeight
+	}
+
+	baseline = y + tableCellPadding + int(t.fontSize*float64(labelDPI)/72)
+	for _, line := range valueLines {
+		drawString(img, face, line, splitX+tableCellPadding, baseline)
+		baseline += lineHeight
+	}
+
+	return bottom
+}
+
+// qrTableRow keeps the QR code inside a bordered table cell.
+type qrTableRow struct {
+	label string
+	url   string
+	size  int
+}
+
+func (q qrTableRow) height() int {
+	size := q.size + tableCellPadding*2
+	minHeight := textRow{value: "A", fontSize: fontSizeBody}.height() + tableCellPadding*2
+	if size < minHeight {
+		return minHeight
+	}
+	return size
+}
+
+func (q qrTableRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
+	row := tableRow{label: q.label, value: "", fontSize: fontSizeBody}
+	rowHeight := q.height()
+	left := marginPx
+	right := labelWidthPx - marginPx
+	splitX := left + tableLabelWidthPx
+	bottom := y + rowHeight
+
+	border := color.RGBA{R: tableBorderGray, G: tableBorderGray, B: tableBorderGray, A: 255}
+	for x := left; x < right; x++ {
+		img.Set(x, y, border)
+		img.Set(x, bottom-1, border)
+	}
+	for py := y; py < bottom; py++ {
+		img.Set(left, py, border)
+		img.Set(right-1, py, border)
+		img.Set(splitX, py, border)
+	}
+
+	face := r.makeFace(fontSizeBody)
+	defer face.Close()
+	baseline := y + tableCellPadding + int(row.fontSize*float64(labelDPI)/72)
+	for _, line := range row.wrapLines(q.label, tableLabelWidthPx-2*tableCellPadding) {
+		drawString(img, face, line, left+tableCellPadding, baseline)
+		baseline += row.lineHeight()
+	}
+
+	if q.url == "" {
+		return bottom
+	}
+
+	qrPng, err := qrcode.Encode(q.url, qrcode.Medium, q.size)
+	if err != nil {
+		return bottom
+	}
+	qrImg, err := png.Decode(bytes.NewReader(qrPng))
+	if err != nil {
+		return bottom
+	}
+
+	x := right - tableCellPadding - q.size
+	offsetY := y + (rowHeight-q.size)/2
+	draw.Draw(img, image.Rect(x, offsetY, x+q.size, offsetY+q.size), qrImg, image.Point{}, draw.Over)
+	return bottom
+}
+
+// buildRows creates the row list for the given template and data.
+func (r *LabelRenderer) buildRows(data LabelData) []row {
+	switch data.Template {
+	case "pet":
+		return []row{
+			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
+			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
+			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
+			tableRow{label: "保存方法", value: fixedPetStorageMethod, fontSize: fontSizeBody},
+			tableRow{label: "加工者名", value: fixedProcessorName, fontSize: fontSizeBody},
+			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation, fontSize: fontSizeBody},
+			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus, fontSize: fontSizeBody},
+		}
+	case "traceable_deer":
+		individualID := data.IndividualID
+		if individualID == "" {
+			individualID = data.IndividualNumber
+		}
+		storageMethod := data.StorageMethod
+		if storageMethod == "" {
+			storageMethod = data.StorageTemperature
+		}
+		if storageMethod == "" {
+			storageMethod = fixedTraceableStorageMethod
+		}
+		return []row{
+			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
+			tableRow{label: "捕獲地", value: data.CaptureLocation, fontSize: fontSizeBody},
+			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
+			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
+			tableRow{label: "保存方法", value: storageMethod, fontSize: fontSizeBody},
+			tableRow{label: "加工者名", value: fixedProcessorName, fontSize: fontSizeBody},
+			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation, fontSize: fontSizeBody},
+			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus, fontSize: fontSizeBody},
+			tableRow{label: "加熱用である旨", value: fixedHeatedInstruction, fontSize: fontSizeBody},
+			tableRow{label: "個体識別番号", value: individualID, fontSize: fontSizeBody},
+			qrTableRow{label: "QR", url: data.QRCode, size: 132},
+		}
+	default:
+		return []row{
+			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
+			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
+			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
+		}
+	}
 }
 
 // makeFace creates a font.Face at the given point size.

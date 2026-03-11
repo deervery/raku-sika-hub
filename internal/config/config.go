@@ -41,7 +41,7 @@ func Default() Config {
 		Parity:          "even",
 		StopBits:        1,
 		PrinterName:     "Brother_QL-820NWB",
-		PrinterDriver:   "ptouch_template",
+		PrinterDriver:   "cups_png",
 		PrinterAddress:  "",
 		TemplateMapPath: "templates/siknue/template-map.json",
 		MaxClients:      1,

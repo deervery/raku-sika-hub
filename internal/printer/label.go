@@ -258,7 +258,7 @@ type spacerRow struct {
 	px int
 }
 
-func (s spacerRow) height() int  { return s.px }
+func (s spacerRow) height() int { return s.px }
 func (s spacerRow) draw(_ *image.RGBA, _ *LabelRenderer, y int) int {
 	return y + s.px
 }
@@ -274,7 +274,7 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 	)
 
 	switch data.Template {
-	case "traceable":
+	case "traceable", "traceable_deer", "traceable_bear":
 		rows = append(rows,
 			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
 			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
@@ -294,7 +294,7 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
 		}
 
-	case "non_traceable":
+	case "non_traceable", "non_traceable_deer":
 		rows = append(rows,
 			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
 			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},

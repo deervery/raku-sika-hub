@@ -195,7 +195,7 @@ func firstTemplateName(registry *TemplateRegistry) string {
 	if registry == nil {
 		return ""
 	}
-	for _, name := range []string{"traceable", "non_traceable", "processed", "pet"} {
+	for _, name := range []string{"traceable_deer", "traceable_bear", "non_traceable_deer", "traceable", "non_traceable", "processed", "pet"} {
 		if _, ok := registry.Entry(name); ok {
 			return name
 		}

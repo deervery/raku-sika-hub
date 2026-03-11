@@ -14,7 +14,41 @@
         "qrCode"
       ]
     },
+    "traceable_deer": {
+      "key": 1,
+      "fields": [
+        "productName",
+        "productQuantity",
+        "deadlineDate",
+        "storageTemperature",
+        "individualNumber",
+        "captureLocation",
+        "qrCode"
+      ]
+    },
+    "traceable_bear": {
+      "key": 5,
+      "fields": [
+        "productName",
+        "productQuantity",
+        "deadlineDate",
+        "storageTemperature",
+        "individualNumber",
+        "captureLocation",
+        "qrCode"
+      ]
+    },
     "non_traceable": {
+      "key": 2,
+      "fields": [
+        "productName",
+        "productQuantity",
+        "deadlineDate",
+        "storageTemperature",
+        "attentionText"
+      ]
+    },
+    "non_traceable_deer": {
       "key": 2,
       "fields": [
         "productName",

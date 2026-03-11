@@ -13,7 +13,7 @@ func TestLoadTemplateRegistryAndRenderPayload(t *testing.T) {
   "delimiter": "\t",
   "printStartCommand": "^FF",
   "templates": {
-    "traceable": {
+    "traceable_deer": {
       "key": 1,
       "fields": ["productName", "productQuantity", "individualNumber"]
     }
@@ -28,13 +28,13 @@ func TestLoadTemplateRegistryAndRenderPayload(t *testing.T) {
 		t.Fatalf("LoadTemplateRegistry failed: %v", err)
 	}
 
-	entry, ok := registry.Entry("traceable")
+	entry, ok := registry.Entry("traceable_deer")
 	if !ok {
-		t.Fatal("expected traceable template")
+		t.Fatal("expected traceable_deer template")
 	}
 
 	payload, err := registry.RenderPayload(entry, LabelData{
-		Template:         "traceable",
+		Template:         "traceable_deer",
 		ProductName:      "鹿肉",
 		ProductQuantity:  "2kg",
 		IndividualNumber: "1234",

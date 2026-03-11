@@ -3,7 +3,7 @@ package printer
 // LabelData holds the data for label printing.
 // Field names match the lite frontend's LabelData type in lib/labels/constants.ts.
 type LabelData struct {
-	Template           string `json:"template"`           // traceable, non_traceable, processed, pet
+	Template           string `json:"template"`           // traceable_deer, traceable_bear, non_traceable_deer, processed, pet
 	Copies             int    `json:"copies"`             // number of copies (default 1, max 30)
 	ProductName        string `json:"productName"`        // 品名
 	ProductQuantity    string `json:"productQuantity"`    // 内容量 e.g. "2.35 kg"
@@ -30,17 +30,20 @@ type LabelData struct {
 
 // ValidTemplates lists the supported template keys.
 var ValidTemplates = map[string]bool{
-	"traceable":      true,
-	"non_traceable":  true,
-	"processed":      true,
-	"pet":            true,
+	"traceable":          true,
+	"traceable_deer":     true,
+	"traceable_bear":     true,
+	"non_traceable":      true,
+	"non_traceable_deer": true,
+	"processed":          true,
+	"pet":                true,
 }
 
 // RequiredFields returns the required field names for each template.
 func RequiredFields(template string) []string {
 	common := []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}
 	switch template {
-	case "traceable":
+	case "traceable", "traceable_deer", "traceable_bear":
 		return append(common, "individualNumber")
 	default:
 		return common

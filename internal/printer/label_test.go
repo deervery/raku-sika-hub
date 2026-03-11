@@ -11,14 +11,14 @@ func TestBuildRows_AllTemplates(t *testing.T) {
 	r := &LabelRenderer{} // font not needed for buildRows
 
 	templates := []struct {
-		name     string
-		data     LabelData
-		minRows  int
+		name    string
+		data    LabelData
+		minRows int
 	}{
 		{
-			name: "traceable",
+			name: "traceable_deer",
 			data: LabelData{
-				Template:           "traceable",
+				Template:           "traceable_deer",
 				ProductName:        "鹿肉（モモ）",
 				ProductQuantity:    "2.35 kg",
 				DeadlineDate:       "2026年3月18日",
@@ -30,9 +30,23 @@ func TestBuildRows_AllTemplates(t *testing.T) {
 			minRows: 7, // name + qty + deadline + storage + sep + individual + capture + spacer + qr
 		},
 		{
-			name: "non_traceable",
+			name: "traceable_bear",
 			data: LabelData{
-				Template:           "non_traceable",
+				Template:           "traceable_bear",
+				ProductName:        "クマ肉（モモ）",
+				ProductQuantity:    "2.35 kg",
+				DeadlineDate:       "2026年3月18日",
+				StorageTemperature: "-18℃以下",
+				IndividualNumber:   "1234-56-78-90",
+				CaptureLocation:    "長野県信濃町",
+				QRCode:             "https://rakusika.com/t/abc/def",
+			},
+			minRows: 7,
+		},
+		{
+			name: "non_traceable_deer",
+			data: LabelData{
+				Template:           "non_traceable_deer",
 				ProductName:        "鹿肉（ロース）",
 				ProductQuantity:    "1.80 kg",
 				DeadlineDate:       "2026年3月20日",
@@ -102,8 +116,9 @@ func TestRequiredFields(t *testing.T) {
 		template string
 		expected []string
 	}{
-		{"traceable", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber"}},
-		{"non_traceable", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
+		{"traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber"}},
+		{"traceable_bear", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber"}},
+		{"non_traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
 		{"processed", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
 		{"pet", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
 	}
@@ -125,7 +140,7 @@ func TestRequiredFields(t *testing.T) {
 
 // TestValidTemplates checks template key validation.
 func TestValidTemplates(t *testing.T) {
-	for _, key := range []string{"traceable", "non_traceable", "processed", "pet"} {
+	for _, key := range []string{"traceable", "traceable_deer", "traceable_bear", "non_traceable", "non_traceable_deer", "processed", "pet"} {
 		if !ValidTemplates[key] {
 			t.Errorf("expected %q to be valid", key)
 		}
@@ -146,7 +161,7 @@ func TestRender_WithFont(t *testing.T) {
 	}
 
 	data := LabelData{
-		Template:           "traceable",
+		Template:           "traceable_deer",
 		ProductName:        "鹿肉（モモ）",
 		ProductQuantity:    "2.35 kg",
 		DeadlineDate:       "2026年3月18日",

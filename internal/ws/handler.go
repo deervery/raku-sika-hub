@@ -305,7 +305,7 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 			Type:      "print_error",
 			RequestID: req.RequestID,
 			Code:      ErrCodeInvalidRequest,
-			Message:   "不明なテンプレート: \"" + req.Template + "\"。使用可能: traceable, non_traceable, processed, pet",
+			Message:   "不明なテンプレート: \"" + req.Template + "\"。使用可能: traceable_deer, traceable_bear, non_traceable_deer, processed, pet",
 		})
 		return
 	}

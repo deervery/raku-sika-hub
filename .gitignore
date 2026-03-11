@@ -1,4 +1,3 @@
-node_modules/
-dist/
-*.js.map
-.env
+raku-sika-hub
+logs/
+config.json

@@ -1,0 +1,79 @@
+package app
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/deervery/raku-sika-hub/internal/config"
+	"github.com/deervery/raku-sika-hub/internal/logging"
+	"github.com/deervery/raku-sika-hub/internal/printer"
+	"github.com/deervery/raku-sika-hub/internal/scale"
+	"github.com/deervery/raku-sika-hub/internal/ws"
+)
+
+// App is the top-level application container.
+type App struct {
+	cfg         config.Config
+	logger      *logging.Logger
+	hub         *ws.Hub
+	scaleClient *scale.Client
+	printer     *printer.Brother
+	handler     *ws.Handler
+	wsServer    *ws.Server
+}
+
+// New creates a new App from the given configuration.
+func New(cfg config.Config) (*App, error) {
+	level := logging.ParseLevel(cfg.LogLevel)
+	logger, err := logging.New(logging.LogDir(), level)
+	if err != nil {
+		return nil, fmt.Errorf("create logger: %w", err)
+	}
+
+	hub := ws.NewHub()
+
+	scaleClient := scale.NewClient(cfg, logger, func(connected bool, port string) {
+		hub.Broadcast(ws.ConnectionStatus{
+			Type:      "connection_status",
+			Connected: connected,
+			Port:      port,
+		})
+	})
+
+	prn := printer.NewBrother(cfg.PrinterName, logger)
+	handler := ws.NewHandler(scaleClient, prn, hub, logger)
+	wsServer := ws.NewServer(hub, handler, logger, cfg.ListenAddr, cfg.MaxClients)
+
+	return &App{
+		cfg:         cfg,
+		logger:      logger,
+		hub:         hub,
+		scaleClient: scaleClient,
+		printer:     prn,
+		handler:     handler,
+		wsServer:    wsServer,
+	}, nil
+}
+
+// Run starts the application and blocks until the context is cancelled.
+func (a *App) Run(ctx context.Context) error {
+	a.logger.Info("starting raku-sika-hub (listen=%s, maxClients=%d)", a.cfg.ListenAddr, a.cfg.MaxClients)
+
+	a.scaleClient.Start(ctx)
+
+	// wsServer.Start blocks until shutdown
+	err := a.wsServer.Start(ctx)
+
+	a.logger.Info("raku-sika-hub stopped")
+	return err
+}
+
+// Stop gracefully shuts down all components.
+func (a *App) Stop() {
+	a.logger.Info("stopping raku-sika-hub")
+
+	ctx := context.Background()
+	a.wsServer.Stop(ctx)
+	a.scaleClient.Stop()
+	a.logger.Close()
+}

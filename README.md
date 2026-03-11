@@ -1,5 +1,29 @@
 # raku-sika-hub
 
+## Lane 2 申し送り
+
+- Pi 側の systemd override では `PRINTER_NAME=Brother_QL-820NWB` を前提にする
+- 開発中に複数接続で切り分ける場合は `MAX_CLIENTS=3` などを設定する
+- 開発用 Origin は `ALLOWED_ORIGINS=localhost:*,127.0.0.1:*,192.168.50.*` を使う
+- スケール未接続の mock 動作確認では `SCALE_DRIVER=mock` を設定する
+
+```ini
+[Service]
+Environment=PRINTER_NAME=Brother_QL-820NWB
+Environment=MAX_CLIENTS=3
+Environment=SCALE_DRIVER=mock
+Environment=ALLOWED_ORIGINS=localhost:*,127.0.0.1:*,192.168.50.*
+```
+
+反映後:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart raku-sika-hub
+curl http://127.0.0.1:19800/health
+wscat -c ws://192.168.50.40:19800
+```
+
 Raspberry Pi 上で常駐する機器制御 WebSocket ゲートウェイ（Go 実装）。
 A&D 防塵・防水デジタル台はかり HV-C シリーズ（HV-60KCWP-K 等）と Brother ラベルプリンタ（QL-800/QL-820 シリーズ）を制御し、フロントエンド（[raku-sika-lite](https://github.com/deervery/raku-sika-lite)）に対して WSA 互換の WebSocket API を提供する。
 

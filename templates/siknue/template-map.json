@@ -1,4 +1,5 @@
 {
+  "encoding": "shift_jis",
   "delimiter": "\t",
   "printStartCommand": "^FF",
   "templates": {
@@ -72,6 +73,7 @@
         "fatQuantity",
         "carbohydratesQuantity",
         "saltEquivalentQuantity",
+        "isHeatedMeatProducts",
         "attentionText"
       ]
     },
@@ -83,6 +85,7 @@
         "deadlineDate",
         "storageTemperature",
         "productIngredient",
+        "nutritionUnit",
         "attentionText"
       ]
     }

@@ -364,6 +364,7 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		ProductQuantity:        req.Data["productQuantity"],
 		DeadlineDate:           req.Data["deadlineDate"],
 		StorageTemperature:     req.Data["storageTemperature"],
+		IndividualID:           req.Data["individualId"],
 		IndividualNumber:       req.Data["individualNumber"],
 		CaptureLocation:        req.Data["captureLocation"],
 		QRCode:                 req.Data["qrCode"],
@@ -374,7 +375,14 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		FatQuantity:            req.Data["fatQuantity"],
 		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
 		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
+		IsHeatedMeatProducts:   req.Data["isHeatedMeatProducts"],
 		AttentionText:          req.Data["attentionText"],
+	}
+	if data.IndividualNumber == "" {
+		data.IndividualNumber = data.IndividualID
+	}
+	if data.IndividualID == "" {
+		data.IndividualID = data.IndividualNumber
 	}
 
 	err := h.printer.PrintLabel(data)

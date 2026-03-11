@@ -11,6 +11,7 @@ type LabelData struct {
 	StorageTemperature string `json:"storageTemperature"` // 保存温度 e.g. "-18℃以下"
 
 	// Traceable fields
+	IndividualID     string `json:"individualId"`     // b-PAC placeholder alias for formatted display value
 	IndividualNumber string `json:"individualNumber"` // 個体識別番号 e.g. "1234-56-78-90"
 	CaptureLocation  string `json:"captureLocation"`  // 捕獲場所
 	QRCode           string `json:"qrCode"`           // QRコード URL
@@ -23,6 +24,7 @@ type LabelData struct {
 	FatQuantity            string `json:"fatQuantity"`            // 脂質
 	CarbohydratesQuantity  string `json:"carbohydratesQuantity"`  // 炭水化物
 	SaltEquivalentQuantity string `json:"saltEquivalentQuantity"` // 食塩相当量
+	IsHeatedMeatProducts   string `json:"isHeatedMeatProducts"`   // 加熱食肉製品区分
 
 	// Misc
 	AttentionText string `json:"attentionText"` // 注意書き

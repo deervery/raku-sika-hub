@@ -6,9 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
 )
 
 type TemplateRegistry struct {
+	Encoding          string                   `json:"encoding"`
 	Delimiter         string                   `json:"delimiter"`
 	PrintStartCommand string                   `json:"printStartCommand"`
 	Templates         map[string]TemplateEntry `json:"templates"`
@@ -67,7 +71,7 @@ func (r *TemplateRegistry) RenderPayload(entry TemplateEntry, data LabelData) ([
 	}
 
 	payload := fmt.Sprintf("^TS%03d%s%s", entry.Key, strings.Join(values, r.Delimiter), r.PrintStartCommand)
-	return []byte(payload), nil
+	return encodeTemplatePayload(payload, r.Encoding)
 }
 
 func (r *TemplateRegistry) TestLabelData(templateName string) (LabelData, error) {
@@ -102,6 +106,8 @@ func defaultTestValue(field string) string {
 		return "-18C"
 	case "individualNumber":
 		return "TEST-0001"
+	case "individualId":
+		return "TEST-0001"
 	case "captureLocation":
 		return "Shinano"
 	case "qrCode":
@@ -120,6 +126,8 @@ func defaultTestValue(field string) string {
 		return "0g"
 	case "saltEquivalentQuantity":
 		return "0.1g"
+	case "isHeatedMeatProducts":
+		return "加熱食肉製品"
 	case "attentionText":
 		return "TEST"
 	default:
@@ -147,6 +155,11 @@ func labelFieldValue(data LabelData, field string) string {
 		return data.StorageTemperature
 	case "individualNumber":
 		return data.IndividualNumber
+	case "individualId":
+		if data.IndividualID != "" {
+			return data.IndividualID
+		}
+		return data.IndividualNumber
 	case "captureLocation":
 		return data.CaptureLocation
 	case "qrCode":
@@ -165,6 +178,8 @@ func labelFieldValue(data LabelData, field string) string {
 		return data.CarbohydratesQuantity
 	case "saltEquivalentQuantity":
 		return data.SaltEquivalentQuantity
+	case "isHeatedMeatProducts":
+		return data.IsHeatedMeatProducts
 	case "attentionText":
 		return data.AttentionText
 	default:
@@ -184,6 +199,8 @@ func assignLabelField(data *LabelData, field, value string) {
 		data.StorageTemperature = value
 	case "individualNumber":
 		data.IndividualNumber = value
+	case "individualId":
+		data.IndividualID = value
 	case "captureLocation":
 		data.CaptureLocation = value
 	case "qrCode":
@@ -202,7 +219,31 @@ func assignLabelField(data *LabelData, field, value string) {
 		data.CarbohydratesQuantity = value
 	case "saltEquivalentQuantity":
 		data.SaltEquivalentQuantity = value
+	case "isHeatedMeatProducts":
+		data.IsHeatedMeatProducts = value
 	case "attentionText":
 		data.AttentionText = value
 	}
+}
+
+func encodeTemplatePayload(payload string, encodingName string) ([]byte, error) {
+	switch normalizeEncodingName(encodingName) {
+	case "", "utf8":
+		return []byte(payload), nil
+	case "shiftjis":
+		out, _, err := transform.Bytes(japanese.ShiftJIS.NewEncoder(), []byte(payload))
+		if err != nil {
+			return nil, fmt.Errorf("encode payload as Shift_JIS: %w", err)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported template encoding: %s", encodingName)
+	}
+}
+
+func normalizeEncodingName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	name = strings.ReplaceAll(name, "-", "")
+	name = strings.ReplaceAll(name, "_", "")
+	return name
 }

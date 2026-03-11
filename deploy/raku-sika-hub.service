@@ -1,0 +1,20 @@
+[Unit]
+Description=RakuSika Hub - Scale & Printer Gateway
+After=network.target avahi-daemon.service cups.service
+
+[Service]
+Type=simple
+User=rakusika
+WorkingDirectory=/home/rakusika/raku-sika-hub
+ExecStart=/home/rakusika/raku-sika-hub/raku-sika-hub
+Restart=always
+RestartSec=5
+Environment=HOME=/home/rakusika
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=raku-sika-hub
+
+[Install]
+WantedBy=multi-user.target

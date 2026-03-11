@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
@@ -74,12 +75,14 @@ func (h *Handler) HandleMessage(ctx context.Context, client *WSClient, raw []byt
 		h.SendCurrentStatus(client)
 	case "print_test":
 		go h.handlePrintTest(ctx, client, req)
+	case "print":
+		go h.handlePrint(ctx, client, raw)
 	default:
 		client.Send(ErrorResponse{
 			Type:      "error",
 			RequestID: req.RequestID,
 			Code:      ErrCodeUnknownType,
-			Message:   "不明なリクエストタイプ: \"" + req.Type + "\"。使用可能: weigh, tare, zero, health, status, print_test",
+			Message:   "不明なリクエストタイプ: \"" + req.Type + "\"。使用可能: weigh, tare, zero, health, status, print_test, print",
 		})
 	}
 }
@@ -241,6 +244,124 @@ func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Req
 		Type:      "print_test_ok",
 		RequestID: req.RequestID,
 		Message:   "テスト印刷を送信しました",
+	})
+}
+
+func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte) {
+	var req PrintRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		client.Send(PrintErrorResponse{
+			Type:    "print_error",
+			Code:    ErrCodeInvalidRequest,
+			Message: "印刷リクエストのJSONパースに失敗しました。",
+		})
+		return
+	}
+
+	// Validate template.
+	if !printer.ValidTemplates[req.Template] {
+		client.Send(PrintErrorResponse{
+			Type:      "print_error",
+			RequestID: req.RequestID,
+			Code:      ErrCodeInvalidRequest,
+			Message:   "不明なテンプレート: \"" + req.Template + "\"。使用可能: traceable, non_traceable, processed, pet",
+		})
+		return
+	}
+
+	// Validate copies.
+	copies := req.Copies
+	if copies < 1 {
+		copies = 1
+	}
+	if copies > printer.MaxCopies {
+		client.Send(PrintErrorResponse{
+			Type:      "print_error",
+			RequestID: req.RequestID,
+			Code:      ErrCodeInvalidRequest,
+			Message:   fmt.Sprintf("印刷部数は1〜%dの範囲で指定してください。", printer.MaxCopies),
+		})
+		return
+	}
+
+	// Validate required fields.
+	required := printer.RequiredFields(req.Template)
+	var missing []string
+	for _, f := range required {
+		if req.Data[f] == "" {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		client.Send(PrintErrorResponse{
+			Type:      "print_error",
+			RequestID: req.RequestID,
+			Code:      ErrCodeInvalidRequest,
+			Message:   "必須フィールドが不足しています: " + strings.Join(missing, ", "),
+		})
+		return
+	}
+
+	// Check renderer availability.
+	if !h.printer.CanRenderLabels() {
+		client.Send(PrintErrorResponse{
+			Type:      "print_error",
+			RequestID: req.RequestID,
+			Code:      "PRINTER_ERROR",
+			Message:   "ラベルレンダラが初期化されていません。日本語フォントをインストールしてください: sudo apt-get install fonts-noto-cjk",
+		})
+		return
+	}
+
+	// Build LabelData from request.
+	data := printer.LabelData{
+		Template:               req.Template,
+		Copies:                 copies,
+		ProductName:            req.Data["productName"],
+		ProductQuantity:        req.Data["productQuantity"],
+		DeadlineDate:           req.Data["deadlineDate"],
+		StorageTemperature:     req.Data["storageTemperature"],
+		IndividualNumber:       req.Data["individualNumber"],
+		CaptureLocation:        req.Data["captureLocation"],
+		QRCode:                 req.Data["qrCode"],
+		ProductIngredient:      req.Data["productIngredient"],
+		NutritionUnit:          req.Data["nutritionUnit"],
+		CaloriesQuantity:       req.Data["caloriesQuantity"],
+		ProteinQuantity:        req.Data["proteinQuantity"],
+		FatQuantity:            req.Data["fatQuantity"],
+		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
+		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
+		AttentionText:          req.Data["attentionText"],
+	}
+
+	err := h.printer.PrintLabel(data)
+	if err != nil {
+		errMsg := err.Error()
+		code := "PRINTER_ERROR"
+		if strings.HasPrefix(errMsg, "PRINTER_NOT_CONFIGURED:") {
+			code = "PRINTER_NOT_CONFIGURED"
+		} else if strings.HasPrefix(errMsg, "PRINTER_PERMISSION_DENIED:") {
+			code = "PRINTER_PERMISSION_DENIED"
+		} else if strings.HasPrefix(errMsg, "PRINTER_DISABLED:") {
+			code = "PRINTER_DISABLED"
+		} else if strings.HasPrefix(errMsg, "PRINTER_PAPER_ERROR:") {
+			code = "PRINTER_PAPER_ERROR"
+		}
+		client.Send(PrintErrorResponse{
+			Type:      "print_error",
+			RequestID: req.RequestID,
+			Code:      code,
+			Message:   errMsg,
+		})
+		h.logger.Warn("print failed: [%s] %s", code, errMsg)
+		return
+	}
+
+	client.Send(PrintOKResponse{
+		Type:      "print_ok",
+		RequestID: req.RequestID,
+		Message:   fmt.Sprintf("ラベルを%d部印刷しました", copies),
+		Copies:    copies,
 	})
 }
 

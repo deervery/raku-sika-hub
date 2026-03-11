@@ -6,6 +6,31 @@ type Request struct {
 	RequestID string `json:"requestId,omitempty"`
 }
 
+// PrintRequest represents a label print request.
+type PrintRequest struct {
+	Type      string            `json:"type"`
+	RequestID string            `json:"requestId,omitempty"`
+	Template  string            `json:"template"`  // traceable, non_traceable, processed, pet
+	Copies    int               `json:"copies"`    // 1-30
+	Data      map[string]string `json:"data"`      // label field values
+}
+
+// PrintOKResponse is sent when a label print succeeds.
+type PrintOKResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Copies    int    `json:"copies"`
+}
+
+// PrintErrorResponse is sent when a label print fails.
+type PrintErrorResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId,omitempty"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+}
+
 // WeightResponse is sent when a stable weight is obtained.
 type WeightResponse struct {
 	Type      string  `json:"type"`

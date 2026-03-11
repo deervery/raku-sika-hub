@@ -16,6 +16,7 @@ type Config struct {
 	Parity      string `json:"parity"`
 	StopBits    int    `json:"stopBits"`
 	PrinterName string `json:"printerName"`
+	FontPath    string `json:"fontPath"`
 	MaxClients  int    `json:"maxClients"`
 	ListenAddr  string `json:"listenAddr"`
 	LogLevel    string `json:"logLevel"`

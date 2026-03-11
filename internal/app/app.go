@@ -40,7 +40,7 @@ func New(cfg config.Config) (*App, error) {
 		})
 	})
 
-	prn := printer.NewBrother(cfg.PrinterName, logger)
+	prn := printer.NewBrother(cfg.PrinterName, cfg.FontPath, logger)
 	handler := ws.NewHandler(scaleClient, prn, hub, logger)
 	wsServer := ws.NewServer(hub, handler, logger, cfg.ListenAddr, cfg.MaxClients)
 

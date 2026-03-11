@@ -21,7 +21,7 @@ type Config struct {
 	LogLevel    string `json:"logLevel"`
 }
 
-// Default returns a Config with factory defaults for HV-60KCWP-K on Raspberry Pi.
+// Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
 func Default() Config {
 	return Config{
 		VID:         "0403",

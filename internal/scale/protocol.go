@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// A&D serial command constants (per HV-60KCWP-K specification).
+// A&D serial command constants (per HV-C series / HV-60KCWP-K specification).
 const (
 	CmdWeigh = "Q\r\n"
 	CmdTare  = "T\r\n"

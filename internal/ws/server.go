@@ -97,6 +97,8 @@ type Server struct {
 	maxClients      int
 	originPatterns  []string
 	allowAllOrigins bool
+	tlsCertPath     string
+	tlsKeyPath      string
 }
 
 // NewServer creates a new WebSocket Server.
@@ -110,6 +112,12 @@ func NewServer(hub *Hub, handler *Handler, logger *logging.Logger, listenAddr st
 		originPatterns:  originPatterns,
 		allowAllOrigins: allowAllOrigins,
 	}
+}
+
+// SetTLS configures TLS certificate and key paths for WSS support.
+func (s *Server) SetTLS(certPath, keyPath string) {
+	s.tlsCertPath = certPath
+	s.tlsKeyPath = keyPath
 }
 
 // Start begins listening on the configured address.
@@ -128,14 +136,26 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 	}
 
+	useTLS := s.tlsCertPath != "" && s.tlsKeyPath != ""
+	proto := "ws"
+	if useTLS {
+		proto = "wss"
+	}
 	s.logger.Info(
-		"WebSocket server starting on %s (max clients: %d, allowAllOrigins=%t, allowedOrigins=%v)",
+		"%s server starting on %s (max clients: %d, allowAllOrigins=%t, allowedOrigins=%v)",
+		proto,
 		s.listenAddr,
 		s.maxClients,
 		s.allowAllOrigins,
 		s.originPatterns,
 	)
-	err := s.httpSrv.ListenAndServe()
+
+	var err error
+	if useTLS {
+		err = s.httpSrv.ListenAndServeTLS(s.tlsCertPath, s.tlsKeyPath)
+	} else {
+		err = s.httpSrv.ListenAndServe()
+	}
 	if err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("http listen: %w", err)
 	}

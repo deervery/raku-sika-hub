@@ -57,6 +57,9 @@ func New(cfg config.Config) (*App, error) {
 	}
 	handler := ws.NewHandler(scaleClient, prn, hub, logger)
 	wsServer := ws.NewServer(hub, handler, logger, cfg.ListenAddr, cfg.MaxClients, cfg.AllowedOrigins, cfg.AllowAllOrigins)
+	if cfg.TLSCertPath != "" && cfg.TLSKeyPath != "" {
+		wsServer.SetTLS(cfg.TLSCertPath, cfg.TLSKeyPath)
+	}
 
 	return &App{
 		cfg:         cfg,

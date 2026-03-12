@@ -28,6 +28,8 @@ type Config struct {
 	ScaleDriver     string   `json:"scaleDriver"`
 	AllowAllOrigins bool     `json:"allowAllOrigins"`
 	AllowedOrigins  []string `json:"allowedOrigins"`
+	TLSCertPath     string   `json:"tlsCertPath"`
+	TLSKeyPath      string   `json:"tlsKeyPath"`
 }
 
 // Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
@@ -152,6 +154,12 @@ func applyEnvOverrides(cfg *Config) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.MaxClients = n
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("TLS_CERT_PATH")); v != "" {
+		cfg.TLSCertPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TLS_KEY_PATH")); v != "" {
+		cfg.TLSKeyPath = v
 	}
 }
 

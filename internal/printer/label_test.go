@@ -213,12 +213,13 @@ func TestRender_WithFont(t *testing.T) {
 	}
 
 	bounds := img.Bounds()
-	if bounds.Dy() != labelHeightPx {
-		t.Errorf("expected height = %d (62mm), got %d", labelHeightPx, bounds.Dy())
+	// Render() rotates 90° CW for CUPS: width should be 732px (62mm tape width).
+	if bounds.Dx() != labelHeightPx {
+		t.Errorf("expected width = %d (62mm, rotated), got %d", labelHeightPx, bounds.Dx())
 	}
-	if bounds.Dx() < 100 {
-		t.Errorf("width too small: %d", bounds.Dx())
+	if bounds.Dy() < 100 {
+		t.Errorf("height too small: %d", bounds.Dy())
 	}
 
-	t.Logf("rendered label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)
+	t.Logf("rendered label (for CUPS): %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)
 }

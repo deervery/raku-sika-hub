@@ -59,7 +59,8 @@ func NewLabelRenderer(fontPath string) (*LabelRenderer, error) {
 	return &LabelRenderer{fontRegular: f}, nil
 }
 
-// Render generates a label PNG image and returns the temporary file path.
+// Render generates a label PNG for printing. The image is rotated 90° CW so
+// that width=732px (62mm) matches the Brother QL tape width expected by CUPS.
 func (r *LabelRenderer) Render(data LabelData) (string, error) {
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
@@ -67,18 +68,22 @@ func (r *LabelRenderer) Render(data LabelData) (string, error) {
 	}
 	defer tmpFile.Close()
 
-	if err := r.EncodePNG(tmpFile, data); err != nil {
+	img, err := r.renderImage(data)
+	if err != nil {
 		os.Remove(tmpFile.Name())
 		return "", err
+	}
+
+	rotated := rotate90CW(img)
+	if err := png.Encode(tmpFile, rotated); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("encode png: %w", err)
 	}
 	return tmpFile.Name(), nil
 }
 
+// EncodePNG writes the label as PNG for preview (no rotation — 62mm = height).
 func (r *LabelRenderer) EncodePNG(w io.Writer, data LabelData) error {
-	return r.encodePNG(w, data)
-}
-
-func (r *LabelRenderer) encodePNG(w io.Writer, data LabelData) error {
 	img, err := r.renderImage(data)
 	if err != nil {
 		return err
@@ -87,6 +92,21 @@ func (r *LabelRenderer) encodePNG(w io.Writer, data LabelData) error {
 		return fmt.Errorf("encode png: %w", err)
 	}
 	return nil
+}
+
+// rotate90CW rotates an image 90° clockwise.
+// (oldW, oldH) → (newW=oldH, newH=oldW)
+// This maps height=732px to width=732px for the CUPS driver.
+func rotate90CW(src *image.RGBA) *image.RGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(h-1-y, x, src.At(x, y))
+		}
+	}
+	return dst
 }
 
 // ── Layout computation ──

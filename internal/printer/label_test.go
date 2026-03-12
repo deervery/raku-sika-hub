@@ -94,7 +94,8 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 				t.Errorf("expected at least %d rows, got %d", tt.minRows, len(rows))
 			}
 
-			applyFontSize(rows, labelFontSize)
+			fontSize := r.computeOptimalFontSize(rows)
+			applyFontSize(rows, fontSize)
 			layout := r.computeLayout(rows)
 
 			totalHeight := 0
@@ -108,8 +109,11 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 			if totalHeight == 0 {
 				t.Error("total height is 0")
 			}
+			if layout.labelWidthPx > labelWidthPx {
+				t.Errorf("natural width %d exceeds label width %d", layout.labelWidthPx, labelWidthPx)
+			}
 			t.Logf("fontSize=%.1f layout: width=%d, totalHeight=%d, labelCol=%d, valueCol=%d",
-				labelFontSize, layout.labelWidthPx, totalHeight, layout.labelColPx, layout.valueColPx)
+				fontSize, layout.labelWidthPx, totalHeight, layout.labelColPx, layout.valueColPx)
 		})
 	}
 }

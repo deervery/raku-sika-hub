@@ -30,7 +30,6 @@ const (
 
 // Font size and spacing.
 const (
-	labelFontSize    = 10.0
 	lineSpacingRatio = 1.45
 	dpiScale         = lineSpacingRatio * float64(labelDPI) / 72.0 // ≈ 6.04
 )
@@ -200,13 +199,31 @@ func applyFontSize(rows []row, size float64) {
 	}
 }
 
+// computeOptimalFontSize finds the largest font size (in 0.5pt steps)
+// where the table content fits within the 62mm (732px) label width.
+func (r *LabelRenderer) computeOptimalFontSize(rows []row) float64 {
+	best := 6.0
+	for size := 10.0; size >= 6.0; size -= 0.5 {
+		applyFontSize(rows, size)
+		layout := r.computeLayout(rows)
+		if layout.labelWidthPx <= labelWidthPx {
+			best = size
+			break
+		}
+	}
+	return best
+}
+
 func (r *LabelRenderer) renderImage(data LabelData) (*image.RGBA, error) {
 	rows := r.buildRows(data)
-	applyFontSize(rows, labelFontSize)
+
+	// Auto-fit: largest font size that fills 62mm width without overflow.
+	fontSize := r.computeOptimalFontSize(rows)
+	applyFontSize(rows, fontSize)
 
 	layout := r.computeLayout(rows)
 
-	// Width is fixed at 732px (62mm tape). Expand value column to fill.
+	// Expand value column to fill exactly 732px width.
 	if layout.labelWidthPx < labelWidthPx {
 		extra := labelWidthPx - layout.labelWidthPx
 		layout.valueColPx += extra

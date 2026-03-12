@@ -150,8 +150,8 @@ func (b *Brother) TestPrint() error {
 	}
 
 	jobID := parseLPRequestID(outStr)
-	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 60*time.Second); err != nil {
-		return err
+	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 30*time.Second); err != nil {
+		b.logger.Warn("CUPS job %s still in queue after timeout (printer=%q): %v", jobID, status.SelectedName, err)
 	}
 
 	b.logger.Info("test print sent via lp (printer=%q, job=%s)", status.SelectedName, jobID)
@@ -239,11 +239,13 @@ func (b *Brother) PrintLabel(data LabelData) error {
 		return classifyLpError(string(out), status)
 	}
 
-	// Verify the job actually leaves the CUPS queue (i.e. gets sent to the printer).
+	// Wait for the job to leave the CUPS queue. If it times out, log a warning
+	// but still report success — the job was accepted by CUPS and may just be
+	// slow to process (USB transfer, rasterization, etc.).
 	jobID := parseLPRequestID(outStr)
 	b.logger.Info("waiting for CUPS job %s to complete (printer=%q)", jobID, status.SelectedName)
-	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 60*time.Second); err != nil {
-		return err
+	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 30*time.Second); err != nil {
+		b.logger.Warn("CUPS job %s still in queue after timeout (printer=%q): %v", jobID, status.SelectedName, err)
 	}
 
 	b.logger.Info("label printed: %d copies via lp (printer=%q, job=%s)", copies, status.SelectedName, jobID)

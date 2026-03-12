@@ -360,7 +360,7 @@ func (h *Handler) parsePrintRequest(raw []byte) (int, printer.LabelData, error) 
 	}
 
 	if !printer.ValidTemplates[req.Template] {
-		return 0, printer.LabelData{}, fmt.Errorf("不明なテンプレート: %q。使用可能: traceable_deer, pet", req.Template)
+		return 0, printer.LabelData{}, fmt.Errorf("不明なテンプレート: %q。使用可能: traceable_deer, traceable_bear, non_traceable_deer, processed, pet", req.Template)
 	}
 
 	copies := req.Copies
@@ -386,17 +386,26 @@ func (h *Handler) parsePrintRequest(raw []byte) (int, printer.LabelData, error) 
 	}
 
 	data := printer.LabelData{
-		Template:           req.Template,
-		Copies:             copies,
-		ProductName:        req.Data["productName"],
-		ProductQuantity:    req.Data["productQuantity"],
-		DeadlineDate:       req.Data["deadlineDate"],
-		StorageTemperature: req.Data["storageTemperature"],
-		StorageMethod:      req.Data["storageMethod"],
-		IndividualID:       req.Data["individualId"],
-		IndividualNumber:   req.Data["individualNumber"],
-		CaptureLocation:    req.Data["captureLocation"],
-		QRCode:             req.Data["qrCode"],
+		Template:               req.Template,
+		Copies:                 copies,
+		ProductName:            req.Data["productName"],
+		ProductQuantity:        req.Data["productQuantity"],
+		DeadlineDate:           req.Data["deadlineDate"],
+		StorageTemperature:     req.Data["storageTemperature"],
+		StorageMethod:          req.Data["storageMethod"],
+		IndividualID:           req.Data["individualId"],
+		IndividualNumber:       req.Data["individualNumber"],
+		CaptureLocation:        req.Data["captureLocation"],
+		QRCode:                 req.Data["qrCode"],
+		ProductIngredient:      req.Data["productIngredient"],
+		NutritionUnit:          req.Data["nutritionUnit"],
+		CaloriesQuantity:       req.Data["caloriesQuantity"],
+		ProteinQuantity:        req.Data["proteinQuantity"],
+		FatQuantity:            req.Data["fatQuantity"],
+		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
+		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
+		IsHeatedMeatProducts:   req.Data["isHeatedMeatProducts"],
+		AttentionText:          req.Data["attentionText"],
 	}
 	if data.IndividualID == "" {
 		data.IndividualID = data.IndividualNumber

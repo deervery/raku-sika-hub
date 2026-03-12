@@ -32,19 +32,40 @@ type LabelData struct {
 
 // ValidTemplates lists the supported template keys.
 var ValidTemplates = map[string]bool{
-	"traceable_deer": true,
-	"pet":            true,
+	"traceable_deer":     true,
+	"traceable_bear":     true,
+	"non_traceable_deer": true,
+	"processed":          true,
+	"pet":                true,
 }
 
 // RequiredFields returns the required field names for each template.
 func RequiredFields(template string) []string {
 	switch template {
-	case "traceable_deer":
+	case "traceable_deer", "traceable_bear":
 		return []string{"productName", "captureLocation", "productQuantity", "deadlineDate", "individualId", "qrCode"}
+	case "non_traceable_deer":
+		return []string{"productName", "productQuantity", "deadlineDate"}
+	case "processed":
+		return []string{"productName", "productQuantity", "deadlineDate"}
 	case "pet":
 		return []string{"productName", "productQuantity", "deadlineDate"}
 	default:
 		return nil
+	}
+}
+
+// NormalizeStorageTemperature converts English preset values to Japanese text.
+func NormalizeStorageTemperature(value string) string {
+	switch value {
+	case "frozen":
+		return "-18℃以下で保存"
+	case "refrigerated":
+		return "10℃以下で保存"
+	case "ambient":
+		return "直射日光と高温多湿を避けて保管してください。"
+	default:
+		return value
 	}
 }
 

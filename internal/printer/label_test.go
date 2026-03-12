@@ -8,7 +8,10 @@ import (
 
 // TestBuildRows_SupportedTemplates verifies that buildRows produces non-empty rows for each supported template.
 func TestBuildRows_SupportedTemplates(t *testing.T) {
-	r := &LabelRenderer{} // font not needed for buildRows
+	r, err := NewLabelRenderer("")
+	if err != nil {
+		t.Skipf("skipping: %v", err)
+	}
 
 	templates := []struct {
 		name    string
@@ -30,6 +33,49 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 			minRows: 11,
 		},
 		{
+			name: "traceable_bear",
+			data: LabelData{
+				Template:           "traceable_bear",
+				ProductName:        "熊肉（モモ）",
+				ProductQuantity:    "1.50 kg",
+				DeadlineDate:       "2026年4月10日",
+				StorageTemperature: "frozen",
+				IndividualID:       "9876-54-32-10",
+				CaptureLocation:    "北海道斜里町",
+				QRCode:             "https://rakusika.com/t/xyz/ghi",
+			},
+			minRows: 11,
+		},
+		{
+			name: "non_traceable_deer",
+			data: LabelData{
+				Template:           "non_traceable_deer",
+				ProductName:        "鹿肉ミンチ",
+				ProductQuantity:    "500g",
+				DeadlineDate:       "2026年5月1日",
+				StorageTemperature: "refrigerated",
+			},
+			minRows: 7,
+		},
+		{
+			name: "processed",
+			data: LabelData{
+				Template:               "processed",
+				ProductName:            "鹿肉カレー",
+				ProductQuantity:        "200g",
+				DeadlineDate:           "2027年1月1日",
+				StorageTemperature:     "ambient",
+				ProductIngredient:      "鹿肉、玉ねぎ、じゃがいも、カレールー",
+				NutritionUnit:          "1食(200g)あたり",
+				CaloriesQuantity:       "250kcal",
+				ProteinQuantity:        "15g",
+				FatQuantity:            "10g",
+				CarbohydratesQuantity:  "25g",
+				SaltEquivalentQuantity: "2.5g",
+			},
+			minRows: 10,
+		},
+		{
 			name: "pet",
 			data: LabelData{
 				Template:        "pet",
@@ -48,10 +94,10 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 				t.Errorf("expected at least %d rows, got %d", tt.minRows, len(rows))
 			}
 
-			// Verify all rows have positive height.
+			layout := r.computeLayout(rows)
 			totalHeight := 0
 			for i, row := range rows {
-				h := row.height()
+				h := row.height(r, layout)
 				if h <= 0 {
 					t.Errorf("row %d has non-positive height: %d", i, h)
 				}
@@ -60,6 +106,7 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 			if totalHeight == 0 {
 				t.Error("total height is 0")
 			}
+			t.Logf("layout: width=%d, labelCol=%d, valueCol=%d", layout.labelWidthPx, layout.labelColPx, layout.valueColPx)
 		})
 	}
 }
@@ -71,6 +118,9 @@ func TestRequiredFields(t *testing.T) {
 		expected []string
 	}{
 		{"traceable_deer", []string{"productName", "captureLocation", "productQuantity", "deadlineDate", "individualId", "qrCode"}},
+		{"traceable_bear", []string{"productName", "captureLocation", "productQuantity", "deadlineDate", "individualId", "qrCode"}},
+		{"non_traceable_deer", []string{"productName", "productQuantity", "deadlineDate"}},
+		{"processed", []string{"productName", "productQuantity", "deadlineDate"}},
 		{"pet", []string{"productName", "productQuantity", "deadlineDate"}},
 	}
 
@@ -91,7 +141,7 @@ func TestRequiredFields(t *testing.T) {
 
 // TestValidTemplates checks template key validation.
 func TestValidTemplates(t *testing.T) {
-	for _, key := range []string{"traceable_deer", "pet"} {
+	for _, key := range []string{"traceable_deer", "traceable_bear", "non_traceable_deer", "processed", "pet"} {
 		if !ValidTemplates[key] {
 			t.Errorf("expected %q to be valid", key)
 		}
@@ -103,8 +153,27 @@ func TestValidTemplates(t *testing.T) {
 	}
 }
 
+// TestNormalizeStorageTemperature verifies English-to-Japanese conversion.
+func TestNormalizeStorageTemperature(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"frozen", "-18℃以下で保存"},
+		{"refrigerated", "10℃以下で保存"},
+		{"ambient", "直射日光と高温多湿を避けて保管してください。"},
+		{"-4℃以下で保存", "-4℃以下で保存"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := NormalizeStorageTemperature(tt.input)
+		if got != tt.expected {
+			t.Errorf("NormalizeStorageTemperature(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 // TestRender_WithFont tests actual image rendering if a system font is available.
-// This test is skipped if no font is found (e.g., in CI without Japanese fonts).
 func TestRender_WithFont(t *testing.T) {
 	renderer, err := NewLabelRenderer("")
 	if err != nil {
@@ -128,7 +197,6 @@ func TestRender_WithFont(t *testing.T) {
 	}
 	defer os.Remove(path)
 
-	// Verify the output is a valid PNG.
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open output: %v", err)
@@ -141,8 +209,8 @@ func TestRender_WithFont(t *testing.T) {
 	}
 
 	bounds := img.Bounds()
-	if bounds.Dx() != labelWidthPx {
-		t.Errorf("expected width %d, got %d", labelWidthPx, bounds.Dx())
+	if bounds.Dx() < minLabelWidthPx {
+		t.Errorf("expected width >= %d, got %d", minLabelWidthPx, bounds.Dx())
 	}
 	if bounds.Dy() < 100 {
 		t.Errorf("height too small: %d", bounds.Dy())

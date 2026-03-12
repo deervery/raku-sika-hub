@@ -176,6 +176,28 @@ func (p *PtouchTemplate) Queue() (QueueStatus, error) {
 	return readCUPSQueue(status.SelectedName, status.Source)
 }
 
+func (p *PtouchTemplate) Recover() error {
+	// TCP direct mode: no CUPS stack to restart
+	if p.address != "" {
+		p.logger.Info("printer recovery: skipped (TCP direct mode, address=%q)", p.address)
+		return nil
+	}
+	status, _ := p.Status()
+	name := status.SelectedName
+	if name == "" {
+		name = p.name
+	}
+	return recoverPrintStack(name, p.logger)
+}
+
+func (p *PtouchTemplate) PrinterName() string {
+	status, _ := p.Status()
+	if status.SelectedName != "" {
+		return status.SelectedName
+	}
+	return p.name
+}
+
 func (p *PtouchTemplate) ClearQueue() (QueueStatus, error) {
 	status, err := p.Status()
 	if err != nil {

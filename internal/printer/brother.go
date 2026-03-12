@@ -277,6 +277,23 @@ func (b *Brother) Queue() (QueueStatus, error) {
 	return readCUPSQueue(status.SelectedName, status.Source)
 }
 
+func (b *Brother) Recover() error {
+	status, _ := b.Status()
+	name := status.SelectedName
+	if name == "" {
+		name = b.name
+	}
+	return recoverPrintStack(name, b.logger)
+}
+
+func (b *Brother) PrinterName() string {
+	status, _ := b.Status()
+	if status.SelectedName != "" {
+		return status.SelectedName
+	}
+	return b.name
+}
+
 func (b *Brother) ClearQueue() (QueueStatus, error) {
 	status, err := b.Status()
 	if err != nil {

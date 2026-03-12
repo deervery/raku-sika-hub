@@ -40,6 +40,11 @@ func New(cfg config.Config) (*App, error) {
 		})
 	})
 
+	if cfg.ScaleDriver == "mock" {
+		logger.Info("SCALE_DRIVER=mock: モックスケールを使用します")
+		scaleClient.SetMockMode()
+	}
+
 	prn, err := printer.NewDriver(printer.DriverConfig{
 		DriverName:      cfg.PrinterDriver,
 		PrinterName:     cfg.PrinterName,

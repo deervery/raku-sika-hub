@@ -10,12 +10,21 @@ ExecStart=/home/rakusika/raku-sika-hub/raku-sika-hub
 Restart=always
 RestartSec=5
 Environment=HOME=/home/rakusika
+
+# --- Scale ---
+# SCALE_DRIVER: "mock" = モック, "" or "real" = 実機 (default)
+# Environment=SCALE_DRIVER=mock
+# PORT: 空=自動検出, 明示指定=/dev/ttyUSB0
+# Environment=PORT=/dev/ttyUSB0
+
+# --- Printer ---
 # Environment=PRINTER_NAME=Brother_QL-820NWB
 # Environment=PRINTER_DRIVER=ptouch_template
 # Environment=PRINTER_ADDRESS=192.168.50.40:9100
 # Environment=TEMPLATE_MAP_PATH=templates/siknue/template-map.json
+
+# --- Server ---
 # Environment=MAX_CLIENTS=3
-# Environment=SCALE_DRIVER=mock
 # Environment=ALLOWED_ORIGINS=localhost:*,127.0.0.1:*,192.168.50.*
 # Environment=ALLOW_ALL_ORIGINS=false
 

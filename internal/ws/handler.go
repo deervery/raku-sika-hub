@@ -277,8 +277,11 @@ func printerReady(status printer.PrinterStatus) bool {
 func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Request) {
 	err := h.printer.TestPrint()
 	if err != nil {
+		// Attempt auto-recovery and retry once
+		err = printer.RecoverAndRetry(h.printer.PrinterName(), h.logger, h.printer.TestPrint, err)
+	}
+	if err != nil {
 		errMsg := err.Error()
-		// The printer driver already classifies errors with prefixes
 		code := ErrCodeUnknownError
 		if strings.HasPrefix(errMsg, "PRINTER_NOT_CONFIGURED:") {
 			code = "PRINTER_NOT_CONFIGURED"
@@ -332,6 +335,12 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 	}
 
 	err = h.printer.PrintLabel(data)
+	if err != nil {
+		// Attempt auto-recovery and retry once
+		err = printer.RecoverAndRetry(h.printer.PrinterName(), h.logger, func() error {
+			return h.printer.PrintLabel(data)
+		}, err)
+	}
 	if err != nil {
 		errMsg := err.Error()
 		code := errorCodeForPrintError(err)

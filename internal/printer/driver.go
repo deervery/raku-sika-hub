@@ -23,6 +23,10 @@ type Driver interface {
 	CanPrintLabels() bool
 	Queue() (QueueStatus, error)
 	ClearQueue() (QueueStatus, error)
+	// Recover restarts the print stack (CUPS/ipp-usb/avahi) to fix transient errors.
+	Recover() error
+	// PrinterName returns the resolved printer name for recovery operations.
+	PrinterName() string
 }
 
 type DriverConfig struct {

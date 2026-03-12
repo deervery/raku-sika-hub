@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -216,11 +217,14 @@ func (c *Client) sendWeighLocked() (*WeighResult, error) {
 }
 
 func (c *Client) sendCommandLocked(cmd string) (string, error) {
+	cmdLabel := strings.TrimRight(cmd, "\r\n")
 	if _, err := c.port.Write([]byte(cmd)); err != nil {
+		c.logger.Warn("シリアル書き込み失敗: cmd=%s port=%s err=%v", cmdLabel, c.PortName(), err)
 		return "", fmt.Errorf("write: %w", err)
 	}
 	line, err := c.reader.ReadString('\n')
 	if err != nil {
+		c.logger.Warn("シリアル読み取り失敗: cmd=%s port=%s err=%v", cmdLabel, c.PortName(), err)
 		return "", fmt.Errorf("read: %w", err)
 	}
 	return line, nil
@@ -244,20 +248,33 @@ func (c *Client) reconnectLoop(ctx context.Context) {
 	}
 }
 
+// SetMockMode configures the client with a mock port opener for SCALE_DRIVER=mock.
+func (c *Client) SetMockMode() {
+	c.openPort = MockPortOpener()
+	c.cfg.Port = "mock"
+}
+
 func (c *Client) tryConnect() {
 	portName := c.cfg.Port
 	if portName == "" {
+		c.logger.Info("ポート自動検出開始 (VID:%s PID:%s)", c.cfg.VID, c.cfg.PID)
 		var err error
-		portName, err = DetectPort(c.cfg.VID, c.cfg.PID)
+		portName, err = DetectPort(c.cfg.VID, c.cfg.PID, c.logger)
 		if err != nil {
-			c.logger.Info("port detect: %v", err)
+			c.logger.Info("ポート自動検出失敗: %v", err)
 			return
 		}
+		c.logger.Info("ポート自動検出成功: %s", portName)
+	} else {
+		c.logger.Info("ポート明示指定: %s", portName)
 	}
+
+	c.logger.Info("ポートオープン試行: %s (baud=%d, data=%d, parity=%s, stop=%d)",
+		portName, c.cfg.BaudRate, c.cfg.DataBits, c.cfg.Parity, c.cfg.StopBits)
 
 	port, err := c.openPort(portName, c.cfg)
 	if err != nil {
-		c.logger.Warn("open port %s: %v", portName, err)
+		c.logger.Warn("ポートオープン失敗: %s: %v", portName, err)
 		return
 	}
 
@@ -266,21 +283,22 @@ func (c *Client) tryConnect() {
 	c.reader = bufio.NewReader(port)
 
 	// Verify the scale actually responds before marking as connected.
-	_, err = c.sendCommandLocked(CmdWeigh)
+	resp, err := c.sendCommandLocked(CmdWeigh)
 	if err != nil {
-		c.logger.Info("scale not responding on %s: %v", portName, err)
+		c.logger.Info("スケール応答なし: %s: %v", portName, err)
 		c.port.Close()
 		c.port = nil
 		c.reader = nil
 		c.mu.Unlock()
 		return
 	}
+	c.logger.Info("スケール応答確認: %s → %q", portName, strings.TrimRight(resp, "\r\n"))
 	c.mu.Unlock()
 
 	c.portName.Store(portName)
 	c.connected.Store(true)
 
-	c.logger.Info("connected to %s", portName)
+	c.logger.Info("スケール接続完了: %s", portName)
 	if c.onStatus != nil {
 		c.onStatus(true, portName)
 	}

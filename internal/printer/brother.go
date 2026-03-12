@@ -141,7 +141,7 @@ func (b *Brother) TestPrint() error {
 	}
 	defer os.Remove(imgPath)
 
-	cmd := exec.Command("lp", "-d", status.SelectedName, imgPath)
+	cmd := exec.Command("lp", "-d", status.SelectedName, "-o", "media=custom_62x13mm_62x13mm", imgPath)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))
 	b.logger.Info("lp output (test print, printer=%q): %s", status.SelectedName, outStr)
@@ -208,19 +208,21 @@ func (b *Brother) PrintLabel(data LabelData) error {
 	}
 
 	// Render the label image.
-	imgPath, err := b.renderer.Render(data)
+	result, err := b.renderer.Render(data)
 	if err != nil {
 		return fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
 	}
-	defer os.Remove(imgPath)
+	defer os.Remove(result.Path)
 
-	// Print via CUPS lp command.
+	// Print via CUPS lp command with dynamic media size for auto-cut.
 	copies := data.Copies
 	if copies < 1 {
 		copies = 1
 	}
 
-	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), imgPath}
+	media := fmt.Sprintf("custom_%dx%dmm_%dx%dmm", result.WidthMM, result.HeightMM, result.WidthMM, result.HeightMM)
+	b.logger.Info("label media: %s (%dx%d px)", media, result.WidthMM, result.HeightMM)
+	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), "-o", "media=" + media, result.Path}
 	cmd := exec.Command("lp", args...)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))

@@ -61,7 +61,7 @@ func NormalizeStorageTemperature(value string) string {
 	case "frozen":
 		return "-18℃以下で保存"
 	case "refrigerated":
-		return "10℃以下で保存"
+		return "4℃以下で保存"
 	case "ambient":
 		return "直射日光と高温多湿を避けて保管してください。"
 	default:

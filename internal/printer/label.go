@@ -57,26 +57,39 @@ func NewLabelRenderer(fontPath string) (*LabelRenderer, error) {
 	return &LabelRenderer{fontRegular: f}, nil
 }
 
-// Render generates a label PNG image and returns the temporary file path.
+// RenderResult holds the output of Render.
+type RenderResult struct {
+	Path     string
+	WidthMM  int // image width in mm
+	HeightMM int // image height in mm
+}
+
+// Render generates a label PNG image and returns the file path and dimensions.
 // Width is fixed at 732px (62mm) to match the Brother QL tape width.
-func (r *LabelRenderer) Render(data LabelData) (string, error) {
+func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
+		return RenderResult{}, fmt.Errorf("create temp file: %w", err)
 	}
 	defer tmpFile.Close()
 
 	img, err := r.renderImage(data)
 	if err != nil {
 		os.Remove(tmpFile.Name())
-		return "", err
+		return RenderResult{}, err
 	}
 
 	if err := png.Encode(tmpFile, img); err != nil {
 		os.Remove(tmpFile.Name())
-		return "", fmt.Errorf("encode png: %w", err)
+		return RenderResult{}, fmt.Errorf("encode png: %w", err)
 	}
-	return tmpFile.Name(), nil
+
+	bounds := img.Bounds()
+	return RenderResult{
+		Path:     tmpFile.Name(),
+		WidthMM:  bounds.Dx() * 254 / (labelDPI * 10), // px to mm
+		HeightMM: bounds.Dy() * 254 / (labelDPI * 10),
+	}, nil
 }
 
 // EncodePNG writes the label as PNG for preview.

@@ -167,7 +167,7 @@ func TestNormalizeStorageTemperature(t *testing.T) {
 		expected string
 	}{
 		{"frozen", "-18℃以下で保存"},
-		{"refrigerated", "10℃以下で保存"},
+		{"refrigerated", "4℃以下で保存"},
 		{"ambient", "直射日光と高温多湿を避けて保管してください。"},
 		{"-4℃以下で保存", "-4℃以下で保存"},
 		{"", ""},
@@ -198,13 +198,13 @@ func TestRender_WithFont(t *testing.T) {
 		QRCode:          "https://rakusika.com/t/abc/def",
 	}
 
-	path, err := renderer.Render(data)
+	result, err := renderer.Render(data)
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
-	defer os.Remove(path)
+	defer os.Remove(result.Path)
 
-	f, err := os.Open(path)
+	f, err := os.Open(result.Path)
 	if err != nil {
 		t.Fatalf("open output: %v", err)
 	}
@@ -223,5 +223,5 @@ func TestRender_WithFont(t *testing.T) {
 		t.Errorf("height too small: %d", bounds.Dy())
 	}
 
-	t.Logf("rendered label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)
+	t.Logf("rendered label: %dx%d px (%dx%d mm) → %s", bounds.Dx(), bounds.Dy(), result.WidthMM, result.HeightMM, result.Path)
 }

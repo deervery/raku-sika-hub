@@ -3,6 +3,10 @@ package printer
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"os/exec"
 	"strings"
@@ -129,8 +133,15 @@ func (b *Brother) TestPrint() error {
 		return err
 	}
 
-	cmd := exec.Command("bash", "-c",
-		fmt.Sprintf(`printf "Test OK\n" | lp -d "%s" -`, status.SelectedName))
+	// Brother QL requires PNG image input — text is not supported.
+	// Generate a minimal 732px-wide (62mm) image to save tape.
+	imgPath, err := b.renderTestImage()
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: テスト画像生成に失敗: %s", err)
+	}
+	defer os.Remove(imgPath)
+
+	cmd := exec.Command("lp", "-d", status.SelectedName, imgPath)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))
 	b.logger.Info("lp output (test print, printer=%q): %s", status.SelectedName, outStr)
@@ -140,6 +151,34 @@ func (b *Brother) TestPrint() error {
 
 	b.logger.Info("test print sent via lp (printer=%q)", status.SelectedName)
 	return nil
+}
+
+// renderTestImage creates a minimal PNG (width=732px=62mm, short height) for test printing.
+func (b *Brother) renderTestImage() (string, error) {
+	const w = 732 // 62mm at 300 DPI — must match tape width for CUPS
+	const h = 150 // minimal height to save tape
+
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+
+	// Draw "Test OK" text if font renderer is available.
+	if b.renderer != nil {
+		face := b.renderer.makeFace(12)
+		defer face.Close()
+		drawString(img, face, "RakuSika Hub - Test OK", 20, 80)
+	}
+
+	tmpFile, err := os.CreateTemp("", "test-label-*.png")
+	if err != nil {
+		return "", err
+	}
+	defer tmpFile.Close()
+
+	if err := png.Encode(tmpFile, img); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+	return tmpFile.Name(), nil
 }
 
 // PrintLabel renders a label image and sends it to the printer.

@@ -150,7 +150,7 @@ func (b *Brother) TestPrint() error {
 	}
 
 	jobID := parseLPRequestID(outStr)
-	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 15*time.Second); err != nil {
+	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 60*time.Second); err != nil {
 		return err
 	}
 
@@ -242,7 +242,7 @@ func (b *Brother) PrintLabel(data LabelData) error {
 	// Verify the job actually leaves the CUPS queue (i.e. gets sent to the printer).
 	jobID := parseLPRequestID(outStr)
 	b.logger.Info("waiting for CUPS job %s to complete (printer=%q)", jobID, status.SelectedName)
-	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 15*time.Second); err != nil {
+	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 60*time.Second); err != nil {
 		return err
 	}
 

@@ -109,9 +109,10 @@ func (r *LabelRenderer) EncodePNG(w io.Writer, data LabelData) error {
 // labelLayout holds the computed dimensions for rendering.
 type labelLayout struct {
 	labelWidthPx int // total image width
-	contentWidth int // labelWidthPx - 2*marginPx
+	contentWidth int // table width (labelColPx + valueColPx)
 	labelColPx   int // left column width (including padding)
 	valueColPx   int // right column width (including padding)
+	offsetX      int // horizontal offset for centering the table
 }
 
 // measureString returns the pixel width of text rendered with the given face.
@@ -236,12 +237,12 @@ func (r *LabelRenderer) renderImage(data LabelData) (*image.RGBA, error) {
 
 	layout := r.computeLayout(rows)
 
-	// Expand value column to fill exactly 732px width.
+	// Center the table horizontally within the 732px label.
 	if layout.labelWidthPx < labelWidthPx {
-		extra := labelWidthPx - layout.labelWidthPx
-		layout.valueColPx += extra
-		layout.contentWidth += extra
+		layout.offsetX = (labelWidthPx - layout.contentWidth) / 2
 		layout.labelWidthPx = labelWidthPx
+	} else {
+		layout.offsetX = marginPx
 	}
 
 	// Height is variable — grows with content.
@@ -293,7 +294,7 @@ func (t textRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) i
 	}
 
 	baseline := y + int(t.fontSize*float64(labelDPI)/72)
-	drawString(img, face, text, marginPx, baseline)
+	drawString(img, face, text, l.offsetX, baseline)
 	return y + t.lineHeight()
 }
 
@@ -328,11 +329,11 @@ func (m multiLineRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayo
 	baseline := y + int(m.fontSize*float64(labelDPI)/72)
 
 	if m.label != "" {
-		drawString(img, face, m.label+":", marginPx, baseline)
+		drawString(img, face, m.label+":", l.offsetX, baseline)
 		baseline += lh
 	}
 
-	indent := marginPx + 20
+	indent := l.offsetX + 20
 	for _, line := range wrapTextWithFace(face, m.value, l.contentWidth) {
 		drawString(img, face, line, indent, baseline)
 		baseline += lh
@@ -359,7 +360,7 @@ func (s separatorRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayo
 	lineY := y + h/2
 
 	gray := color.RGBA{R: 180, G: 180, B: 180, A: 255}
-	for x := marginPx; x < l.labelWidthPx-marginPx; x++ {
+	for x := l.offsetX; x < l.offsetX+l.contentWidth; x++ {
 		img.Set(x, lineY, gray)
 	}
 
@@ -449,8 +450,8 @@ func (t tableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) 
 	defer face.Close()
 
 	rowHeight := t.height(r, l)
-	left := marginPx
-	right := l.labelWidthPx - marginPx
+	left := l.offsetX
+	right := left + l.contentWidth
 	splitX := left + l.labelColPx
 	bottom := y + rowHeight
 
@@ -487,8 +488,8 @@ func (q qrTableRow) height(_ *LabelRenderer, _ labelLayout) int {
 
 func (q qrTableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
 	rowHeight := q.height(r, l)
-	left := marginPx
-	right := l.labelWidthPx - marginPx
+	left := l.offsetX
+	right := left + l.contentWidth
 	splitX := left + l.labelColPx
 	bottom := y + rowHeight
 

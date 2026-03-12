@@ -94,7 +94,10 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 				t.Errorf("expected at least %d rows, got %d", tt.minRows, len(rows))
 			}
 
+			fontSize := r.computeOptimalFontSize(rows)
+			applyFontSize(rows, fontSize)
 			layout := r.computeLayout(rows)
+
 			totalHeight := 0
 			for i, row := range rows {
 				h := row.height(r, layout)
@@ -106,7 +109,8 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 			if totalHeight == 0 {
 				t.Error("total height is 0")
 			}
-			t.Logf("layout: width=%d, labelCol=%d, valueCol=%d", layout.labelWidthPx, layout.labelColPx, layout.valueColPx)
+			t.Logf("fontSize=%.1f layout: width=%d, height=%d, labelCol=%d, valueCol=%d",
+				fontSize, layout.labelWidthPx, labelHeightPx, layout.labelColPx, layout.valueColPx)
 		})
 	}
 }
@@ -209,11 +213,11 @@ func TestRender_WithFont(t *testing.T) {
 	}
 
 	bounds := img.Bounds()
-	if bounds.Dx() < minLabelWidthPx {
-		t.Errorf("expected width >= %d, got %d", minLabelWidthPx, bounds.Dx())
+	if bounds.Dy() != labelHeightPx {
+		t.Errorf("expected height = %d (62mm), got %d", labelHeightPx, bounds.Dy())
 	}
-	if bounds.Dy() < 100 {
-		t.Errorf("height too small: %d", bounds.Dy())
+	if bounds.Dx() < 100 {
+		t.Errorf("width too small: %d", bounds.Dx())
 	}
 
 	t.Logf("rendered label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)

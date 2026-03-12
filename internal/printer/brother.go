@@ -3,9 +3,14 @@ package printer
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
 )
@@ -110,7 +115,8 @@ func (b *Brother) LogStatus(context string) {
 	)
 }
 
-// TestPrint sends a test print job to the printer.
+// TestPrint sends a compact test label to the printer.
+// The label is a small PNG image (height=62mm, minimal width) to conserve tape.
 func (b *Brother) TestPrint() error {
 	status, err := b.Status()
 	if err != nil {
@@ -128,16 +134,61 @@ func (b *Brother) TestPrint() error {
 		return err
 	}
 
-	cmd := exec.Command("bash", "-c",
-		fmt.Sprintf(`echo "RakuSika Hub Test Print\n$(date)" | lp -d "%s" -`, status.SelectedName))
+	// Render a compact test label as PNG to save tape.
+	imgPath, err := b.renderTestLabel()
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: テストラベル生成に失敗: %s", err)
+	}
+	defer os.Remove(imgPath)
+
+	cmd := exec.Command("lp", "-d", status.SelectedName, imgPath)
 	out, err := cmd.CombinedOutput()
-	b.logger.Info("lp output (test print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))
+	outStr := strings.TrimSpace(string(out))
+	b.logger.Info("lp output (test print, printer=%q): %s", status.SelectedName, outStr)
 	if err != nil {
 		return classifyLpError(string(out), status)
 	}
 
-	b.logger.Info("test print sent via lp (printer=%q)", status.SelectedName)
+	jobID := parseLPRequestID(outStr)
+	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 15*time.Second); err != nil {
+		return err
+	}
+
+	b.logger.Info("test print sent via lp (printer=%q, job=%s)", status.SelectedName, jobID)
 	return nil
+}
+
+// renderTestLabel creates a compact 62mm-tall PNG with just the test text.
+func (b *Brother) renderTestLabel() (string, error) {
+	if b.renderer == nil {
+		// Fallback: create a tiny solid image if no renderer.
+		return b.renderFallbackTestLabel()
+	}
+	data := LabelData{
+		Template:    "pet", // fewest rows → small width → least tape
+		ProductName: "テスト印刷",
+		ProductQuantity: time.Now().Format("2006-01-02 15:04"),
+		DeadlineDate: "RakuSika Hub OK",
+	}
+	return b.renderer.Render(data)
+}
+
+func (b *Brother) renderFallbackTestLabel() (string, error) {
+	tmpFile, err := os.CreateTemp("", "test-label-*.png")
+	if err != nil {
+		return "", err
+	}
+	defer tmpFile.Close()
+
+	// Minimal image: 200px wide x 732px tall (62mm)
+	img := image.NewRGBA(image.Rect(0, 0, 200, 732))
+	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+
+	if err := png.Encode(tmpFile, img); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+	return tmpFile.Name(), nil
 }
 
 // PrintLabel renders a label image and sends it to the printer.
@@ -182,12 +233,20 @@ func (b *Brother) PrintLabel(data LabelData) error {
 	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), imgPath}
 	cmd := exec.Command("lp", args...)
 	out, err := cmd.CombinedOutput()
-	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))
+	outStr := strings.TrimSpace(string(out))
+	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, outStr)
 	if err != nil {
 		return classifyLpError(string(out), status)
 	}
 
-	b.logger.Info("label printed: %d copies via lp (printer=%q)", copies, status.SelectedName)
+	// Verify the job actually leaves the CUPS queue (i.e. gets sent to the printer).
+	jobID := parseLPRequestID(outStr)
+	b.logger.Info("waiting for CUPS job %s to complete (printer=%q)", jobID, status.SelectedName)
+	if err := waitForCUPSJobToLeaveQueue(status.SelectedName, jobID, 15*time.Second); err != nil {
+		return err
+	}
+
+	b.logger.Info("label printed: %d copies via lp (printer=%q, job=%s)", copies, status.SelectedName, jobID)
 	return nil
 }
 

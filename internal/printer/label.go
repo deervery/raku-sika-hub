@@ -21,20 +21,19 @@ import (
 
 // Layout constants.
 const (
-	minLabelWidthPx = 732 // 62mm at 300 DPI — minimum, may grow
-	labelDPI        = 300
-	marginPx        = 16
+	labelHeightPx    = 732 // 62mm at 300 DPI — fixed (tape width)
+	labelDPI         = 300
+	marginPx         = 16
 	tableCellPadding = 6
 	tableBorderGray  = 120
 )
 
-// Font sizes at 300 DPI.
+// Font size limits and spacing.
 const (
-	fontSizeTitle    = 8
-	fontSizeBody     = 8
-	fontSizeSmall    = 8
-	fontSizeSep      = 8
+	maxFontSize      = 14.0
+	minFontSize      = 6.0
 	lineSpacingRatio = 1.45
+	dpiScale         = lineSpacingRatio * float64(labelDPI) / 72.0 // ≈ 6.04
 )
 
 const (
@@ -108,7 +107,16 @@ func measureString(face font.Face, text string) int {
 // computeLayout measures all table rows and determines the minimum label width
 // so that no text wraps within either column.
 func (r *LabelRenderer) computeLayout(rows []row) labelLayout {
-	face := r.makeFace(fontSizeBody)
+	// Determine font size from the first tableRow (all rows share the same size).
+	fontSize := 8.0
+	for _, row := range rows {
+		if v, ok := row.(tableRow); ok && v.fontSize > 0 {
+			fontSize = v.fontSize
+			break
+		}
+	}
+
+	face := r.makeFace(fontSize)
 	defer face.Close()
 
 	var maxLabelPx, maxValuePx int
@@ -146,26 +154,17 @@ func (r *LabelRenderer) computeLayout(rows []row) labelLayout {
 	labelColPx := maxLabelPx + tableCellPadding*2
 	valueColPx := maxValuePx + tableCellPadding*2
 
-	// Content width = label col + value col + border pixels.
+	// Content width = label col + value col.
 	contentWidth := labelColPx + valueColPx
 
-	// Also ensure separator text fits within content area.
-	sepNeeded := maxSepPx + 24 // some clearance
+	// Ensure separator text fits within content area.
+	sepNeeded := maxSepPx + 24
 	if sepNeeded > contentWidth {
-		// Expand value column to accommodate separator.
 		valueColPx += sepNeeded - contentWidth
 		contentWidth = labelColPx + valueColPx
 	}
 
 	labelWidthPx := contentWidth + 2*marginPx
-
-	// Enforce minimum width.
-	if labelWidthPx < minLabelWidthPx {
-		extra := minLabelWidthPx - labelWidthPx
-		valueColPx += extra
-		contentWidth += extra
-		labelWidthPx = minLabelWidthPx
-	}
 
 	return labelLayout{
 		labelWidthPx: labelWidthPx,
@@ -175,20 +174,89 @@ func (r *LabelRenderer) computeLayout(rows []row) labelLayout {
 	}
 }
 
+// computeOptimalFontSize determines the largest font size that makes all rows
+// fit within the fixed labelHeightPx. QR rows and spacers are treated as
+// fixed-height elements; all other rows scale with the font size.
+func (r *LabelRenderer) computeOptimalFontSize(rows []row) float64 {
+	available := float64(labelHeightPx - 2*marginPx)
+
+	numScalable := 0
+	for _, row := range rows {
+		switch v := row.(type) {
+		case qrTableRow:
+			available -= float64(v.size + 2*tableCellPadding)
+		case spacerRow:
+			available -= float64(v.px)
+		default:
+			numScalable++
+		}
+	}
+	if numScalable <= 0 {
+		return 8.0
+	}
+
+	// Each scalable row: height = int(fontSize * dpiScale) + 2*cellPadding
+	perRow := available / float64(numScalable)
+	fontSize := (perRow - float64(2*tableCellPadding)) / dpiScale
+
+	if fontSize > maxFontSize {
+		fontSize = maxFontSize
+	}
+	if fontSize < minFontSize {
+		fontSize = minFontSize
+	}
+	return fontSize
+}
+
+// applyFontSize sets the computed font size on all scalable rows.
+func applyFontSize(rows []row, size float64) {
+	for i, row := range rows {
+		switch v := row.(type) {
+		case tableRow:
+			v.fontSize = size
+			rows[i] = v
+		case textRow:
+			v.fontSize = size
+			rows[i] = v
+		case multiLineRow:
+			v.fontSize = size
+			rows[i] = v
+		case separatorRow:
+			v.fontSize = size
+			rows[i] = v
+		case qrTableRow:
+			v.fontSize = size
+			rows[i] = v
+		}
+	}
+}
+
 func (r *LabelRenderer) renderImage(data LabelData) (*image.RGBA, error) {
 	rows := r.buildRows(data)
+
+	// Auto-scale font size to fill 62mm (732px) height.
+	fontSize := r.computeOptimalFontSize(rows)
+	applyFontSize(rows, fontSize)
+
 	layout := r.computeLayout(rows)
 
-	height := marginPx
+	// Content height from rows.
+	contentHeight := 0
 	for _, row := range rows {
-		height += row.height(r, layout)
+		contentHeight += row.height(r, layout)
 	}
-	height += marginPx
 
-	img := image.NewRGBA(image.Rect(0, 0, layout.labelWidthPx, height))
+	// Image height is always 732px (62mm tape width).
+	imgHeight := labelHeightPx
+	topMargin := (imgHeight - contentHeight) / 2
+	if topMargin < marginPx {
+		topMargin = marginPx
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, layout.labelWidthPx, imgHeight))
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
 
-	y := marginPx
+	y := topMargin
 	for _, row := range rows {
 		y = row.draw(img, r, y, layout)
 	}
@@ -277,13 +345,13 @@ func (m multiLineRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayo
 // ── separatorRow ──
 
 type separatorRow struct {
-	text string
+	text     string
+	fontSize float64
 }
 
 func (s separatorRow) height(_ *LabelRenderer, _ labelLayout) int {
-	if s.text != "" {
-		sz := float64(fontSizeSep)
-		return int(sz * lineSpacingRatio * float64(labelDPI) / 72)
+	if s.text != "" && s.fontSize > 0 {
+		return int(s.fontSize * dpiScale)
 	}
 	return 10
 }
@@ -297,13 +365,12 @@ func (s separatorRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayo
 		img.Set(x, lineY, gray)
 	}
 
-	if s.text != "" {
-		face := r.makeFace(fontSizeSep)
+	if s.text != "" && s.fontSize > 0 {
+		face := r.makeFace(s.fontSize)
 		defer face.Close()
 		adv := font.MeasureString(face, s.text)
 		textX := (l.labelWidthPx - adv.Round()) / 2
-		sz := float64(fontSizeSep)
-		baseline := y + int(sz*float64(labelDPI)/72)
+		baseline := y + int(s.fontSize*float64(labelDPI)/72)
 		clearW := adv.Round() + 12
 		clearRect := image.Rect(textX-6, y, textX+clearW-6, y+h)
 		draw.Draw(img, clearRect, &image.Uniform{color.White}, image.Point{}, draw.Src)
@@ -410,19 +477,14 @@ func (t tableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) 
 // ── qrTableRow ──
 
 type qrTableRow struct {
-	label string
-	url   string
-	size  int
+	label    string
+	url      string
+	size     int
+	fontSize float64
 }
 
 func (q qrTableRow) height(_ *LabelRenderer, _ labelLayout) int {
-	sz := float64(fontSizeBody)
-	minHeight := int(sz*lineSpacingRatio*float64(labelDPI)/72) + tableCellPadding*2
-	size := q.size + tableCellPadding*2
-	if size > minHeight {
-		return size
-	}
-	return minHeight
+	return q.size + tableCellPadding*2
 }
 
 func (q qrTableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
@@ -443,10 +505,10 @@ func (q qrTableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout
 		img.Set(splitX, py, border)
 	}
 
-	face := r.makeFace(fontSizeBody)
+	// Draw label text vertically centered in the QR cell.
+	face := r.makeFace(q.fontSize)
 	defer face.Close()
-	sz := float64(fontSizeBody)
-	baseline := y + tableCellPadding + int(sz*float64(labelDPI)/72)
+	baseline := y + rowHeight/2 + int(q.fontSize*float64(labelDPI)/72)/2
 	drawString(img, face, q.label, left+tableCellPadding, baseline)
 
 	if q.url == "" {
@@ -509,16 +571,18 @@ func resolveStorageMethod(data LabelData, fallback string) string {
 // ── Template builders ──
 
 func (r *LabelRenderer) buildRows(data LabelData) []row {
+	// fontSize is set to 0 as a placeholder; computeOptimalFontSize + applyFontSize
+	// will determine and apply the actual size to fill the 62mm height.
 	switch data.Template {
 	case "pet":
 		return []row{
-			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
-			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
-			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			tableRow{label: "保存方法", value: fixedPetStorageMethod, fontSize: fontSizeBody},
-			tableRow{label: "加工者名", value: fixedProcessorName, fontSize: fontSizeBody},
-			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation, fontSize: fontSizeBody},
-			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus, fontSize: fontSizeBody},
+			tableRow{label: "商品名", value: data.ProductName},
+			tableRow{label: "内容量", value: data.ProductQuantity},
+			tableRow{label: "消費期限", value: data.DeadlineDate},
+			tableRow{label: "保存方法", value: fixedPetStorageMethod},
+			tableRow{label: "加工者名", value: fixedProcessorName},
+			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation},
+			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus},
 		}
 	case "traceable_deer", "traceable_bear":
 		individualID := data.IndividualID
@@ -527,43 +591,43 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 		}
 		storageMethod := resolveStorageMethod(data, fixedTraceableStorageMethod)
 		return []row{
-			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
-			tableRow{label: "捕獲地", value: data.CaptureLocation, fontSize: fontSizeBody},
-			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
-			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			tableRow{label: "保存方法", value: storageMethod, fontSize: fontSizeBody},
-			tableRow{label: "加工者名", value: fixedProcessorName, fontSize: fontSizeBody},
-			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation, fontSize: fontSizeBody},
-			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus, fontSize: fontSizeBody},
-			tableRow{label: "加熱用である旨", value: fixedHeatedInstruction, fontSize: fontSizeBody},
-			tableRow{label: "個体識別番号", value: individualID, fontSize: fontSizeBody},
+			tableRow{label: "商品名", value: data.ProductName},
+			tableRow{label: "捕獲地", value: data.CaptureLocation},
+			tableRow{label: "内容量", value: data.ProductQuantity},
+			tableRow{label: "消費期限", value: data.DeadlineDate},
+			tableRow{label: "保存方法", value: storageMethod},
+			tableRow{label: "加工者名", value: fixedProcessorName},
+			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation},
+			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus},
+			tableRow{label: "加熱用である旨", value: fixedHeatedInstruction},
+			tableRow{label: "個体識別番号", value: individualID},
 			qrTableRow{label: "QR", url: data.QRCode, size: 132},
 		}
 	case "non_traceable_deer":
 		storageMethod := resolveStorageMethod(data, fixedTraceableStorageMethod)
 		rows := []row{
-			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
-			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
-			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			tableRow{label: "保存方法", value: storageMethod, fontSize: fontSizeBody},
-			tableRow{label: "加工者名", value: fixedProcessorName, fontSize: fontSizeBody},
-			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation, fontSize: fontSizeBody},
-			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus, fontSize: fontSizeBody},
+			tableRow{label: "商品名", value: data.ProductName},
+			tableRow{label: "内容量", value: data.ProductQuantity},
+			tableRow{label: "消費期限", value: data.DeadlineDate},
+			tableRow{label: "保存方法", value: storageMethod},
+			tableRow{label: "加工者名", value: fixedProcessorName},
+			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation},
+			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus},
 		}
 		if data.AttentionText != "" {
-			rows = append(rows, tableRow{label: "注意事項", value: data.AttentionText, fontSize: fontSizeSmall})
+			rows = append(rows, tableRow{label: "注意事項", value: data.AttentionText})
 		}
 		return rows
 	case "processed":
 		storageMethod := resolveStorageMethod(data, fixedTraceableStorageMethod)
 		rows := []row{
-			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
-			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
-			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			tableRow{label: "保存方法", value: storageMethod, fontSize: fontSizeBody},
+			tableRow{label: "商品名", value: data.ProductName},
+			tableRow{label: "内容量", value: data.ProductQuantity},
+			tableRow{label: "消費期限", value: data.DeadlineDate},
+			tableRow{label: "保存方法", value: storageMethod},
 		}
 		if data.ProductIngredient != "" {
-			rows = append(rows, tableRow{label: "原材料名", value: data.ProductIngredient, fontSize: fontSizeSmall})
+			rows = append(rows, tableRow{label: "原材料名", value: data.ProductIngredient})
 		}
 		if data.CaloriesQuantity != "" || data.ProteinQuantity != "" {
 			unit := data.NutritionUnit
@@ -572,38 +636,38 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			}
 			rows = append(rows, separatorRow{text: "栄養成分表示（" + unit + "）"})
 			if data.CaloriesQuantity != "" {
-				rows = append(rows, tableRow{label: "熱量", value: data.CaloriesQuantity, fontSize: fontSizeSmall})
+				rows = append(rows, tableRow{label: "熱量", value: data.CaloriesQuantity})
 			}
 			if data.ProteinQuantity != "" {
-				rows = append(rows, tableRow{label: "たんぱく質", value: data.ProteinQuantity, fontSize: fontSizeSmall})
+				rows = append(rows, tableRow{label: "たんぱく質", value: data.ProteinQuantity})
 			}
 			if data.FatQuantity != "" {
-				rows = append(rows, tableRow{label: "脂質", value: data.FatQuantity, fontSize: fontSizeSmall})
+				rows = append(rows, tableRow{label: "脂質", value: data.FatQuantity})
 			}
 			if data.CarbohydratesQuantity != "" {
-				rows = append(rows, tableRow{label: "炭水化物", value: data.CarbohydratesQuantity, fontSize: fontSizeSmall})
+				rows = append(rows, tableRow{label: "炭水化物", value: data.CarbohydratesQuantity})
 			}
 			if data.SaltEquivalentQuantity != "" {
-				rows = append(rows, tableRow{label: "食塩相当量", value: data.SaltEquivalentQuantity, fontSize: fontSizeSmall})
+				rows = append(rows, tableRow{label: "食塩相当量", value: data.SaltEquivalentQuantity})
 			}
 		}
 		rows = append(rows,
-			tableRow{label: "加工者名", value: fixedProcessorName, fontSize: fontSizeBody},
-			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation, fontSize: fontSizeBody},
-			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus, fontSize: fontSizeBody},
+			tableRow{label: "加工者名", value: fixedProcessorName},
+			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation},
+			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus},
 		)
 		if data.IsHeatedMeatProducts != "" {
-			rows = append(rows, tableRow{label: "加熱用である旨", value: data.IsHeatedMeatProducts, fontSize: fontSizeBody})
+			rows = append(rows, tableRow{label: "加熱用である旨", value: data.IsHeatedMeatProducts})
 		}
 		if data.AttentionText != "" {
-			rows = append(rows, tableRow{label: "注意事項", value: data.AttentionText, fontSize: fontSizeSmall})
+			rows = append(rows, tableRow{label: "注意事項", value: data.AttentionText})
 		}
 		return rows
 	default:
 		return []row{
-			tableRow{label: "商品名", value: data.ProductName, fontSize: fontSizeTitle},
-			tableRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
-			tableRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
+			tableRow{label: "商品名", value: data.ProductName},
+			tableRow{label: "内容量", value: data.ProductQuantity},
+			tableRow{label: "消費期限", value: data.DeadlineDate},
 		}
 	}
 }

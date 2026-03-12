@@ -21,17 +21,16 @@ import (
 
 // Layout constants.
 const (
-	labelHeightPx    = 732 // 62mm at 300 DPI — fixed (tape width)
+	labelWidthPx     = 732 // 62mm at 300 DPI — fixed (tape width for CUPS)
 	labelDPI         = 300
 	marginPx         = 16
 	tableCellPadding = 6
 	tableBorderGray  = 120
 )
 
-// Font size limits and spacing.
+// Font size and spacing.
 const (
-	maxFontSize      = 14.0
-	minFontSize      = 6.0
+	labelFontSize    = 10.0
 	lineSpacingRatio = 1.45
 	dpiScale         = lineSpacingRatio * float64(labelDPI) / 72.0 // ≈ 6.04
 )
@@ -59,8 +58,8 @@ func NewLabelRenderer(fontPath string) (*LabelRenderer, error) {
 	return &LabelRenderer{fontRegular: f}, nil
 }
 
-// Render generates a label PNG for printing. The image is rotated 90° CW so
-// that width=732px (62mm) matches the Brother QL tape width expected by CUPS.
+// Render generates a label PNG image and returns the temporary file path.
+// Width is fixed at 732px (62mm) to match the Brother QL tape width.
 func (r *LabelRenderer) Render(data LabelData) (string, error) {
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
@@ -74,15 +73,14 @@ func (r *LabelRenderer) Render(data LabelData) (string, error) {
 		return "", err
 	}
 
-	rotated := rotate90CW(img)
-	if err := png.Encode(tmpFile, rotated); err != nil {
+	if err := png.Encode(tmpFile, img); err != nil {
 		os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("encode png: %w", err)
 	}
 	return tmpFile.Name(), nil
 }
 
-// EncodePNG writes the label as PNG for preview (no rotation — 62mm = height).
+// EncodePNG writes the label as PNG for preview.
 func (r *LabelRenderer) EncodePNG(w io.Writer, data LabelData) error {
 	img, err := r.renderImage(data)
 	if err != nil {
@@ -92,21 +90,6 @@ func (r *LabelRenderer) EncodePNG(w io.Writer, data LabelData) error {
 		return fmt.Errorf("encode png: %w", err)
 	}
 	return nil
-}
-
-// rotate90CW rotates an image 90° clockwise.
-// (oldW, oldH) → (newW=oldH, newH=oldW)
-// This maps height=732px to width=732px for the CUPS driver.
-func rotate90CW(src *image.RGBA) *image.RGBA {
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	dst := image.NewRGBA(image.Rect(0, 0, h, w))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			dst.Set(h-1-y, x, src.At(x, y))
-		}
-	}
-	return dst
 }
 
 // ── Layout computation ──
@@ -194,41 +177,7 @@ func (r *LabelRenderer) computeLayout(rows []row) labelLayout {
 	}
 }
 
-// computeOptimalFontSize determines the largest font size that makes all rows
-// fit within the fixed labelHeightPx. QR rows and spacers are treated as
-// fixed-height elements; all other rows scale with the font size.
-func (r *LabelRenderer) computeOptimalFontSize(rows []row) float64 {
-	available := float64(labelHeightPx - 2*marginPx)
-
-	numScalable := 0
-	for _, row := range rows {
-		switch v := row.(type) {
-		case qrTableRow:
-			available -= float64(v.size + 2*tableCellPadding)
-		case spacerRow:
-			available -= float64(v.px)
-		default:
-			numScalable++
-		}
-	}
-	if numScalable <= 0 {
-		return 8.0
-	}
-
-	// Each scalable row: height = int(fontSize * dpiScale) + 2*cellPadding
-	perRow := available / float64(numScalable)
-	fontSize := (perRow - float64(2*tableCellPadding)) / dpiScale
-
-	if fontSize > maxFontSize {
-		fontSize = maxFontSize
-	}
-	if fontSize < minFontSize {
-		fontSize = minFontSize
-	}
-	return fontSize
-}
-
-// applyFontSize sets the computed font size on all scalable rows.
+// applyFontSize sets the font size on all scalable rows.
 func applyFontSize(rows []row, size float64) {
 	for i, row := range rows {
 		switch v := row.(type) {
@@ -253,30 +202,29 @@ func applyFontSize(rows []row, size float64) {
 
 func (r *LabelRenderer) renderImage(data LabelData) (*image.RGBA, error) {
 	rows := r.buildRows(data)
-
-	// Auto-scale font size to fill 62mm (732px) height.
-	fontSize := r.computeOptimalFontSize(rows)
-	applyFontSize(rows, fontSize)
+	applyFontSize(rows, labelFontSize)
 
 	layout := r.computeLayout(rows)
 
-	// Content height from rows.
-	contentHeight := 0
+	// Width is fixed at 732px (62mm tape). Expand value column to fill.
+	if layout.labelWidthPx < labelWidthPx {
+		extra := labelWidthPx - layout.labelWidthPx
+		layout.valueColPx += extra
+		layout.contentWidth += extra
+		layout.labelWidthPx = labelWidthPx
+	}
+
+	// Height is variable — grows with content.
+	height := marginPx
 	for _, row := range rows {
-		contentHeight += row.height(r, layout)
+		height += row.height(r, layout)
 	}
+	height += marginPx
 
-	// Image height is always 732px (62mm tape width).
-	imgHeight := labelHeightPx
-	topMargin := (imgHeight - contentHeight) / 2
-	if topMargin < marginPx {
-		topMargin = marginPx
-	}
-
-	img := image.NewRGBA(image.Rect(0, 0, layout.labelWidthPx, imgHeight))
+	img := image.NewRGBA(image.Rect(0, 0, layout.labelWidthPx, height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
 
-	y := topMargin
+	y := marginPx
 	for _, row := range rows {
 		y = row.draw(img, r, y, layout)
 	}

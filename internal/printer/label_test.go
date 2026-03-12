@@ -94,8 +94,7 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 				t.Errorf("expected at least %d rows, got %d", tt.minRows, len(rows))
 			}
 
-			fontSize := r.computeOptimalFontSize(rows)
-			applyFontSize(rows, fontSize)
+			applyFontSize(rows, labelFontSize)
 			layout := r.computeLayout(rows)
 
 			totalHeight := 0
@@ -109,8 +108,8 @@ func TestBuildRows_SupportedTemplates(t *testing.T) {
 			if totalHeight == 0 {
 				t.Error("total height is 0")
 			}
-			t.Logf("fontSize=%.1f layout: width=%d, height=%d, labelCol=%d, valueCol=%d",
-				fontSize, layout.labelWidthPx, labelHeightPx, layout.labelColPx, layout.valueColPx)
+			t.Logf("fontSize=%.1f layout: width=%d, totalHeight=%d, labelCol=%d, valueCol=%d",
+				labelFontSize, layout.labelWidthPx, totalHeight, layout.labelColPx, layout.valueColPx)
 		})
 	}
 }
@@ -213,13 +212,12 @@ func TestRender_WithFont(t *testing.T) {
 	}
 
 	bounds := img.Bounds()
-	// Render() rotates 90° CW for CUPS: width should be 732px (62mm tape width).
-	if bounds.Dx() != labelHeightPx {
-		t.Errorf("expected width = %d (62mm, rotated), got %d", labelHeightPx, bounds.Dx())
+	if bounds.Dx() != labelWidthPx {
+		t.Errorf("expected width = %d (62mm), got %d", labelWidthPx, bounds.Dx())
 	}
 	if bounds.Dy() < 100 {
 		t.Errorf("height too small: %d", bounds.Dy())
 	}
 
-	t.Logf("rendered label (for CUPS): %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)
+	t.Logf("rendered label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)
 }

@@ -18,6 +18,7 @@ const (
 	weighRetryDelay = 500 * time.Millisecond
 	reconnectDelay  = 3 * time.Second
 	commandTimeout  = 3 * time.Second
+	weighCacheTTL   = 500 * time.Millisecond
 )
 
 // StatusFunc is called when connection status changes.
@@ -42,6 +43,11 @@ type Client struct {
 	logger    *logging.Logger
 	cancel    context.CancelFunc
 	done      chan struct{}
+
+	// Weigh cache: avoids hitting the serial port for rapid successive requests.
+	cacheMu     sync.Mutex
+	cachedWeigh *WeighResult
+	cacheTime   time.Time
 }
 
 // NewClient creates a new scale Client.
@@ -90,7 +96,17 @@ func (c *Client) PortName() string {
 }
 
 // Weigh sends a weigh command and waits for a stable reading.
+// Results are cached for 500ms to avoid excessive serial port access.
 func (c *Client) Weigh(ctx context.Context, progress ProgressFunc) (*WeighResult, error) {
+	// Check cache first (outside the serial lock).
+	c.cacheMu.Lock()
+	if c.cachedWeigh != nil && time.Since(c.cacheTime) < weighCacheTTL {
+		result := *c.cachedWeigh
+		c.cacheMu.Unlock()
+		return &result, nil
+	}
+	c.cacheMu.Unlock()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -112,6 +128,10 @@ func (c *Client) Weigh(ctx context.Context, progress ProgressFunc) (*WeighResult
 
 		switch result.Header {
 		case HeaderST:
+			c.cacheMu.Lock()
+			c.cachedWeigh = result
+			c.cacheTime = time.Now()
+			c.cacheMu.Unlock()
 			return result, nil
 		case HeaderOL:
 			return nil, errors.New("OVERLOAD")

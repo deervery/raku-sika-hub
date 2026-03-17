@@ -11,6 +11,12 @@ import (
 	"github.com/deervery/raku-sika-hub/internal/config"
 )
 
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -18,7 +24,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	a, err := app.New(cfg)
+	a, err := app.New(cfg, version, commit, buildDate)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create app: %v\n", err)
 		os.Exit(1)

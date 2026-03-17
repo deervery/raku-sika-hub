@@ -10,34 +10,37 @@ import (
 
 // Config holds the application configuration loaded from config.json.
 type Config struct {
-	VID         string `json:"vid"`
-	PID         string `json:"pid"`
-	Port        string `json:"port"`
-	BaudRate    int    `json:"baudRate"`
-	DataBits    int    `json:"dataBits"`
-	Parity      string `json:"parity"`
-	StopBits    int    `json:"stopBits"`
-	PrinterName string `json:"printerName"`
-	FontPath    string `json:"fontPath"`
-	MaxClients  int    `json:"maxClients"`
-	ListenAddr  string `json:"listenAddr"`
-	LogLevel    string `json:"logLevel"`
+	VID               string `json:"vid"`
+	PID               string `json:"pid"`
+	Port              string `json:"port"`
+	BaudRate          int    `json:"baudRate"`
+	DataBits          int    `json:"dataBits"`
+	Parity            string `json:"parity"`
+	StopBits          int    `json:"stopBits"`
+	PrinterName       string `json:"printerName"`
+	FontPath          string `json:"fontPath"`
+	ListenAddr        string `json:"listenAddr"`
+	LogLevel          string `json:"logLevel"`
+	EnableWebSocket   bool   `json:"enableWebSocket"`
+	ScannerVid        string `json:"scannerVid"`
+	ScannerPid        string `json:"scannerPid"`
+	ScannerDeviceName string `json:"scannerDeviceName"`
 }
 
 // Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
 func Default() Config {
 	return Config{
-		VID:         "0403",
-		PID:         "6015",
-		Port:        "",
-		BaudRate:    2400,
-		DataBits:    7,
-		Parity:      "even",
-		StopBits:    1,
-		PrinterName: "",
-		MaxClients:  1,
-		ListenAddr:  "0.0.0.0:19800",
-		LogLevel:    "INFO",
+		VID:             "0403",
+		PID:             "6015",
+		Port:            "",
+		BaudRate:        2400,
+		DataBits:        7,
+		Parity:          "even",
+		StopBits:        1,
+		PrinterName:     "",
+		ListenAddr:      "0.0.0.0:19800",
+		LogLevel:        "INFO",
+		EnableWebSocket: false,
 	}
 }
 
@@ -110,9 +113,16 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.StopBits = n
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv("MAX_CLIENTS")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.MaxClients = n
-		}
+	if v := strings.TrimSpace(os.Getenv("ENABLE_WEBSOCKET")); v != "" {
+		cfg.EnableWebSocket = v == "true" || v == "1"
+	}
+	if v := strings.TrimSpace(os.Getenv("SCANNER_VID")); v != "" {
+		cfg.ScannerVid = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SCANNER_PID")); v != "" {
+		cfg.ScannerPid = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SCANNER_DEVICE_NAME")); v != "" {
+		cfg.ScannerDeviceName = v
 	}
 }

@@ -14,16 +14,16 @@ DEPLOY_USER="${SUDO_USER:-rakusika}"
 # 1. Set hostname to raku-sika-hub (enables raku-sika-hub.local via mDNS)
 CURRENT_HOSTNAME=$(hostname)
 if [ "$CURRENT_HOSTNAME" != "raku-sika-hub" ]; then
-    echo "[1/6] Setting hostname to raku-sika-hub (current: $CURRENT_HOSTNAME)"
+    echo "[1/7] Setting hostname to raku-sika-hub (current: $CURRENT_HOSTNAME)"
     hostnamectl set-hostname raku-sika-hub
     sed -i "s/127\.0\.1\.1.*$/127.0.1.1\traku-sika-hub/" /etc/hosts
     echo "  → hostname set. raku-sika-hub.local will resolve after avahi restarts."
 else
-    echo "[1/6] Hostname already set to raku-sika-hub"
+    echo "[1/7] Hostname already set to raku-sika-hub"
 fi
 
 # 2. Ensure avahi-daemon is installed and running
-echo "[2/6] Setting up avahi-daemon (mDNS)"
+echo "[2/7] Setting up avahi-daemon (mDNS)"
 if ! command -v avahi-daemon &>/dev/null; then
     apt-get update -qq && apt-get install -y -qq avahi-daemon
 fi
@@ -33,7 +33,7 @@ systemctl restart avahi-daemon
 echo "  → avahi-daemon configured. raku-sika-hub.local is now resolvable."
 
 # 3. Serial port permission
-echo "[3/6] Adding $DEPLOY_USER to dialout group (serial port access)"
+echo "[3/7] Adding $DEPLOY_USER to dialout group (serial port access)"
 if id -nG "$DEPLOY_USER" | grep -qw dialout; then
     echo "  → $DEPLOY_USER is already in dialout group"
 else
@@ -42,7 +42,7 @@ else
 fi
 
 # 4. Install Japanese fonts (required for label image rendering)
-echo "[4/6] Installing Japanese fonts"
+echo "[4/7] Installing Japanese fonts"
 if fc-list :lang=ja 2>/dev/null | grep -q "."; then
     echo "  → Japanese fonts already installed"
 else
@@ -51,7 +51,7 @@ else
 fi
 
 # 5. Install CUPS and Brother printer driver
-echo "[5/6] Installing CUPS and Brother printer driver"
+echo "[5/7] Installing CUPS and Brother printer driver"
 if command -v lp &>/dev/null && dpkg -l printer-driver-ptouch &>/dev/null 2>&1; then
     echo "  → CUPS and printer-driver-ptouch already installed"
 else
@@ -64,8 +64,17 @@ systemctl start cups
 echo "  → CUPS enabled. Web UI: http://raku-sika-hub.local:631"
 echo "  → Run 'sudo bash deploy/setup-printer.sh' after connecting the printer"
 
-# 6. Install systemd service
-echo "[6/6] Installing systemd service"
+# 6. Input device permission (barcode scanner)
+echo "[6/7] Setting up input device access for barcode scanner"
+if id -nG "$DEPLOY_USER" | grep -qw input; then
+    echo "  → $DEPLOY_USER is already in input group"
+else
+    usermod -aG input "$DEPLOY_USER"
+    echo "  → Added $DEPLOY_USER to input group (for /dev/input/event* access, re-login required)"
+fi
+
+# 7. Install systemd service
+echo "[7/7] Installing systemd service"
 cp "$SCRIPT_DIR/raku-sika-hub.service" /etc/systemd/system/
 
 # Override WorkingDirectory and ExecStart if project is not at default path
@@ -84,7 +93,7 @@ echo ""
 echo "=== Setup complete ==="
 echo "  Hostname:  raku-sika-hub"
 echo "  mDNS:      raku-sika-hub.local"
-echo "  WebSocket: ws://raku-sika-hub.local:19800"
+echo "  HTTP API:  http://raku-sika-hub.local:19800"
 echo "  CUPS UI:   http://raku-sika-hub.local:631"
 echo "  User:      $DEPLOY_USER"
 echo ""

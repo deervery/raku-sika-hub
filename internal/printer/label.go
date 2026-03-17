@@ -274,7 +274,7 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 	)
 
 	switch data.Template {
-	case "traceable":
+	case "traceable", "traceable_deer", "traceable_bear":
 		rows = append(rows,
 			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
 			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
@@ -294,7 +294,7 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
 		}
 
-	case "non_traceable":
+	case "non_traceable", "non_traceable_deer":
 		rows = append(rows,
 			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
 			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
@@ -347,6 +347,19 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 		)
 		if data.AttentionText != "" {
 			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
+		}
+
+	case "individual_qr":
+		// Minimal label: individual number + QR code only.
+		rows = rows[:0] // Clear common header.
+		if data.IndividualNumber != "" {
+			rows = append(rows, textRow{label: "個体識別番号", value: data.IndividualNumber, fontSize: fontSizeBody})
+		}
+		if data.QRCode != "" {
+			rows = append(rows,
+				spacerRow{px: 10},
+				qrRow{url: data.QRCode, size: 250},
+			)
 		}
 	}
 

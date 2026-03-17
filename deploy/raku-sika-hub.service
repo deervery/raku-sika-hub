@@ -10,7 +10,9 @@ ExecStart=/home/rakusika/raku-sika-hub/raku-sika-hub
 Restart=always
 RestartSec=5
 Environment=HOME=/home/rakusika
+Environment=GOMEMLIMIT=256MiB
 # Environment=PRINTER_NAME=Brother_QL-820NWB
+# Environment=SCANNER_DEVICE_NAME=
 
 # Logging
 StandardOutput=journal

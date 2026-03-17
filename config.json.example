@@ -1,0 +1,17 @@
+{
+  "vid": "0403",
+  "pid": "6015",
+  "port": "",
+  "baudRate": 2400,
+  "dataBits": 7,
+  "parity": "even",
+  "stopBits": 1,
+  "printerName": "",
+  "fontPath": "",
+  "scannerVid": "",
+  "scannerPid": "",
+  "scannerDeviceName": "",
+  "listenAddr": "0.0.0.0:19800",
+  "logLevel": "INFO",
+  "enableWebSocket": false
+}

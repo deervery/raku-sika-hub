@@ -192,6 +192,15 @@ func (b *Brother) CanRenderLabels() bool {
 	return b.renderer != nil
 }
 
+// RenderLabel generates a label PNG image and returns the temporary file path.
+// The caller is responsible for removing the file.
+func (b *Brother) RenderLabel(data LabelData) (string, error) {
+	if b.renderer == nil {
+		return "", fmt.Errorf("PRINTER_ERROR: ラベルレンダラが初期化されていません")
+	}
+	return b.renderer.Render(data)
+}
+
 // classifyLpError maps lp output to specific error codes with Japanese messages.
 func classifyLpError(output string, status PrinterStatus) error {
 	output = strings.TrimSpace(output)

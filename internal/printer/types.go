@@ -26,14 +26,20 @@ type LabelData struct {
 
 	// Misc
 	AttentionText string `json:"attentionText"` // 注意書き
+	FacilityName  string `json:"facilityName"`  // 加工施設名
+	Ingredient    string `json:"ingredient"`    // 原材料
 }
 
 // ValidTemplates lists the supported template keys.
 var ValidTemplates = map[string]bool{
-	"traceable":      true,
-	"non_traceable":  true,
-	"processed":      true,
-	"pet":            true,
+	"traceable":        true,
+	"traceable_deer":   true,
+	"traceable_bear":   true,
+	"non_traceable":    true,
+	"non_traceable_deer": true,
+	"processed":        true,
+	"pet":              true,
+	"individual_qr":    true,
 }
 
 // RequiredFields returns the required field names for each template.

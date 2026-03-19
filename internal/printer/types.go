@@ -12,7 +12,7 @@ type LabelData struct {
 
 	// Traceable fields
 	IndividualNumber string `json:"individualNumber"` // 個体識別番号 e.g. "1234-56-78-90"
-	CaptureLocation  string `json:"captureLocation"`  // 捕獲場所
+	CaptureLocation  string `json:"captureLocation"`  // 捕獲地
 	QRCode           string `json:"qrCode"`           // QRコード URL
 
 	// Processed / Pet fields
@@ -25,29 +25,40 @@ type LabelData struct {
 	SaltEquivalentQuantity string `json:"saltEquivalentQuantity"` // 食塩相当量
 
 	// Misc
-	AttentionText string `json:"attentionText"` // 注意書き
-	FacilityName  string `json:"facilityName"`  // 加工施設名
-	Ingredient    string `json:"ingredient"`    // 原材料
+	AttentionText         string `json:"attentionText"`         // 注意書き
+	FacilityName          string `json:"facilityName"`          // 加工施設名
+	Ingredient            string `json:"ingredient"`            // 原材料
+	LogoFile              string `json:"logoFile"`              // 企業ロゴ画像へのパス（assetsDir からの相対パスまたは絶対パス）
+	CertificationMarkFile string `json:"certificationMarkFile"` // 認証マーク画像へのパス（assetsDir からの相対パスまたは絶対パス）
+	ProcessorName         string `json:"processorName"`         // 加工者名
+	ProcessorLocation     string `json:"processorLocation"`     // 加工施設所在地
 }
 
 // ValidTemplates lists the supported template keys.
 var ValidTemplates = map[string]bool{
-	"traceable":        true,
-	"traceable_deer":   true,
-	"traceable_bear":   true,
-	"non_traceable":    true,
+	"traceable":          true,
+	"traceable_deer":     true,
+	"traceable_bear":     true,
+	"non_traceable":      true,
 	"non_traceable_deer": true,
-	"processed":        true,
-	"pet":              true,
-	"individual_qr":    true,
+	"processed":          true,
+	"pet":                true,
+	"individual_qr":      true,
 }
 
 // RequiredFields returns the required field names for each template.
 func RequiredFields(template string) []string {
-	common := []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}
+	common := []string{
+		"productName",
+		"productQuantity",
+		"deadlineDate",
+		"storageTemperature",
+		"processorName",
+		"processorLocation",
+	}
 	switch template {
-	case "traceable":
-		return append(common, "individualNumber")
+	case "traceable", "traceable_deer", "traceable_bear":
+		return append(common, "individualNumber", "captureLocation", "qrCode")
 	default:
 		return common
 	}

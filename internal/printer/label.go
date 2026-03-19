@@ -5,11 +5,14 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	_ "image/jpeg"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
@@ -17,53 +20,80 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// Label dimensions for Brother QL-800/QL-820 (62mm continuous tape at 300 DPI).
 const (
-	labelWidthPx = 732 // 62mm at 300 DPI
-	labelDPI     = 300
-	marginPx     = 30
-	contentWidth = labelWidthPx - 2*marginPx
+	// NOTE: All label templates follow the same layout policy:
+	// - Width is fixed to 62mm (horizontal is the priority).
+	// - Height is driven by table height + image section height.
+	// - Overall layout is intentionally horizontal (wide) rather than tall.
+	labelWidthMM                = 62.0
+	labelHeightMM               = 60.0
+	labelDPI                    = 300
+	marginXPx                   = 24
+	marginYPx                   = 2
+	imageSlotGap                = 6
+	fontSizeBody                = 9.5
+	minFontSize                 = 8.0
+	lineSpacingRatio            = 1.1
+	tableLabelWidthRatio        = 0.3
+	tableLabelWidthTraceable    = 0.317
+	tableLabelWidthNonTraceable = 0.295
+	tableLabelWidthProcessed    = 0.208
+	tableLabelWidthPet          = 0.295
+	tableCellPadding            = 3
+	maxTableLines               = 2
+	logoWidthRatio              = 1.5
+	imageSectionScale           = 0.89
+	contentWidthScale           = 1.0
+	minImageSizePx              = 90
 )
 
-// Font sizes at 300 DPI.
-const (
-	fontSizeTitle    = 16 // product name
-	fontSizeBody     = 12 // regular fields
-	fontSizeSmall    = 10 // sub-fields like nutrition
-	fontSizeSep      = 10 // separator text
-	lineSpacingRatio = 1.6
+var (
+	labelWidthPx  = int(math.Round(labelWidthMM / 25.4 * labelDPI))
+	labelHeightPx = int(math.Round(labelHeightMM / 25.4 * labelDPI))
+	contentWidth  = int(math.Round(float64(labelWidthPx-2*marginXPx) * contentWidthScale))
+	contentLeft   = (labelWidthPx - contentWidth) / 2
 )
 
-// LabelRenderer generates label images for printing.
-type LabelRenderer struct {
-	fontRegular *opentype.Font
+type row interface {
+	height() int
+	draw(img *image.RGBA, r *LabelRenderer, y int) int
 }
 
-// NewLabelRenderer creates a renderer by loading a font.
-// fontPath can be empty; the renderer will search well-known system paths.
-func NewLabelRenderer(fontPath string) (*LabelRenderer, error) {
+type tableEntry struct {
+	label string
+	value string
+}
+
+// LabelRenderer generates printed labels.
+type LabelRenderer struct {
+	fontRegular *opentype.Font
+	assetsDir   string
+}
+
+// NewLabelRenderer loads fonts and assets references.
+func NewLabelRenderer(fontPath, assetsDir string) (*LabelRenderer, error) {
 	f, err := loadFont(fontPath)
 	if err != nil {
 		return nil, err
 	}
-	return &LabelRenderer{fontRegular: f}, nil
+	return &LabelRenderer{fontRegular: f, assetsDir: strings.TrimSpace(assetsDir)}, nil
 }
 
-// Render generates a label PNG image and returns the temporary file path.
+// Render produces a PNG label that matches the 62×60mm Brother tape.
 func (r *LabelRenderer) Render(data LabelData) (string, error) {
 	rows := r.buildRows(data)
 
-	// Calculate total height.
-	height := marginPx
+	// Height is driven by the content rows (table + image). No fixed height padding.
+	height := marginYPx
 	for _, row := range rows {
 		height += row.height()
 	}
-	height += marginPx
+	height += marginYPx
 
 	img := image.NewRGBA(image.Rect(0, 0, labelWidthPx, height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
 
-	y := marginPx
+	y := marginYPx
 	for _, row := range rows {
 		y = row.draw(img, r, y)
 	}
@@ -81,13 +111,36 @@ func (r *LabelRenderer) Render(data LabelData) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-// row is a renderable label element.
-type row interface {
-	height() int
-	draw(img *image.RGBA, r *LabelRenderer, y int) int
+func (r *LabelRenderer) buildRows(data LabelData) []row {
+	entries := buildTableEntries(data)
+	fontSize := float64(fontSizeBody)
+	spacer := 2
+
+	// Table + warning + image define the whole label height for all templates.
+	tableRow := tableBlockRow{
+		entries:         entries,
+		fontSize:        fontSize,
+		maxLines:        maxTableLines,
+		labelWidthRatio: labelWidthRatioForTemplate(data.Template),
+	}
+	warningRow := textRow{value: "※十分に加熱してください", fontSize: fontSize}
+	baseHeight := tableRow.height() + spacer + warningRow.height()
+	targetContentHeight := labelHeightPx - 2*marginYPx
+	availableHeight := targetContentHeight - baseHeight
+	if availableHeight < 0 {
+		availableHeight = 0
+	}
+	imageSize := calcImageSizeForData(data, contentWidth, availableHeight)
+	imageRow := imageSectionRow{data: data, size: imageSize}
+
+	return []row{
+		tableRow,
+		spacerRow{px: spacer},
+		warningRow,
+		imageRow,
+	}
 }
 
-// textRow renders a single "label: value" line or just text.
 type textRow struct {
 	label    string
 	value    string
@@ -107,280 +160,676 @@ func (t textRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		text = t.label + ": " + t.value
 	}
 
-	h := t.height()
 	baseline := y + int(t.fontSize*float64(labelDPI)/72)
-	drawString(img, face, text, marginPx, baseline)
-	return y + h
+	drawString(img, face, text, contentLeft, baseline)
+	return y + t.height()
 }
 
-// multiLineRow renders text that may wrap across multiple lines.
-type multiLineRow struct {
-	label    string
-	value    string
-	fontSize float64
-}
-
-func (m multiLineRow) lineHeight() int {
-	return int(m.fontSize * lineSpacingRatio * float64(labelDPI) / 72)
-}
-
-func (m multiLineRow) height() int {
-	lines := m.wrapLines()
-	if m.label != "" {
-		return m.lineHeight() * (len(lines) + 1) // label line + value lines
-	}
-	return m.lineHeight() * len(lines)
-}
-
-func (m multiLineRow) wrapLines() []string {
-	if m.value == "" {
-		return nil
-	}
-	// Estimate chars per line based on font size and content width.
-	// Japanese characters are roughly square at the font size.
-	charWidth := m.fontSize * float64(labelDPI) / 72 * 0.55
-	charsPerLine := int(float64(contentWidth) / charWidth)
-	if charsPerLine < 1 {
-		charsPerLine = 1
-	}
-
-	var lines []string
-	runes := []rune(m.value)
-	for len(runes) > 0 {
-		end := charsPerLine
-		if end > len(runes) {
-			end = len(runes)
-		}
-		lines = append(lines, string(runes[:end]))
-		runes = runes[end:]
-	}
-	return lines
-}
-
-func (m multiLineRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
-	face := r.makeFace(m.fontSize)
-	defer face.Close()
-
-	lh := m.lineHeight()
-	baseline := y + int(m.fontSize*float64(labelDPI)/72)
-
-	if m.label != "" {
-		drawString(img, face, m.label+":", marginPx, baseline)
-		baseline += lh
-	}
-
-	indent := marginPx + 20
-	for _, line := range m.wrapLines() {
-		drawString(img, face, line, indent, baseline)
-		baseline += lh
-	}
-	return y + m.height()
-}
-
-// separatorRow draws a horizontal line with optional centered text.
-type separatorRow struct {
-	text string
-}
-
-func (s separatorRow) height() int {
-	if s.text != "" {
-		sz := float64(fontSizeSep)
-		return int(sz * lineSpacingRatio * float64(labelDPI) / 72)
-	}
-	return 10
-}
-
-func (s separatorRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
-	h := s.height()
-	lineY := y + h/2
-
-	// Draw line.
-	gray := color.RGBA{R: 180, G: 180, B: 180, A: 255}
-	for x := marginPx; x < labelWidthPx-marginPx; x++ {
-		img.Set(x, lineY, gray)
-	}
-
-	if s.text != "" {
-		face := r.makeFace(fontSizeSep)
-		defer face.Close()
-		// Center text.
-		adv := font.MeasureString(face, s.text)
-		textX := (labelWidthPx - adv.Round()) / 2
-		sz := float64(fontSizeSep)
-		baseline := y + int(sz*float64(labelDPI)/72)
-		// Clear background behind text.
-		clearW := adv.Round() + 12
-		clearRect := image.Rect(textX-6, y, textX+clearW-6, y+h)
-		draw.Draw(img, clearRect, &image.Uniform{color.White}, image.Point{}, draw.Src)
-		drawString(img, face, s.text, textX, baseline)
-	}
-
-	return y + h
-}
-
-// qrRow renders a QR code image.
-type qrRow struct {
-	url  string
-	size int // pixels
-}
-
-func (q qrRow) height() int {
-	return q.size + 10 // small padding
-}
-
-func (q qrRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
-	if q.url == "" {
-		return y
-	}
-
-	qrPng, err := qrcode.Encode(q.url, qrcode.Medium, q.size)
-	if err != nil {
-		return y + q.height()
-	}
-
-	// Decode QR PNG to image.
-	qrImg, err := png.Decode(strings.NewReader(string(qrPng)))
-	if err != nil {
-		return y + q.height()
-	}
-
-	// Center the QR code.
-	x := (labelWidthPx - q.size) / 2
-	offset := image.Pt(x, y+5)
-	draw.Draw(img, image.Rect(offset.X, offset.Y, offset.X+q.size, offset.Y+q.size),
-		qrImg, image.Point{}, draw.Over)
-
-	return y + q.height()
-}
-
-// spacerRow adds vertical space.
 type spacerRow struct {
 	px int
 }
 
-func (s spacerRow) height() int  { return s.px }
+func (s spacerRow) height() int { return s.px }
+
 func (s spacerRow) draw(_ *image.RGBA, _ *LabelRenderer, y int) int {
 	return y + s.px
 }
 
-// buildRows creates the row list for the given template and data.
-func (r *LabelRenderer) buildRows(data LabelData) []row {
-	var rows []row
+type tableBlockRow struct {
+	entries         []tableEntry
+	fontSize        float64
+	maxLines        int
+	labelWidthRatio float64
+}
 
-	// Common header for all templates.
-	rows = append(rows,
-		textRow{value: data.ProductName, fontSize: fontSizeTitle},
-		textRow{label: "内容量", value: data.ProductQuantity, fontSize: fontSizeBody},
-	)
+type tableLayout struct {
+	labelWidth  int
+	valueWidth  int
+	rows        []tableRowLayout
+	totalHeight int
+}
+
+type tableRowLayout struct {
+	labelLines    []string
+	valueLines    []string
+	labelFontSize float64
+	valueFontSize float64
+	height        int
+}
+
+func (t tableBlockRow) layout() tableLayout {
+	ratio := tableLabelWidthRatio
+	if t.labelWidthRatio > 0 {
+		ratio = t.labelWidthRatio
+	}
+	labelWidth := int(float64(contentWidth) * ratio)
+	if labelWidth < 1 {
+		labelWidth = 1
+	}
+	valueWidth := contentWidth - labelWidth
+	if valueWidth < 1 {
+		valueWidth = contentWidth
+	}
+
+	rows := make([]tableRowLayout, 0, len(t.entries))
+	totalHeight := 0
+	for _, entry := range t.entries {
+		labelLines, labelSize := fitLines(entry.label, t.fontSize, minFontSize, t.maxLines, labelWidth-2*tableCellPadding)
+		valueLines, valueSize := fitLines(entry.value, t.fontSize, minFontSize, t.maxLines, valueWidth-2*tableCellPadding)
+
+		if len(labelLines) == 0 {
+			labelLines = []string{""}
+		}
+		if len(valueLines) == 0 {
+			valueLines = []string{""}
+		}
+
+		linesCount := len(labelLines)
+		if len(valueLines) > linesCount {
+			linesCount = len(valueLines)
+		}
+		labelHeight := linesCount * lineHeight(labelSize)
+		valueHeight := linesCount * lineHeight(valueSize)
+		rowHeight := labelHeight
+		if valueHeight > rowHeight {
+			rowHeight = valueHeight
+		}
+		rowHeight += 2 * tableCellPadding
+		minHeight := lineHeight(minFontSize) + 2*tableCellPadding
+		if rowHeight < minHeight {
+			rowHeight = minHeight
+		}
+
+		rows = append(rows, tableRowLayout{
+			labelLines:    labelLines,
+			valueLines:    valueLines,
+			labelFontSize: labelSize,
+			valueFontSize: valueSize,
+			height:        rowHeight,
+		})
+		totalHeight += rowHeight
+	}
+
+	if len(rows) == 0 {
+		rowHeight := lineHeight(t.fontSize) + 2*tableCellPadding
+		rows = append(rows, tableRowLayout{
+			labelLines:    []string{""},
+			valueLines:    []string{""},
+			labelFontSize: t.fontSize,
+			valueFontSize: t.fontSize,
+			height:        rowHeight,
+		})
+		totalHeight += rowHeight
+	}
+
+	return tableLayout{
+		labelWidth:  labelWidth,
+		valueWidth:  valueWidth,
+		rows:        rows,
+		totalHeight: totalHeight,
+	}
+}
+
+func (t tableBlockRow) height() int {
+	return t.layout().totalHeight
+}
+
+func (t tableBlockRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
+	layout := t.layout()
+	if len(layout.rows) == 0 {
+		return y
+	}
+
+	borderColor := color.RGBA{R: 0, G: 0, B: 0, A: 255}
+	topY := y
+	bottomY := y + layout.totalHeight
+	drawHLine(img, contentLeft, contentLeft+contentWidth, topY, borderColor)
+	drawHLine(img, contentLeft, contentLeft+contentWidth, bottomY, borderColor)
+	drawVLine(img, contentLeft, topY, bottomY, borderColor)
+	drawVLine(img, contentLeft+layout.labelWidth, topY, bottomY, borderColor)
+	drawVLine(img, contentLeft+contentWidth, topY, bottomY, borderColor)
+
+	currY := y
+	for _, row := range layout.rows {
+		labelFace := r.makeFace(row.labelFontSize)
+		valueFace := r.makeFace(row.valueFontSize)
+
+		labelBaseline := currY + tableCellPadding + lineHeight(row.labelFontSize)
+		valueBaseline := currY + tableCellPadding + lineHeight(row.valueFontSize)
+
+		labelX := contentLeft + tableCellPadding
+		valueX := contentLeft + layout.labelWidth + tableCellPadding
+
+		for _, line := range row.labelLines {
+			drawStringFitWidth(img, labelFace, line, labelX, labelBaseline, layout.labelWidth-2*tableCellPadding)
+			labelBaseline += lineHeight(row.labelFontSize)
+		}
+		for _, line := range row.valueLines {
+			drawStringFitWidth(img, valueFace, line, valueX, valueBaseline, layout.valueWidth-2*tableCellPadding)
+			valueBaseline += lineHeight(row.valueFontSize)
+		}
+
+		labelFace.Close()
+		valueFace.Close()
+
+		currY += row.height
+		drawHLine(img, contentLeft, contentLeft+contentWidth, currY, borderColor)
+	}
+
+	return y + layout.totalHeight
+}
+
+type imageSectionRow struct {
+	data LabelData
+	size int
+}
+
+func (row imageSectionRow) height() int {
+	return row.cardSize() + imageSlotGap
+}
+
+func (row imageSectionRow) cardSize() int {
+	if row.size > 0 {
+		return row.size
+	}
+	return calcImageSizeForData(row.data, contentWidth, 0)
+}
+
+func (row imageSectionRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
+	top := y + imageSlotGap/2
+	size := row.cardSize()
+	if size <= 0 {
+		return y + row.height()
+	}
+
+	switch row.data.Template {
+	case "individual_qr":
+		if row.showQRCode() {
+			rect := image.Rect(contentLeft, top, contentLeft+contentWidth, top+size)
+			r.drawQRCodeIntoRect(img, rect, strings.TrimSpace(row.data.QRCode))
+		}
+		return y + row.height()
+	default:
+		if row.showLogoOnly() {
+			row.drawLogoFullWidth(img, r, top, size)
+			return y + row.height()
+		}
+		row.drawTraceableImages(img, r, top, size)
+		return y + row.height()
+	}
+}
+
+func (row imageSectionRow) showLogoOnly() bool {
+	switch row.data.Template {
+	case "processed", "pet", "non_traceable", "non_traceable_deer":
+		return true
+	default:
+		return false
+	}
+}
+
+func (row imageSectionRow) showQRCode() bool {
+	if strings.TrimSpace(row.data.QRCode) == "" {
+		return false
+	}
+	switch row.data.Template {
+	case "traceable", "traceable_deer", "traceable_bear", "individual_qr":
+		return true
+	default:
+		return false
+	}
+}
+
+func (row imageSectionRow) showCertification() bool {
+	if row.data.Template == "traceable_bear" {
+		return false
+	}
+	if strings.TrimSpace(row.data.CertificationMarkFile) == "" {
+		return false
+	}
+	return row.showQRCode()
+}
+
+func (row imageSectionRow) logoPath() string {
+	return strings.TrimSpace(row.data.LogoFile)
+}
+
+func (row imageSectionRow) certPath() string {
+	return strings.TrimSpace(row.data.CertificationMarkFile)
+}
+
+func (row imageSectionRow) drawLogoFullWidth(img *image.RGBA, r *LabelRenderer, top, size int) {
+	if path := row.logoPath(); path != "" {
+		if logo, err := r.loadAssetImage(path); err == nil && logo != nil {
+			rect := image.Rect(contentLeft, top, contentLeft+contentWidth, top+size)
+			r.drawImageWithinRect(img, logo, rect)
+		}
+	}
+}
+
+func (row imageSectionRow) drawTraceableImages(img *image.RGBA, r *LabelRenderer, top, size int) {
+	if !row.showQRCode() {
+		row.drawLogoFullWidth(img, r, top, size)
+		return
+	}
+
+	showCert := row.showCertification()
+	slotCount := 0
+	if showCert {
+		slotCount++
+	}
+	if row.showQRCode() {
+		slotCount++
+	}
+
+	logoWidth := contentWidth - slotCount*(size+imageSlotGap)
+	if logoWidth < size {
+		logoWidth = size
+	}
+
+	cursor := contentLeft
+	if logoWidth > 0 {
+		row.drawLogoAt(img, r, cursor, top, logoWidth, size)
+	}
+	cursor += logoWidth
+
+	if showCert {
+		cursor += imageSlotGap
+		row.drawCertificationAt(img, r, cursor, top, size)
+		cursor += size
+	}
+
+	if row.showQRCode() {
+		cursor += imageSlotGap
+		row.drawQRCodeAt(img, r, cursor, top, size)
+	}
+}
+
+func (row imageSectionRow) drawLogoAt(img *image.RGBA, r *LabelRenderer, x, top, width, size int) {
+	if width <= 0 {
+		return
+	}
+	path := row.logoPath()
+	if path == "" {
+		return
+	}
+	if logo, err := r.loadAssetImage(path); err == nil && logo != nil {
+		rect := image.Rect(x, top, x+width, top+size)
+		r.drawImageWithinRect(img, logo, rect)
+	}
+}
+
+func (row imageSectionRow) drawCertificationAt(img *image.RGBA, r *LabelRenderer, x, top, size int) {
+	path := row.certPath()
+	if path == "" {
+		return
+	}
+	if cert, err := r.loadAssetImage(path); err == nil && cert != nil {
+		rect := image.Rect(x, top, x+size, top+size)
+		r.drawImageWithinRect(img, cert, rect)
+	}
+}
+
+func (row imageSectionRow) drawQRCodeAt(img *image.RGBA, r *LabelRenderer, x, top, size int) {
+	if !row.showQRCode() || size <= 0 {
+		return
+	}
+	rect := image.Rect(x, top, x+size, top+size)
+	r.drawQRCodeIntoRect(img, rect, strings.TrimSpace(row.data.QRCode))
+}
+
+func buildTableEntries(data LabelData) []tableEntry {
+	trim := strings.TrimSpace
+	if data.Template == "individual_qr" {
+		entries := []tableEntry{}
+		if name := trim(data.ProductName); name != "" {
+			entries = append(entries, tableEntry{label: "品名", value: name})
+		}
+		entries = append(entries, tableEntry{label: "個体識別番号", value: trim(data.IndividualNumber)})
+		return entries
+	}
 
 	switch data.Template {
 	case "traceable", "traceable_deer", "traceable_bear":
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-			separatorRow{},
-			textRow{label: "個体識別番号", value: data.IndividualNumber, fontSize: fontSizeBody},
-		)
-		if data.CaptureLocation != "" {
-			rows = append(rows, textRow{label: "捕獲場所", value: data.CaptureLocation, fontSize: fontSizeBody})
+		return []tableEntry{
+			{label: "商品名", value: trim(data.ProductName)},
+			{label: "捕獲地", value: trim(data.CaptureLocation)},
+			{label: "内容量", value: trim(data.ProductQuantity)},
+			{label: "消費期限", value: trim(data.DeadlineDate)},
+			{label: "保存方法", value: trim(data.StorageTemperature)},
+			{label: "加工者名", value: trim(data.ProcessorName)},
+			{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)},
+			{label: "金属探知機", value: "検査済み"},
+			{label: "個体識別番号", value: trim(data.IndividualNumber)},
 		}
-		if data.QRCode != "" {
-			rows = append(rows,
-				spacerRow{px: 10},
-				qrRow{url: data.QRCode, size: 200},
-			)
-		}
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
-		}
-
 	case "non_traceable", "non_traceable_deer":
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-		)
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
+		return []tableEntry{
+			{label: "商品名", value: trim(data.ProductName)},
+			{label: "内容量", value: trim(data.ProductQuantity)},
+			{label: "消費期限", value: trim(data.DeadlineDate)},
+			{label: "保存方法", value: trim(data.StorageTemperature)},
+			{label: "加工者名", value: trim(data.ProcessorName)},
+			{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)},
+			{label: "金属探知機", value: "検査済み"},
 		}
-
 	case "processed":
-		if data.ProductIngredient != "" {
-			rows = append(rows, multiLineRow{label: "原材料名", value: data.ProductIngredient, fontSize: fontSizeSmall})
+		return []tableEntry{
+			{label: "名称", value: trim(data.ProductName)},
+			{label: "原材料名", value: trim(data.ProductIngredient)},
+			{label: "内容量", value: trim(data.ProductQuantity)},
+			{label: "賞味期限", value: trim(data.DeadlineDate)},
+			{label: "保存方法", value: trim(data.StorageTemperature)},
 		}
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-		)
-		// Nutrition table.
-		nutritionLabel := "栄養成分表示"
-		if data.NutritionUnit != "" {
-			nutritionLabel += "（" + data.NutritionUnit + "）"
-		}
-		rows = append(rows, separatorRow{text: nutritionLabel})
-		if data.CaloriesQuantity != "" {
-			rows = append(rows, textRow{label: "エネルギー", value: data.CaloriesQuantity, fontSize: fontSizeSmall})
-		}
-		if data.ProteinQuantity != "" {
-			rows = append(rows, textRow{label: "たんぱく質", value: data.ProteinQuantity, fontSize: fontSizeSmall})
-		}
-		if data.FatQuantity != "" {
-			rows = append(rows, textRow{label: "脂質", value: data.FatQuantity, fontSize: fontSizeSmall})
-		}
-		if data.CarbohydratesQuantity != "" {
-			rows = append(rows, textRow{label: "炭水化物", value: data.CarbohydratesQuantity, fontSize: fontSizeSmall})
-		}
-		if data.SaltEquivalentQuantity != "" {
-			rows = append(rows, textRow{label: "食塩相当量", value: data.SaltEquivalentQuantity, fontSize: fontSizeSmall})
-		}
-		rows = append(rows, separatorRow{})
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
-		}
-
 	case "pet":
-		if data.ProductIngredient != "" {
-			rows = append(rows, multiLineRow{label: "原材料名", value: data.ProductIngredient, fontSize: fontSizeSmall})
-		}
-		rows = append(rows,
-			textRow{label: "消費期限", value: data.DeadlineDate, fontSize: fontSizeBody},
-			textRow{label: "保存方法", value: data.StorageTemperature, fontSize: fontSizeBody},
-		)
-		if data.AttentionText != "" {
-			rows = append(rows, multiLineRow{label: "注意", value: data.AttentionText, fontSize: fontSizeSmall})
-		}
-
-	case "individual_qr":
-		// Minimal label: individual number + QR code only.
-		rows = rows[:0] // Clear common header.
-		if data.IndividualNumber != "" {
-			rows = append(rows, textRow{label: "個体識別番号", value: data.IndividualNumber, fontSize: fontSizeBody})
-		}
-		if data.QRCode != "" {
-			rows = append(rows,
-				spacerRow{px: 10},
-				qrRow{url: data.QRCode, size: 250},
-			)
+		return []tableEntry{
+			{label: "商品名", value: trim(data.ProductName)},
+			{label: "内容量", value: trim(data.ProductQuantity)},
+			{label: "消費期限", value: trim(data.DeadlineDate)},
+			{label: "保存方法", value: trim(data.StorageTemperature)},
+			{label: "加工者名", value: trim(data.ProcessorName)},
+			{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)},
+			{label: "金属探知機", value: "検査済み"},
 		}
 	}
-
-	return rows
+	return []tableEntry{
+		{label: "商品名", value: trim(data.ProductName)},
+		{label: "内容量", value: trim(data.ProductQuantity)},
+		{label: "消費期限", value: trim(data.DeadlineDate)},
+		{label: "保存方法", value: trim(data.StorageTemperature)},
+		{label: "加工者名", value: trim(data.ProcessorName)},
+		{label: "加工施設所在地", value: trim(data.ProcessorLocation)},
+		{label: "金属探知機", value: "検査済み"},
+	}
 }
 
-// makeFace creates a font.Face at the given point size.
-func (r *LabelRenderer) makeFace(sizePt float64) font.Face {
+func labelWidthRatioForTemplate(template string) float64 {
+	switch template {
+	case "traceable", "traceable_deer", "traceable_bear":
+		return tableLabelWidthTraceable
+	case "non_traceable", "non_traceable_deer":
+		return tableLabelWidthNonTraceable
+	case "processed":
+		return tableLabelWidthProcessed
+	case "pet":
+		return tableLabelWidthPet
+	default:
+		return tableLabelWidthRatio
+	}
+}
+
+func isTraceableTemplate(template string) bool {
+	switch template {
+	case "traceable", "traceable_deer", "traceable_bear":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *LabelRenderer) drawQRCodeIntoRect(img *image.RGBA, rect image.Rectangle, url string) {
+	if rect.Empty() || strings.TrimSpace(url) == "" {
+		return
+	}
+	qrPng, err := qrcode.Encode(url, qrcode.Medium, rect.Dx())
+	if err != nil {
+		return
+	}
+	qrImg, err := png.Decode(strings.NewReader(string(qrPng)))
+	if err != nil || qrImg.Bounds().Empty() {
+		return
+	}
+	draw.Draw(img, rect, qrImg, image.Point{}, draw.Over)
+}
+
+func lineHeight(size float64) int {
+	return int(size * lineSpacingRatio * float64(labelDPI) / 72)
+}
+
+func wrapText(text string, fontSize float64, maxWidth int) []string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return []string{""}
+	}
+	if maxWidth <= 0 {
+		return []string{trimmed}
+	}
+
+	charWidth := fontSize * float64(labelDPI) / 72 * 0.55
+	if charWidth <= 0 {
+		charWidth = 1
+	}
+	maxChars := int(float64(maxWidth) / charWidth)
+	if maxChars < 1 {
+		maxChars = 1
+	}
+
+	parts := strings.Split(trimmed, "\n")
+	var lines []string
+	for _, part := range parts {
+		runes := []rune(part)
+		if len(runes) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		for len(runes) > 0 {
+			end := maxChars
+			if end > len(runes) {
+				end = len(runes)
+			}
+			lines = append(lines, string(runes[:end]))
+			runes = runes[end:]
+		}
+	}
+	return lines
+}
+
+func clampLines(lines []string, maxLines int, fontSize float64, maxWidth int) []string {
+	if maxLines <= 0 || len(lines) <= maxLines {
+		return lines
+	}
+	clamped := append([]string{}, lines[:maxLines]...)
+	maxChars := maxCharsForWidth(fontSize, maxWidth)
+	last := clamped[len(clamped)-1]
+	if maxChars > 3 {
+		runes := []rune(last)
+		if len(runes) > maxChars-3 {
+			last = string(runes[:maxChars-3])
+		}
+		last = strings.TrimRight(last, " ") + "..."
+	}
+	clamped[len(clamped)-1] = last
+	return clamped
+}
+
+func maxCharsForWidth(fontSize float64, maxWidth int) int {
+	if maxWidth <= 0 {
+		return 1
+	}
+	charWidth := fontSize * float64(labelDPI) / 72 * 0.55
+	if charWidth <= 0 {
+		return 1
+	}
+	maxChars := int(float64(maxWidth) / charWidth)
+	if maxChars < 1 {
+		return 1
+	}
+	return maxChars
+}
+
+func fitLines(text string, baseSize, minSize float64, maxLines, maxWidth int) ([]string, float64) {
+	if strings.TrimSpace(text) == "" {
+		return []string{""}, baseSize
+	}
+	size := baseSize
+	for size >= minSize {
+		lines := wrapText(text, size, maxWidth)
+		if maxLines <= 0 || len(lines) <= maxLines {
+			return lines, size
+		}
+		size -= 0.5
+		if size < minSize {
+			size = minSize
+		}
+	}
+	lines := wrapText(text, minSize, maxWidth)
+	lines = clampLines(lines, maxLines, minSize, maxWidth)
+	return lines, minSize
+}
+
+func calcImageSizeForData(data LabelData, widthPx, availableHeight int) int {
+	row := imageSectionRow{data: data}
+	if row.showLogoOnly() {
+		return calcImageSize(widthPx, availableHeight, 0, 1)
+	}
+	if data.Template == "individual_qr" {
+		return calcImageSize(widthPx, availableHeight, 0, 1)
+	}
+
+	slotCount := 0
+	if row.showCertification() {
+		slotCount++
+	}
+	if row.showQRCode() {
+		slotCount++
+	}
+	return calcImageSize(widthPx, availableHeight, logoWidthRatio, slotCount)
+}
+
+func calcImageSize(widthPx, availableHeight int, logoRatio float64, slotCount int) int {
+	if slotCount < 0 {
+		slotCount = 0
+	}
+	available := widthPx - slotCount*imageSlotGap
+	if available <= 0 {
+		available = widthPx
+	}
+	denom := logoRatio + float64(slotCount)
+	if denom <= 0 {
+		denom = 1
+	}
+	size := int(math.Floor(float64(available) / denom))
+	if availableHeight > 0 {
+		maxSize := availableHeight - imageSlotGap
+		if maxSize < 1 {
+			maxSize = 1
+		}
+		if size > maxSize {
+			size = maxSize
+		}
+	}
+	size = int(math.Floor(float64(size) * imageSectionScale))
+	if size < minImageSizePx {
+		size = minImageSizePx
+	}
+	if size < 1 {
+		size = 1
+	}
+	return size
+}
+
+func drawHLine(img *image.RGBA, x1, x2, y int, c color.Color) {
+	bounds := img.Bounds()
+	if y < bounds.Min.Y || y >= bounds.Max.Y {
+		return
+	}
+	if x1 < bounds.Min.X {
+		x1 = bounds.Min.X
+	}
+	if x2 > bounds.Max.X {
+		x2 = bounds.Max.X
+	}
+	for x := x1; x <= x2; x++ {
+		img.Set(x, y, c)
+	}
+}
+
+func drawVLine(img *image.RGBA, x, y1, y2 int, c color.Color) {
+	bounds := img.Bounds()
+	if x < bounds.Min.X || x >= bounds.Max.X {
+		return
+	}
+	if y1 < bounds.Min.Y {
+		y1 = bounds.Min.Y
+	}
+	if y2 > bounds.Max.Y {
+		y2 = bounds.Max.Y
+	}
+	for y := y1; y <= y2; y++ {
+		img.Set(x, y, c)
+	}
+}
+
+func (r *LabelRenderer) loadAssetImage(file string) (image.Image, error) {
+	if file == "" {
+		return nil, nil
+	}
+	resolved := r.resolveAssetPath(file)
+	if resolved == "" {
+		return nil, nil
+	}
+	f, err := os.Open(resolved)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return nil, err
+	}
+	return img, nil
+}
+
+func (r *LabelRenderer) resolveAssetPath(file string) string {
+	if file == "" {
+		return ""
+	}
+	if filepath.IsAbs(file) || r.assetsDir == "" {
+		return file
+	}
+	return filepath.Join(r.assetsDir, file)
+}
+
+func (r *LabelRenderer) drawImageWithinRect(dst *image.RGBA, src image.Image, rect image.Rectangle) {
+	if src == nil || rect.Empty() {
+		return
+	}
+	bounds := src.Bounds()
+	if bounds.Empty() {
+		return
+	}
+	maxW := rect.Dx()
+	maxH := rect.Dy()
+	if maxW <= 0 || maxH <= 0 {
+		return
+	}
+	scale := math.Min(float64(maxW)/float64(bounds.Dx()), float64(maxH)/float64(bounds.Dy()))
+	if scale <= 0 {
+		return
+	}
+	scaledW := int(math.Round(float64(bounds.Dx()) * scale))
+	scaledH := int(math.Round(float64(bounds.Dy()) * scale))
+	if scaledW <= 0 || scaledH <= 0 {
+		return
+	}
+	scaled := image.NewRGBA(image.Rect(0, 0, scaledW, scaledH))
+	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), src, bounds, draw.Over, nil)
+	offsetX := rect.Min.X + (maxW-scaledW)/2
+	offsetY := rect.Min.Y + (maxH-scaledH)/2
+	draw.Draw(dst, image.Rect(offsetX, offsetY, offsetX+scaledW, offsetY+scaledH), scaled, image.Point{}, draw.Over)
+}
+
+func (r *LabelRenderer) makeFace(size float64) font.Face {
 	face, err := opentype.NewFace(r.fontRegular, &opentype.FaceOptions{
-		Size:    sizePt,
+		Size:    size,
 		DPI:     labelDPI,
 		Hinting: font.HintingFull,
 	})
 	if err != nil {
-		// Should not happen with a valid font.
 		panic(fmt.Sprintf("create font face: %v", err))
 	}
 	return face
 }
 
-// drawString draws a string on the image.
 func drawString(img *image.RGBA, face font.Face, text string, x, y int) {
 	d := &font.Drawer{
 		Dst:  img,
@@ -391,28 +840,69 @@ func drawString(img *image.RGBA, face font.Face, text string, x, y int) {
 	d.DrawString(text)
 }
 
-// loadFont searches for a Japanese-capable font file.
+func drawStringFitWidth(img *image.RGBA, face font.Face, text string, x, y, maxWidth int) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	if maxWidth <= 0 {
+		drawString(img, face, text, x, y)
+		return
+	}
+
+	bounds, _ := font.BoundString(face, text)
+	width := (bounds.Max.X - bounds.Min.X).Ceil()
+	if width <= 0 || width <= maxWidth {
+		drawString(img, face, text, x, y)
+		return
+	}
+
+	metrics := face.Metrics()
+	ascent := metrics.Ascent.Ceil()
+	descent := metrics.Descent.Ceil()
+	height := ascent + descent
+	if height <= 0 {
+		drawString(img, face, text, x, y)
+		return
+	}
+
+	tmp := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(tmp, tmp.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+	d := &font.Drawer{
+		Dst:  tmp,
+		Src:  &image.Uniform{color.Black},
+		Face: face,
+		Dot: fixed.Point26_6{
+			X: fixed.I(-bounds.Min.X.Ceil()),
+			Y: fixed.I(ascent),
+		},
+	}
+	d.DrawString(text)
+
+	scaled := image.NewRGBA(image.Rect(0, 0, maxWidth, height))
+	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), tmp, tmp.Bounds(), draw.Over, nil)
+
+	topY := y - ascent
+	draw.Draw(img, image.Rect(x, topY, x+maxWidth, topY+height), scaled, image.Point{}, draw.Over)
+}
+
 func loadFont(configPath string) (*opentype.Font, error) {
 	paths := []string{}
 	if configPath != "" {
 		paths = append(paths, configPath)
 	}
-	// Well-known system font paths (Raspberry Pi OS / Debian).
 	paths = append(paths,
 		"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 		"/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
 		"/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
 		"/usr/share/fonts/truetype/vlgothic/VL-Gothic-Regular.ttf",
-		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", // fallback (no CJK)
+		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 	)
-
 	for _, p := range paths {
 		f, err := tryLoadFont(p)
 		if err == nil {
 			return f, nil
 		}
 	}
-
 	return nil, fmt.Errorf("FONT_NOT_FOUND: 日本語フォントが見つかりません。" +
 		"sudo apt-get install fonts-noto-cjk を実行するか、config.json に fontPath を設定してください")
 }
@@ -422,7 +912,6 @@ func tryLoadFont(path string) (*opentype.Font, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".ttc" {
 		col, err := opentype.ParseCollection(data)
@@ -432,6 +921,5 @@ func tryLoadFont(path string) (*opentype.Font, error) {
 		f, err := col.Font(0)
 		return f, err
 	}
-
 	return opentype.Parse(data)
 }

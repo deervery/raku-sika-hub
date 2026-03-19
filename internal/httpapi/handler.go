@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
@@ -34,6 +35,7 @@ type Handler struct {
 	version     string
 	commit      string
 	buildDate   string
+	assetsDir   string
 }
 
 // NewHandler creates a Handler.
@@ -42,7 +44,7 @@ func NewHandler(
 	prn *printer.Brother,
 	scanner ScannerClient,
 	logger *logging.Logger,
-	version, commit, buildDate string,
+	version, commit, buildDate, assetsDir string,
 ) *Handler {
 	return &Handler{
 		scaleClient: scaleClient,
@@ -52,6 +54,7 @@ func NewHandler(
 		version:     version,
 		commit:      commit,
 		buildDate:   buildDate,
+		assetsDir:   assetsDir,
 	}
 }
 
@@ -258,6 +261,11 @@ func (h *Handler) HandlePrinterPreview(w http.ResponseWriter, r *http.Request) {
 			"ラベル画像の生成に失敗しました: "+err.Error())
 		return
 	}
+	defer func(path string) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			h.logger.Warn("preview temp file cleanup failed (%s): %v", path, err)
+		}
+	}(imgPath)
 
 	w.Header().Set("Content-Type", "image/png")
 	http.ServeFile(w, r, imgPath)
@@ -370,9 +378,20 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		AttentionText:          req.Data["attentionText"],
 		FacilityName:           req.Data["facilityName"],
 		Ingredient:             req.Data["ingredient"],
+		LogoFile:               h.resolveLogoField(req.Data["logoFile"]),
+		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
+		ProcessorName:          req.Data["processorName"],
+		ProcessorLocation:      req.Data["processorLocation"],
 	}
 
 	return &data, 0, nil
+}
+
+func (h *Handler) resolveLogoField(input string) string {
+	if trimmed := strings.TrimSpace(input); trimmed != "" {
+		return trimmed
+	}
+	return printer.DefaultLogoFile(h.assetsDir)
 }
 
 // classifyScaleError maps scale errors to error codes and Japanese messages.

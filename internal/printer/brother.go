@@ -27,10 +27,10 @@ type Brother struct {
 // NewBrother creates a new Brother printer driver.
 // fontPath is optional; if empty, system fonts are searched.
 // If font loading fails, label printing is disabled but test printing still works.
-func NewBrother(name string, fontPath string, logger *logging.Logger) *Brother {
+func NewBrother(name string, fontPath string, assetsDir string, logger *logging.Logger) *Brother {
 	b := &Brother{name: strings.TrimSpace(name), logger: logger}
 
-	renderer, err := NewLabelRenderer(fontPath)
+	renderer, err := NewLabelRenderer(fontPath, assetsDir)
 	if err != nil {
 		logger.Warn("label renderer unavailable: %s", err)
 	} else {

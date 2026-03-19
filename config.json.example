@@ -8,6 +8,7 @@
   "stopBits": 1,
   "printerName": "",
   "fontPath": "",
+  "assetsDir": "assets",
   "scannerVid": "",
   "scannerPid": "",
   "scannerDeviceName": "",

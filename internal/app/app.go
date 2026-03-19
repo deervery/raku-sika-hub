@@ -44,7 +44,7 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 		})
 	})
 
-	prn := printer.NewBrother(cfg.PrinterName, cfg.FontPath, logger)
+	prn := printer.NewBrother(cfg.PrinterName, cfg.FontPath, cfg.AssetsDir, logger)
 
 	// Scanner (optional: only created if any scanner config is set)
 	var sc *scanner.Client
@@ -64,7 +64,7 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 
 	// WebSocket server (optional, disabled by default)
 	if cfg.EnableWebSocket {
-		wsHandler := ws.NewHandler(scaleClient, prn, hub, logger)
+		wsHandler := ws.NewHandler(scaleClient, prn, hub, logger, cfg.AssetsDir)
 		wsServer := ws.NewServer(hub, wsHandler, logger, cfg.ListenAddr, 5)
 		a.wsHandler = wsHandler
 		a.wsServer = wsServer
@@ -75,7 +75,7 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 	if sc != nil {
 		scannerIface = sc
 	}
-	httpHandler := httpapi.NewHandler(scaleClient, prn, scannerIface, logger, version, commit, buildDate)
+	httpHandler := httpapi.NewHandler(scaleClient, prn, scannerIface, logger, version, commit, buildDate, cfg.AssetsDir)
 	a.httpServer = httpapi.NewServer(httpHandler, logger, cfg.ListenAddr)
 
 	return a, nil

@@ -17,6 +17,7 @@ type Handler struct {
 	printer     *printer.Brother
 	hub         *Hub
 	logger      *logging.Logger
+	assetsDir   string
 }
 
 type HealthSnapshot struct {
@@ -29,12 +30,13 @@ type HealthSnapshot struct {
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(scaleClient *scale.Client, printer *printer.Brother, hub *Hub, logger *logging.Logger) *Handler {
+func NewHandler(scaleClient *scale.Client, printer *printer.Brother, hub *Hub, logger *logging.Logger, assetsDir string) *Handler {
 	return &Handler{
 		scaleClient: scaleClient,
 		printer:     printer,
 		hub:         hub,
 		logger:      logger,
+		assetsDir:   assetsDir,
 	}
 }
 
@@ -373,6 +375,10 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
 		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
 		AttentionText:          req.Data["attentionText"],
+		LogoFile:               h.resolveLogoField(req.Data["logoFile"]),
+		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
+		ProcessorName:          req.Data["processorName"],
+		ProcessorLocation:      req.Data["processorLocation"],
 	}
 
 	err := h.printer.PrintLabel(data)
@@ -463,4 +469,11 @@ func classifyScaleError(err error) (string, string) {
 		return ErrCodeUnknownError,
 			"予期しないエラーが発生しました: " + msg
 	}
+}
+
+func (h *Handler) resolveLogoField(input string) string {
+	if trimmed := strings.TrimSpace(input); trimmed != "" {
+		return trimmed
+	}
+	return printer.DefaultLogoFile(h.assetsDir)
 }

@@ -19,6 +19,7 @@ type Config struct {
 	StopBits          int    `json:"stopBits"`
 	PrinterName       string `json:"printerName"`
 	FontPath          string `json:"fontPath"`
+	AssetsDir         string `json:"assetsDir"`
 	ListenAddr        string `json:"listenAddr"`
 	LogLevel          string `json:"logLevel"`
 	EnableWebSocket   bool   `json:"enableWebSocket"`
@@ -38,6 +39,7 @@ func Default() Config {
 		Parity:          "even",
 		StopBits:        1,
 		PrinterName:     "",
+		AssetsDir:       "assets",
 		ListenAddr:      "0.0.0.0:19800",
 		LogLevel:        "INFO",
 		EnableWebSocket: false,
@@ -91,6 +93,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("FONT_PATH")); v != "" {
 		cfg.FontPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ASSETS_DIR")); v != "" {
+		cfg.AssetsDir = v
 	}
 	if v := strings.TrimSpace(os.Getenv("LISTEN_ADDR")); v != "" {
 		cfg.ListenAddr = v

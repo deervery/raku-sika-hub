@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
@@ -269,6 +270,60 @@ func (h *Handler) HandlePrinterPreview(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "image/png")
 	http.ServeFile(w, r, imgPath)
+}
+
+// HandlePrinterQueue handles GET /printer/queue.
+// Returns the CUPS print job queue via `lpstat -o`.
+func (h *Handler) HandlePrinterQueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	out, err := exec.Command("lpstat", "-o").CombinedOutput()
+	if err != nil {
+		// lpstat returns exit code 1 when there are no jobs — treat as empty
+		writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Jobs: []QueueJob{}})
+		return
+	}
+
+	jobs := parseLpstatOutput(string(out))
+	writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Jobs: jobs})
+}
+
+// parseLpstatOutput parses `lpstat -o` output.
+// Each line: "PrinterName-123  user  1024  Mon 24 Mar 2025 10:30:00"
+func parseLpstatOutput(output string) []QueueJob {
+	var jobs []QueueJob
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Split by whitespace: id, user, size, rest is date
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		id := fields[0]
+		// Extract printer name from job id (e.g. "Brother_QL-800-123" → "Brother_QL-800")
+		printerName := id
+		if idx := strings.LastIndex(id, "-"); idx > 0 {
+			printerName = id[:idx]
+		}
+		user := fields[1]
+		size := fields[2]
+		submittedAt := strings.Join(fields[3:], " ")
+
+		jobs = append(jobs, QueueJob{
+			ID:          id,
+			Printer:     strings.ReplaceAll(printerName, "_", " "),
+			User:        user,
+			Size:        size,
+			SubmittedAt: submittedAt,
+		})
+	}
+	return jobs
 }
 
 // HandlePrinterTest handles POST /printer/test.

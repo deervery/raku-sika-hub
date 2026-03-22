@@ -84,6 +84,21 @@ func writeSuccess(w http.ResponseWriter, msg string) {
 	writeJSON(w, http.StatusOK, SuccessResponse{Status: "ok", Message: msg})
 }
 
+// QueueResponse is returned by GET /printer/queue.
+type QueueResponse struct {
+	Status string     `json:"status"`
+	Jobs   []QueueJob `json:"jobs"`
+}
+
+// QueueJob represents a single CUPS print job.
+type QueueJob struct {
+	ID          string `json:"id"`
+	Printer     string `json:"printer"`
+	User        string `json:"user"`
+	Size        string `json:"size"`
+	SubmittedAt string `json:"submittedAt"`
+}
+
 func writeError(w http.ResponseWriter, httpStatus int, code, message string) {
 	writeJSON(w, httpStatus, ErrorBody{Status: "error", Code: code, Message: message})
 }

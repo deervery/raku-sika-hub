@@ -44,6 +44,8 @@ var ValidTemplates = map[string]bool{
 	"processed":          true,
 	"pet":                true,
 	"individual_qr":      true,
+	"carcass_deer":       true,
+	"carcass_bear":       true,
 }
 
 // RequiredFields returns the required field names for each template.
@@ -59,6 +61,8 @@ func RequiredFields(template string) []string {
 	switch template {
 	case "traceable", "traceable_deer", "traceable_bear":
 		return append(common, "individualNumber", "captureLocation", "qrCode")
+	case "carcass_deer", "carcass_bear":
+		return []string{"individualNumber"}
 	default:
 		return common
 	}

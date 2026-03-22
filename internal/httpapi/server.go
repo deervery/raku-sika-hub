@@ -38,6 +38,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/printer/print", s.handler.HandlePrinterPrint)
 	mux.HandleFunc("/printer/preview", s.handler.HandlePrinterPreview)
 	mux.HandleFunc("/printer/test", s.handler.HandlePrinterTest)
+	mux.HandleFunc("/printer/queue", s.handler.HandlePrinterQueue)
 	mux.HandleFunc("/scanner/scan", s.handler.HandleScannerScan)
 
 	// Apply middleware: CORS → LAN restriction → routes

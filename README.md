@@ -669,6 +669,29 @@ const SCALE_WS_URL = 'ws://raku-sika-hub.local:19800';
 // const SCALE_WS_URL = 'ws://192.168.x.x:19800';
 ```
 
+## リリース & Raspberry Pi 更新
+
+### リリースの作成
+
+Git タグをプッシュすると GitHub Actions が ARM64 バイナリをビルドし、GitHub Release に添付する。
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+### Raspberry Pi で最新版に更新
+
+```bash
+bash ~/raku-sika-hub/deploy/update.sh
+```
+
+`update.sh` は以下を自動で行う:
+1. GitHub Releases から最新の `raku-sika-hub-linux-arm64` をダウンロード
+2. サービスを停止し、バイナリを差し替え
+3. サービスを再起動し、ヘルスチェック
+4. 失敗時は自動ロールバック
+
 ## テスト実行
 
 ```bash

@@ -207,10 +207,19 @@ func (b *Brother) PrintLabel(data LabelData) error {
 	args := []string{
 		"-d", status.SelectedName,
 		"-n", fmt.Sprintf("%d", copies),
-		"-o", "media=" + media,
+		"-o", "scaling=100",
 		"-o", "position=center",
-		imgPath,
 	}
+	if media != "" {
+		args = append(args, "-o", "media="+media)
+	} else {
+		b.logger.Warn(
+			"label media options unavailable; falling back to queue defaults: printer=%q available_media=%s",
+			status.SelectedName,
+			formatMediaOptions(availableMedia),
+		)
+	}
+	args = append(args, imgPath)
 	b.logger.Info(
 		"label print options: printer=%q media=%q available_media=%s lp_args=%v",
 		status.SelectedName,
@@ -295,6 +304,9 @@ func (b *Brother) resolveLabelMedia(printerName string) (string, []string, error
 	}
 
 	options := parseMediaOptions(string(out))
+	if len(options) == 0 {
+		return "", options, nil
+	}
 	selected := selectPreferredMediaOption(options)
 	if selected == "" {
 		return "", options, fmt.Errorf(

@@ -26,6 +26,7 @@ const (
 	marginPx         = 16
 	tableCellPadding = 6
 	tableBorderGray  = 120
+	baseFontSize     = 8.0
 )
 
 // Font size and spacing.
@@ -40,7 +41,6 @@ const (
 	fixedProcessorName             = "(株)札幌カネシン水産"
 	fixedProcessorFacilityLocation = "北海道訓子府町大町113"
 	fixedMetalDetectorStatus       = "検査済み"
-	fixedHeatedInstruction         = "加熱用"
 )
 
 // LabelRenderer generates label images for printing.
@@ -65,7 +65,6 @@ type RenderResult struct {
 }
 
 // Render generates a label PNG image and returns the file path and dimensions.
-// Width is fixed at 732px (62mm) to match the Brother QL tape width.
 func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
@@ -87,7 +86,7 @@ func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	bounds := img.Bounds()
 	return RenderResult{
 		Path:     tmpFile.Name(),
-		WidthMM:  bounds.Dx() * 254 / (labelDPI * 10), // px to mm
+		WidthMM:  bounds.Dx() * 254 / (labelDPI * 10),
 		HeightMM: bounds.Dy() * 254 / (labelDPI * 10),
 	}, nil
 }
@@ -106,25 +105,20 @@ func (r *LabelRenderer) EncodePNG(w io.Writer, data LabelData) error {
 
 // ── Layout computation ──
 
-// labelLayout holds the computed dimensions for rendering.
 type labelLayout struct {
-	labelWidthPx int // total image width
-	contentWidth int // table width (labelColPx + valueColPx)
-	labelColPx   int // left column width (including padding)
-	valueColPx   int // right column width (including padding)
-	offsetX      int // horizontal offset for centering the table
+	labelWidthPx int
+	contentWidth int
+	labelColPx   int
+	valueColPx   int
+	offsetX      int
 }
 
-// measureString returns the pixel width of text rendered with the given face.
 func measureString(face font.Face, text string) int {
 	return font.MeasureString(face, text).Ceil()
 }
 
-// computeLayout measures all table rows and determines the minimum label width
-// so that no text wraps within either column.
 func (r *LabelRenderer) computeLayout(rows []row) labelLayout {
-	// Determine font size from the first tableRow (all rows share the same size).
-	fontSize := 8.0
+	fontSize := baseFontSize
 	for _, row := range rows {
 		if v, ok := row.(tableRow); ok && v.fontSize > 0 {
 			fontSize = v.fontSize
@@ -166,14 +160,10 @@ func (r *LabelRenderer) computeLayout(rows []row) labelLayout {
 		}
 	}
 
-	// Add cell padding to each column.
 	labelColPx := maxLabelPx + tableCellPadding*2
 	valueColPx := maxValuePx + tableCellPadding*2
-
-	// Content width = label col + value col.
 	contentWidth := labelColPx + valueColPx
 
-	// Ensure separator text fits within content area.
 	sepNeeded := maxSepPx + 24
 	if sepNeeded > contentWidth {
 		valueColPx += sepNeeded - contentWidth
@@ -190,7 +180,6 @@ func (r *LabelRenderer) computeLayout(rows []row) labelLayout {
 	}
 }
 
-// applyFontSize sets the font size on all scalable rows.
 func applyFontSize(rows []row, size float64) {
 	for i, row := range rows {
 		switch v := row.(type) {
@@ -209,12 +198,17 @@ func applyFontSize(rows []row, size float64) {
 		case qrTableRow:
 			v.fontSize = size
 			rows[i] = v
+		case textQRRow:
+			v.fontSize = size
+			rows[i] = v
+		case carcassRow:
+			v.fontSize = size
+			rows[i] = v
+		// largeTextRow keeps its own fixed fontSize.
 		}
 	}
 }
 
-// computeOptimalFontSize finds the largest font size (in 0.5pt steps)
-// where the table content fits within the 62mm (732px) label width.
 func (r *LabelRenderer) computeOptimalFontSize(rows []row) float64 {
 	best := 6.0
 	for size := 10.0; size >= 6.0; size -= 0.5 {
@@ -231,13 +225,26 @@ func (r *LabelRenderer) computeOptimalFontSize(rows []row) float64 {
 func (r *LabelRenderer) renderImage(data LabelData) (*image.RGBA, error) {
 	rows := r.buildRows(data)
 
-	// Auto-fit: largest font size that fills 62mm width without overflow.
-	fontSize := r.computeOptimalFontSize(rows)
-	applyFontSize(rows, fontSize)
+	// Carcass templates use their own fixed font sizes.
+	switch data.Template {
+	case "carcass_deer", "carcass_bear":
+		// carcassRow and largeTextRow manage their own sizes.
+	default:
+		fontSize := r.computeOptimalFontSize(rows)
+		applyFontSize(rows, fontSize)
+	}
 
 	layout := r.computeLayout(rows)
 
-	// Center the table horizontally within the 732px label.
+	// Cap width at 62mm. If content overflows, shrink value column
+	// and let long text wrap within cells.
+	if layout.labelWidthPx > labelWidthPx {
+		excess := layout.labelWidthPx - labelWidthPx
+		layout.valueColPx -= excess
+		layout.contentWidth -= excess
+		layout.labelWidthPx = labelWidthPx
+	}
+
 	if layout.labelWidthPx < labelWidthPx {
 		layout.offsetX = (labelWidthPx - layout.contentWidth) / 2
 		layout.labelWidthPx = labelWidthPx
@@ -245,7 +252,6 @@ func (r *LabelRenderer) renderImage(data LabelData) (*image.RGBA, error) {
 		layout.offsetX = marginPx
 	}
 
-	// Height is variable — grows with content.
 	height := marginPx
 	for _, row := range rows {
 		height += row.height(r, layout)
@@ -287,12 +293,10 @@ func (t textRow) height(_ *LabelRenderer, _ labelLayout) int {
 func (t textRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
 	face := r.makeFace(t.fontSize)
 	defer face.Close()
-
 	text := t.value
 	if t.label != "" {
 		text = t.label + ": " + t.value
 	}
-
 	baseline := y + int(t.fontSize*float64(labelDPI)/72)
 	drawString(img, face, text, l.offsetX, baseline)
 	return y + t.lineHeight()
@@ -324,15 +328,12 @@ func (m multiLineRow) height(r *LabelRenderer, l labelLayout) int {
 func (m multiLineRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
 	face := r.makeFace(m.fontSize)
 	defer face.Close()
-
 	lh := m.lineHeight()
 	baseline := y + int(m.fontSize*float64(labelDPI)/72)
-
 	if m.label != "" {
 		drawString(img, face, m.label+":", l.offsetX, baseline)
 		baseline += lh
 	}
-
 	indent := l.offsetX + 20
 	for _, line := range wrapTextWithFace(face, m.value, l.contentWidth) {
 		drawString(img, face, line, indent, baseline)
@@ -358,12 +359,10 @@ func (s separatorRow) height(_ *LabelRenderer, _ labelLayout) int {
 func (s separatorRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
 	h := s.height(r, l)
 	lineY := y + h/2
-
 	gray := color.RGBA{R: 180, G: 180, B: 180, A: 255}
 	for x := l.offsetX; x < l.offsetX+l.contentWidth; x++ {
 		img.Set(x, lineY, gray)
 	}
-
 	if s.text != "" && s.fontSize > 0 {
 		face := r.makeFace(s.fontSize)
 		defer face.Close()
@@ -375,7 +374,6 @@ func (s separatorRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayo
 		draw.Draw(img, clearRect, &image.Uniform{color.White}, image.Point{}, draw.Src)
 		drawString(img, face, s.text, textX, baseline)
 	}
-
 	return y + h
 }
 
@@ -387,25 +385,20 @@ type qrRow struct {
 	alignRight bool
 }
 
-func (q qrRow) height(_ *LabelRenderer, _ labelLayout) int {
-	return q.size + 10
-}
+func (q qrRow) height(_ *LabelRenderer, _ labelLayout) int { return q.size + 10 }
 
 func (q qrRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
 	if q.url == "" {
 		return y
 	}
-
 	qrPng, err := qrcode.Encode(q.url, qrcode.Medium, q.size)
 	if err != nil {
 		return y + q.height(r, l)
 	}
-
 	qrImg, err := png.Decode(bytes.NewReader(qrPng))
 	if err != nil {
 		return y + q.height(r, l)
 	}
-
 	x := (l.labelWidthPx - q.size) / 2
 	if q.alignRight {
 		x = l.labelWidthPx - marginPx - q.size
@@ -413,15 +406,12 @@ func (q qrRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int
 	offset := image.Pt(x, y+5)
 	draw.Draw(img, image.Rect(offset.X, offset.Y, offset.X+q.size, offset.Y+q.size),
 		qrImg, image.Point{}, draw.Over)
-
 	return y + q.height(r, l)
 }
 
 // ── spacerRow ──
 
-type spacerRow struct {
-	px int
-}
+type spacerRow struct{ px int }
 
 func (s spacerRow) height(_ *LabelRenderer, _ labelLayout) int { return s.px }
 func (s spacerRow) draw(_ *image.RGBA, _ *LabelRenderer, y int, _ labelLayout) int {
@@ -440,15 +430,25 @@ func (t tableRow) lineHeight() int {
 	return int(t.fontSize * lineSpacingRatio * float64(labelDPI) / 72)
 }
 
-func (t tableRow) height(_ *LabelRenderer, _ labelLayout) int {
-	// With dynamic layout, all text fits on one line. Height = 1 line + padding.
-	return t.lineHeight() + tableCellPadding*2
+func (t tableRow) valueLines(r *LabelRenderer, l labelLayout) []string {
+	face := r.makeFace(t.fontSize)
+	defer face.Close()
+	maxW := l.valueColPx - tableCellPadding*2
+	return wrapTextWithFace(face, t.value, maxW)
+}
+
+func (t tableRow) height(r *LabelRenderer, l labelLayout) int {
+	lines := t.valueLines(r, l)
+	n := len(lines)
+	if n < 1 {
+		n = 1
+	}
+	return t.lineHeight()*n + tableCellPadding*2
 }
 
 func (t tableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
 	face := r.makeFace(t.fontSize)
 	defer face.Close()
-
 	rowHeight := t.height(r, l)
 	left := l.offsetX
 	right := left + l.contentWidth
@@ -468,8 +468,13 @@ func (t tableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) 
 
 	baseline := y + tableCellPadding + int(t.fontSize*float64(labelDPI)/72)
 	drawString(img, face, t.label, left+tableCellPadding, baseline)
-	drawString(img, face, t.value, splitX+tableCellPadding, baseline)
 
+	lines := t.valueLines(r, l)
+	vBaseline := baseline
+	for _, line := range lines {
+		drawString(img, face, line, splitX+tableCellPadding, vBaseline)
+		vBaseline += t.lineHeight()
+	}
 	return bottom
 }
 
@@ -504,7 +509,6 @@ func (q qrTableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout
 		img.Set(splitX, py, border)
 	}
 
-	// Draw label text vertically centered in the QR cell.
 	face := r.makeFace(q.fontSize)
 	defer face.Close()
 	baseline := y + rowHeight/2 + int(q.fontSize*float64(labelDPI)/72)/2
@@ -513,7 +517,6 @@ func (q qrTableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout
 	if q.url == "" {
 		return bottom
 	}
-
 	qrPng, err := qrcode.Encode(q.url, qrcode.Medium, q.size)
 	if err != nil {
 		return bottom
@@ -522,21 +525,181 @@ func (q qrTableRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout
 	if err != nil {
 		return bottom
 	}
-
 	x := right - tableCellPadding - q.size
 	offsetY := y + (rowHeight-q.size)/2
 	draw.Draw(img, image.Rect(x, offsetY, x+q.size, offsetY+q.size), qrImg, image.Point{}, draw.Over)
 	return bottom
 }
 
-// ── Text wrapping (only needed for multiLineRow) ──
+// ── textQRRow — text on the left, QR on the right ──
+
+type textQRRow struct {
+	lines    []string
+	qrURL    string
+	fontSize float64
+}
+
+func (t textQRRow) effectiveFontSize() float64 {
+	if t.fontSize > 0 {
+		return t.fontSize
+	}
+	return baseFontSize
+}
+
+func (t textQRRow) qrSize(l labelLayout) int {
+	return (l.labelWidthPx - 2*marginPx) * 40 / 100
+}
+
+func (t textQRRow) height(_ *LabelRenderer, l labelLayout) int {
+	fs := t.effectiveFontSize()
+	lh := int(fs * lineSpacingRatio * float64(labelDPI) / 72)
+	textH := lh * len(t.lines)
+	qrH := t.qrSize(l) + 4
+	if qrH > textH {
+		return qrH
+	}
+	return textH
+}
+
+func (t textQRRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
+	fs := t.effectiveFontSize()
+	face := r.makeFace(fs)
+	defer face.Close()
+
+	rowHeight := t.height(r, l)
+	lh := int(fs * lineSpacingRatio * float64(labelDPI) / 72)
+
+	// Text on the left, vertically centered.
+	textTotalH := lh * len(t.lines)
+	ty := y + (rowHeight-textTotalH)/2
+	for _, line := range t.lines {
+		baseline := ty + int(fs*float64(labelDPI)/72)
+		drawString(img, face, line, l.offsetX, baseline)
+		ty += lh
+	}
+
+	// QR on the right, vertically centered.
+	if t.qrURL != "" {
+		qs := t.qrSize(l)
+		qrPng, err := qrcode.Encode(t.qrURL, qrcode.Medium, qs)
+		if err == nil {
+			qrImg, err := png.Decode(bytes.NewReader(qrPng))
+			if err == nil {
+				qrX := l.labelWidthPx - marginPx - qs
+				qrY := y + (rowHeight-qs)/2
+				draw.Draw(img, image.Rect(qrX, qrY, qrX+qs, qrY+qs),
+					qrImg, image.Point{}, draw.Over)
+			}
+		}
+	}
+	return y + rowHeight
+}
+
+// ── carcassRow — text list (left 60%) + QR (right 40%) ──
+
+type carcassRow struct {
+	texts    []string
+	qrURL    string
+	qrSize   int
+	fontSize float64
+}
+
+func (c carcassRow) lineHeight() int {
+	return int(c.fontSize * lineSpacingRatio * float64(labelDPI) / 72)
+}
+
+func (c carcassRow) height(_ *LabelRenderer, _ labelLayout) int {
+	textH := c.lineHeight() * len(c.texts)
+	qrH := c.qrSize + marginPx
+	if qrH > textH {
+		return qrH
+	}
+	return textH
+}
+
+func (c carcassRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
+	face := r.makeFace(c.fontSize)
+	defer face.Close()
+
+	rowHeight := c.height(r, l)
+	left := marginPx
+	totalWidth := l.labelWidthPx - 2*marginPx
+	textWidth := totalWidth * 60 / 100
+	qrAreaWidth := totalWidth - textWidth
+
+	textTotalH := c.lineHeight() * len(c.texts)
+	ty := y + (rowHeight-textTotalH)/2
+	for _, text := range c.texts {
+		baseline := ty + int(c.fontSize*float64(labelDPI)/72)
+		drawString(img, face, text, left, baseline)
+		_ = textWidth
+		ty += c.lineHeight()
+	}
+
+	if c.qrURL != "" {
+		qrPng, err := qrcode.Encode(c.qrURL, qrcode.Medium, c.qrSize)
+		if err == nil {
+			qrImg, err := png.Decode(bytes.NewReader(qrPng))
+			if err == nil {
+				qrX := left + textWidth + (qrAreaWidth-c.qrSize)/2
+				qrY := y + (rowHeight-c.qrSize)/2
+				draw.Draw(img, image.Rect(qrX, qrY, qrX+c.qrSize, qrY+c.qrSize),
+					qrImg, image.Point{}, draw.Over)
+			}
+		}
+	}
+	return y + rowHeight
+}
+
+// ── largeTextRow — auto-fits text, supports multi-line, bold ──
+
+type largeTextRow struct {
+	value    string
+	fontSize float64
+}
+
+func (t largeTextRow) fittedLayout(r *LabelRenderer, l labelLayout) (float64, []string) {
+	maxW := l.labelWidthPx - 2*marginPx
+	for size := t.fontSize; size >= 6.0; size -= 1.0 {
+		face := r.makeFace(size)
+		lines := wrapTextWithFace(face, t.value, maxW)
+		face.Close()
+		if len(lines) <= 2 {
+			return size, lines
+		}
+	}
+	face := r.makeFace(6.0)
+	lines := wrapTextWithFace(face, t.value, maxW)
+	face.Close()
+	return 6.0, lines
+}
+
+func (t largeTextRow) height(r *LabelRenderer, l labelLayout) int {
+	size, lines := t.fittedLayout(r, l)
+	lh := int(size * lineSpacingRatio * float64(labelDPI) / 72)
+	return lh * len(lines)
+}
+
+func (t largeTextRow) draw(img *image.RGBA, r *LabelRenderer, y int, l labelLayout) int {
+	size, lines := t.fittedLayout(r, l)
+	face := r.makeFace(size)
+	defer face.Close()
+	lh := int(size * lineSpacingRatio * float64(labelDPI) / 72)
+	for _, line := range lines {
+		baseline := y + int(size*float64(labelDPI)/72)
+		drawStringBold(img, face, line, marginPx, baseline)
+		y += lh
+	}
+	return y
+}
+
+// ── Text wrapping ──
 
 func wrapTextWithFace(face font.Face, text string, widthPx int) []string {
 	if text == "" {
 		return []string{""}
 	}
 	maxWidth := fixed.I(widthPx)
-
 	var lines []string
 	runes := []rune(text)
 	start := 0
@@ -570,8 +733,6 @@ func resolveStorageMethod(data LabelData, fallback string) string {
 // ── Template builders ──
 
 func (r *LabelRenderer) buildRows(data LabelData) []row {
-	// fontSize is set to 0 as a placeholder; computeOptimalFontSize + applyFontSize
-	// will determine and apply the actual size to fill the 62mm height.
 	switch data.Template {
 	case "pet":
 		return []row{
@@ -598,9 +759,11 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			tableRow{label: "加工者名", value: fixedProcessorName},
 			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation},
 			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus},
-			tableRow{label: "加熱用である旨", value: fixedHeatedInstruction},
 			tableRow{label: "個体識別番号", value: individualID},
-			qrTableRow{label: "QR", url: data.QRCode, size: 132},
+			textQRRow{
+				lines: []string{"加熱して", "お召し上がりください"},
+				qrURL: data.QRCode,
+			},
 		}
 	case "non_traceable_deer":
 		storageMethod := resolveStorageMethod(data, fixedTraceableStorageMethod)
@@ -655,19 +818,43 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			tableRow{label: "加工施設所在地", value: fixedProcessorFacilityLocation},
 			tableRow{label: "金属探知機", value: fixedMetalDetectorStatus},
 		)
-		if data.IsHeatedMeatProducts != "" {
-			rows = append(rows, tableRow{label: "加熱用である旨", value: data.IsHeatedMeatProducts})
-		}
 		if data.AttentionText != "" {
 			rows = append(rows, tableRow{label: "注意事項", value: data.AttentionText})
 		}
+		if data.IsHeatedMeatProducts != "" {
+			rows = append(rows, textRow{value: "加熱してお召し上がりください"})
+		}
 		return rows
+	case "carcass_deer", "carcass_bear":
+		individualID := data.IndividualID
+		if individualID == "" {
+			individualID = data.IndividualNumber
+		}
+		return r.buildCarcassRows(data, individualID)
 	default:
 		return []row{
 			tableRow{label: "商品名", value: data.ProductName},
 			tableRow{label: "内容量", value: data.ProductQuantity},
 			tableRow{label: "消費期限", value: data.DeadlineDate},
 		}
+	}
+}
+
+func (r *LabelRenderer) buildCarcassRows(data LabelData, individualID string) []row {
+	return []row{
+		largeTextRow{value: individualID, fontSize: 40},
+		spacerRow{px: 10},
+		carcassRow{
+			texts: []string{
+				data.Species,
+				data.Sex,
+				data.ReceivingDate,
+				data.FacilityName,
+			},
+			qrURL:    data.QRCode,
+			qrSize:   280,
+			fontSize: 11.0,
+		},
 	}
 }
 
@@ -693,6 +880,19 @@ func drawString(img *image.RGBA, face font.Face, text string, x, y int) {
 		Dot:  fixed.Point26_6{X: fixed.I(x), Y: fixed.I(y)},
 	}
 	d.DrawString(text)
+}
+
+func drawStringBold(img *image.RGBA, face font.Face, text string, x, y int) {
+	src := &image.Uniform{color.Black}
+	for _, dx := range []int{0, 1, 2} {
+		d := &font.Drawer{
+			Dst:  img,
+			Src:  src,
+			Face: face,
+			Dot:  fixed.Point26_6{X: fixed.I(x + dx), Y: fixed.I(y)},
+		}
+		d.DrawString(text)
+	}
 }
 
 func loadFont(configPath string) (*opentype.Font, error) {

@@ -222,7 +222,7 @@ func (b *Brother) PrintLabel(data LabelData) error {
 
 	media := fmt.Sprintf("custom_%dx%dmm_%dx%dmm", result.WidthMM, result.HeightMM, result.WidthMM, result.HeightMM)
 	b.logger.Info("label media: %s (%dx%d px)", media, result.WidthMM, result.HeightMM)
-	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), "-o", "media=" + media, result.Path}
+	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), "-o", "media=" + media, "-o", "fit-to-page", result.Path}
 	cmd := exec.Command("lp", args...)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))

@@ -16,6 +16,12 @@ type LabelData struct {
 	CaptureLocation  string `json:"captureLocation"`  // 捕獲地
 	QRCode           string `json:"qrCode"`           // QRコード URL
 
+	// Carcass label fields
+	Species       string `json:"species"`       // 獣種
+	Sex           string `json:"sex"`           // 性別
+	ReceivingDate string `json:"receivingDate"` // 搬入日
+	FacilityName  string `json:"facilityName"`  // 施設名
+
 	// Legacy template fields kept for template registry compatibility.
 	ProductIngredient      string `json:"productIngredient"`
 	NutritionUnit          string `json:"nutritionUnit"`
@@ -37,6 +43,8 @@ var ValidTemplates = map[string]bool{
 	"non_traceable_deer": true,
 	"processed":          true,
 	"pet":                true,
+	"carcass_deer":       true,
+	"carcass_bear":       true,
 }
 
 // RequiredFields returns the required field names for each template.
@@ -50,6 +58,8 @@ func RequiredFields(template string) []string {
 		return []string{"productName", "productQuantity", "deadlineDate"}
 	case "pet":
 		return []string{"productName", "productQuantity", "deadlineDate"}
+	case "carcass_deer", "carcass_bear":
+		return []string{"individualNumber"}
 	default:
 		return nil
 	}

@@ -32,6 +32,11 @@ type LabelData struct {
 	CertificationMarkFile string `json:"certificationMarkFile"` // 認証マーク画像へのパス（assetsDir からの相対パスまたは絶対パス）
 	ProcessorName         string `json:"processorName"`         // 加工者名
 	ProcessorLocation     string `json:"processorLocation"`     // 加工施設所在地
+
+	// Carcass label fields
+	Species       string `json:"species"`       // 獣種
+	Sex           string `json:"sex"`           // 性別
+	ReceivingDate string `json:"receivingDate"` // 搬入日
 }
 
 // ValidTemplates lists the supported template keys.

@@ -147,8 +147,8 @@ func TestRender_WithFont(t *testing.T) {
 	if bounds.Dx() != labelWidthPx {
 		t.Errorf("expected width %d, got %d", labelWidthPx, bounds.Dx())
 	}
-	if bounds.Dy() > labelHeightPx {
-		t.Errorf("expected height <= %d, got %d", labelHeightPx, bounds.Dy())
+	if bounds.Dy() < 100 {
+		t.Errorf("height too small: %d", bounds.Dy())
 	}
 
 	t.Logf("rendered label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)

@@ -175,7 +175,7 @@ func (b *Brother) PrintLabel(data LabelData) error {
 		copies = 1
 	}
 
-	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), imgPath}
+	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), "-o", "fit-to-page", imgPath}
 	cmd := exec.Command("lp", args...)
 	out, err := cmd.CombinedOutput()
 	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))

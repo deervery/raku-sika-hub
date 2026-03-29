@@ -68,13 +68,13 @@ func TestRequiredFields(t *testing.T) {
 		template string
 		expected []string
 	}{
-		{"traceable", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "processorName", "processorLocation", "individualNumber", "captureLocation", "qrCode"}},
-		{"traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "processorName", "processorLocation", "individualNumber", "captureLocation", "qrCode"}},
-		{"traceable_bear", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "processorName", "processorLocation", "individualNumber", "captureLocation", "qrCode"}},
-		{"non_traceable", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "processorName", "processorLocation"}},
-		{"non_traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "processorName", "processorLocation"}},
-		{"processed", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "processorName", "processorLocation"}},
-		{"pet", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "processorName", "processorLocation"}},
+		{"traceable", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber", "captureLocation", "qrCode"}},
+		{"traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber", "captureLocation", "qrCode"}},
+		{"traceable_bear", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature", "individualNumber", "captureLocation", "qrCode"}},
+		{"non_traceable", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
+		{"non_traceable_deer", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
+		{"processed", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
+		{"pet", []string{"productName", "productQuantity", "deadlineDate", "storageTemperature"}},
 	}
 
 	for _, tt := range tests {

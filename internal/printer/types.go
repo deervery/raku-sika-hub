@@ -60,8 +60,6 @@ func RequiredFields(template string) []string {
 		"productQuantity",
 		"deadlineDate",
 		"storageTemperature",
-		"processorName",
-		"processorLocation",
 	}
 	switch template {
 	case "traceable", "traceable_deer", "traceable_bear":

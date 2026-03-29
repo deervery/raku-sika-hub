@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=RakuSika Kiosk
+Comment=Launch Chromium in kiosk mode for raku-sika-lite
+Exec=/home/rakusika/raku-sika-hub/deploy/kiosk/chromium-kiosk.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true

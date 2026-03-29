@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
 )
@@ -22,6 +25,20 @@ type Brother struct {
 	name     string
 	renderer *LabelRenderer
 	logger   *logging.Logger
+}
+
+var labelMediaCandidates = []string{
+	"roll62",
+	"roll-62",
+	"roll_62",
+	"62mm-roll",
+	"62mm_continuous",
+	"62mmcontinuous",
+	"62mmx100mm",
+	"62x100mm",
+	"w62h100",
+	"62mm",
+	"62",
 }
 
 // NewBrother creates a new Brother printer driver.
@@ -175,7 +192,32 @@ func (b *Brother) PrintLabel(data LabelData) error {
 		copies = 1
 	}
 
-	args := []string{"-d", status.SelectedName, "-n", fmt.Sprintf("%d", copies), "-o", "fit-to-page", imgPath}
+	media, availableMedia, err := b.resolveLabelMedia(status.SelectedName)
+	if err != nil {
+		b.logger.Warn(
+			"label media resolution failed: printer=%q candidates=%v available=%s err=%v",
+			status.SelectedName,
+			labelMediaCandidates,
+			formatMediaOptions(availableMedia),
+			err,
+		)
+		return err
+	}
+
+	args := []string{
+		"-d", status.SelectedName,
+		"-n", fmt.Sprintf("%d", copies),
+		"-o", "media=" + media,
+		"-o", "position=center",
+		imgPath,
+	}
+	b.logger.Info(
+		"label print options: printer=%q media=%q available_media=%s lp_args=%v",
+		status.SelectedName,
+		media,
+		formatMediaOptions(availableMedia),
+		args,
+	)
 	cmd := exec.Command("lp", args...)
 	out, err := cmd.CombinedOutput()
 	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))
@@ -246,6 +288,24 @@ func printerConfigError(status PrinterStatus) error {
 	)
 }
 
+func (b *Brother) resolveLabelMedia(printerName string) (string, []string, error) {
+	out, err := exec.Command("lpoptions", "-p", printerName, "-l").CombinedOutput()
+	if err != nil {
+		return "", nil, fmt.Errorf("PRINTER_MEDIA_ERROR: 62mm ラベル設定を解決できません。lpoptions -l 取得に失敗しました: %s", strings.TrimSpace(string(out)))
+	}
+
+	options := parseMediaOptions(string(out))
+	selected := selectPreferredMediaOption(options)
+	if selected == "" {
+		return "", options, fmt.Errorf(
+			"PRINTER_MEDIA_ERROR: 62mm ラベル設定を解決できません。printer=%q available_media=%s",
+			printerName,
+			formatMediaOptions(options),
+		)
+	}
+	return selected, options, nil
+}
+
 func parseAvailablePrinters(output string) []string {
 	lines := strings.Split(output, "\n")
 	printers := make([]string, 0, len(lines))
@@ -275,6 +335,167 @@ func parseDefaultPrinter(output string) string {
 	return ""
 }
 
+func parseMediaOptions(output string) []string {
+	options := make(map[string]struct{})
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		lower := strings.ToLower(line)
+		if !strings.HasPrefix(lower, "pagesize/") && !strings.HasPrefix(lower, "media/") {
+			continue
+		}
+
+		colon := strings.Index(line, ":")
+		if colon < 0 || colon == len(line)-1 {
+			continue
+		}
+
+		for _, field := range strings.Fields(line[colon+1:]) {
+			field = strings.TrimPrefix(field, "*")
+			if field == "" {
+				continue
+			}
+			slash := strings.Index(field, "/")
+			if slash < 0 {
+				continue
+			}
+			name := field[:slash]
+			if name == "" {
+				continue
+			}
+			options[name] = struct{}{}
+		}
+	}
+
+	result := make([]string, 0, len(options))
+	for option := range options {
+		result = append(result, option)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func selectPreferredMediaOption(options []string) string {
+	if len(options) == 0 {
+		return ""
+	}
+
+	type scoredOption struct {
+		name  string
+		score int
+	}
+
+	best := scoredOption{score: -1}
+	for _, option := range options {
+		score := scoreMediaOption(option)
+		if score > best.score || (score == best.score && score >= 0 && option < best.name) {
+			best = scoredOption{name: option, score: score}
+		}
+	}
+
+	if best.score < 0 {
+		return ""
+	}
+	return best.name
+}
+
+func scoreMediaOption(option string) int {
+	normalized := normalizeMediaName(option)
+	if normalized == "" {
+		return -1
+	}
+
+	best := -1
+	for rank, candidate := range labelMediaCandidates {
+		candidate = normalizeMediaName(candidate)
+		if candidate == "" {
+			continue
+		}
+		switch {
+		case normalized == candidate:
+			score := 1000 - rank
+			if score > best {
+				best = score
+			}
+		case strings.Contains(normalized, candidate):
+			score := 800 - rank
+			if score > best {
+				best = score
+			}
+		}
+	}
+
+	width, height, ok := parseMediaDimensionsMM(normalized)
+	if !ok {
+		return best
+	}
+
+	if width == 62 && height == 0 {
+		if 700 > best {
+			best = 700
+		}
+		return best
+	}
+	if width == 62 {
+		score := 600
+		if strings.Contains(normalized, "roll") || strings.Contains(normalized, "cont") {
+			score = 750
+		}
+		if score > best {
+			best = score
+		}
+	}
+
+	return best
+}
+
+func normalizeMediaName(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func parseMediaDimensionsMM(normalized string) (int, int, bool) {
+	var dims []int
+	var current strings.Builder
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		n, err := strconv.Atoi(current.String())
+		if err == nil {
+			dims = append(dims, n)
+		}
+		current.Reset()
+	}
+
+	for _, r := range normalized {
+		if unicode.IsDigit(r) {
+			current.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+
+	if len(dims) == 0 {
+		return 0, 0, false
+	}
+	if len(dims) == 1 {
+		return dims[0], 0, true
+	}
+	return dims[0], dims[1], true
+}
+
 func contains(items []string, target string) bool {
 	for _, item := range items {
 		if item == target {
@@ -289,4 +510,11 @@ func formatPrinters(printers []string) string {
 		return "[]"
 	}
 	return "[" + strings.Join(printers, ", ") + "]"
+}
+
+func formatMediaOptions(options []string) string {
+	if len(options) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(options, ", ") + "]"
 }

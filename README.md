@@ -201,15 +201,19 @@ go test ./... -v
 Git タグを push すると GitHub Actions が ARM64 バイナリをビルドし Release を作成する:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-Pi 側での更新:
+Pi 側での更新は [raku-sika-ops](https://github.com/deervery/raku-sika-ops) を使用:
 
 ```bash
-bash deploy/update.sh
+sudo raku-sika-deploy-hub
 ```
+
+> **Note**: セットアップスクリプト、systemd ユニット、キオスク設定等は
+> [raku-sika-ops](https://github.com/deervery/raku-sika-ops) に移管済み。
+> このリポジトリはアプリケーションコードとリリースのみを管理する。
 
 ## メモリ・パフォーマンス
 

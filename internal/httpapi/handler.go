@@ -457,7 +457,7 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 	if strings.TrimSpace(data.ProcessorLocation) == "" {
 		data.ProcessorLocation = h.processorLocation
 	}
-	if strings.TrimSpace(data.CaptureLocation) == "" && h.captureLocation != "" {
+	if h.captureLocation != "" {
 		data.CaptureLocation = h.captureLocation
 	}
 

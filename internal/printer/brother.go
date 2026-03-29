@@ -200,6 +200,7 @@ func (b *Brother) PrintLabel(data LabelData) error {
 		"-n", fmt.Sprintf("%d", copies),
 		"-o", "media=" + media,
 		"-o", "fit-to-page",
+		"-o", "CutMedia=Auto",
 	}
 	args = append(args, result.Path)
 	cmd := exec.Command("lp", args...)

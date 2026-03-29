@@ -390,6 +390,11 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		}
 	}
 
+	// Normalize field aliases: storageMethod → storageTemperature
+	if req.Data["storageTemperature"] == "" && req.Data["storageMethod"] != "" {
+		req.Data["storageTemperature"] = req.Data["storageMethod"]
+	}
+
 	required := printer.RequiredFields(req.Template)
 	var missing []string
 	for _, f := range required {

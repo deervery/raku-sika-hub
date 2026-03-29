@@ -28,6 +28,7 @@ type Config struct {
 	ScannerDeviceName string `json:"scannerDeviceName"`
 	ProcessorName     string `json:"processorName"`
 	ProcessorLocation string `json:"processorLocation"`
+	CaptureLocation   string `json:"captureLocation"`
 }
 
 // Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
@@ -139,5 +140,8 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("PROCESSOR_LOCATION")); v != "" {
 		cfg.ProcessorLocation = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CAPTURE_LOCATION")); v != "" {
+		cfg.CaptureLocation = v
 	}
 }

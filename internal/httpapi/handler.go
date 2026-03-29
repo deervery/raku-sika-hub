@@ -39,6 +39,7 @@ type Handler struct {
 	assetsDir         string
 	processorName     string
 	processorLocation string
+	captureLocation   string
 }
 
 // NewHandler creates a Handler.
@@ -47,7 +48,7 @@ func NewHandler(
 	prn *printer.Brother,
 	scanner ScannerClient,
 	logger *logging.Logger,
-	version, commit, buildDate, assetsDir, processorName, processorLocation string,
+	version, commit, buildDate, assetsDir, processorName, processorLocation, captureLocation string,
 ) *Handler {
 	return &Handler{
 		scaleClient:       scaleClient,
@@ -60,6 +61,7 @@ func NewHandler(
 		assetsDir:         assetsDir,
 		processorName:     processorName,
 		processorLocation: processorLocation,
+		captureLocation:   captureLocation,
 	}
 }
 
@@ -454,6 +456,9 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 	}
 	if strings.TrimSpace(data.ProcessorLocation) == "" {
 		data.ProcessorLocation = h.processorLocation
+	}
+	if strings.TrimSpace(data.CaptureLocation) == "" && h.captureLocation != "" {
+		data.CaptureLocation = h.captureLocation
 	}
 
 	return &data, 0, nil

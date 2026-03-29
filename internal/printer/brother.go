@@ -180,53 +180,28 @@ func (b *Brother) PrintLabel(data LabelData) error {
 	}
 
 	// Render the label image.
-	imgPath, err := b.renderer.Render(data)
+	result, err := b.renderer.Render(data)
 	if err != nil {
 		return fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
 	}
-	defer os.Remove(imgPath)
+	defer os.Remove(result.Path)
 
-	// Print via CUPS lp command.
+	// Print via CUPS lp command with dynamic media size for auto-cut.
 	copies := data.Copies
 	if copies < 1 {
 		copies = 1
 	}
 
-	media, availableMedia, err := b.resolveLabelMedia(status.SelectedName)
-	if err != nil {
-		b.logger.Warn(
-			"label media resolution failed: printer=%q candidates=%v available=%s err=%v",
-			status.SelectedName,
-			labelMediaCandidates,
-			formatMediaOptions(availableMedia),
-			err,
-		)
-		return err
-	}
+	media := fmt.Sprintf("custom_%dx%dmm_%dx%dmm", result.WidthMM, result.HeightMM, result.WidthMM, result.HeightMM)
+	b.logger.Info("label media: %s (%dx%d mm)", media, result.WidthMM, result.HeightMM)
 
 	args := []string{
 		"-d", status.SelectedName,
 		"-n", fmt.Sprintf("%d", copies),
-		"-o", "scaling=100",
-		"-o", "position=center",
+		"-o", "media=" + media,
+		"-o", "fit-to-page",
 	}
-	if media != "" {
-		args = append(args, "-o", "media="+media)
-	} else {
-		b.logger.Warn(
-			"label media options unavailable; falling back to queue defaults: printer=%q available_media=%s",
-			status.SelectedName,
-			formatMediaOptions(availableMedia),
-		)
-	}
-	args = append(args, imgPath)
-	b.logger.Info(
-		"label print options: printer=%q media=%q available_media=%s lp_args=%v",
-		status.SelectedName,
-		media,
-		formatMediaOptions(availableMedia),
-		args,
-	)
+	args = append(args, result.Path)
 	cmd := exec.Command("lp", args...)
 	out, err := cmd.CombinedOutput()
 	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))
@@ -249,7 +224,11 @@ func (b *Brother) RenderLabel(data LabelData) (string, error) {
 	if b.renderer == nil {
 		return "", fmt.Errorf("PRINTER_ERROR: ラベルレンダラが初期化されていません")
 	}
-	return b.renderer.Render(data)
+	result, err := b.renderer.Render(data)
+	if err != nil {
+		return "", err
+	}
+	return result.Path, nil
 }
 
 // classifyLpError maps lp output to specific error codes with Japanese messages.

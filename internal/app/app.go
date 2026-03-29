@@ -75,7 +75,7 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 	if sc != nil {
 		scannerIface = sc
 	}
-	httpHandler := httpapi.NewHandler(scaleClient, prn, scannerIface, logger, version, commit, buildDate, cfg.AssetsDir)
+	httpHandler := httpapi.NewHandler(scaleClient, prn, scannerIface, logger, version, commit, buildDate, cfg.AssetsDir, cfg.ProcessorName, cfg.ProcessorLocation)
 	a.httpServer = httpapi.NewServer(httpHandler, logger, cfg.ListenAddr)
 
 	return a, nil

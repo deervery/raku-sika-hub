@@ -29,7 +29,7 @@ const (
 	labelHeightMM               = 60.0
 	labelDPI                    = 300
 	marginXPx                   = 24
-	marginYPx                   = 2
+	marginYPx                   = 0
 	imageSlotGap                = 6
 	fontSizeBody                = 9.5
 	minFontSize                 = 8.0
@@ -79,36 +79,47 @@ func NewLabelRenderer(fontPath, assetsDir string) (*LabelRenderer, error) {
 	return &LabelRenderer{fontRegular: f, assetsDir: strings.TrimSpace(assetsDir)}, nil
 }
 
-// Render produces a PNG label that matches the 62×60mm Brother tape.
-func (r *LabelRenderer) Render(data LabelData) (string, error) {
+// RenderResult holds the output of Render.
+type RenderResult struct {
+	Path     string
+	WidthMM  int
+	HeightMM int
+}
+
+// Render produces a PNG label. Width is fixed at 62mm; height is content-driven.
+func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	rows := r.buildRows(data)
 
-	// Height is driven by the content rows (table + image). No fixed height padding.
-	height := marginYPx
+	height := 0
 	for _, row := range rows {
 		height += row.height()
 	}
-	height += marginYPx
 
 	img := image.NewRGBA(image.Rect(0, 0, labelWidthPx, height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
 
-	y := marginYPx
+	y := 0
 	for _, row := range rows {
 		y = row.draw(img, r, y)
 	}
 
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
+		return RenderResult{}, fmt.Errorf("create temp file: %w", err)
 	}
 	defer tmpFile.Close()
 
 	if err := png.Encode(tmpFile, img); err != nil {
 		os.Remove(tmpFile.Name())
-		return "", fmt.Errorf("encode png: %w", err)
+		return RenderResult{}, fmt.Errorf("encode png: %w", err)
 	}
-	return tmpFile.Name(), nil
+
+	bounds := img.Bounds()
+	return RenderResult{
+		Path:     tmpFile.Name(),
+		WidthMM:  bounds.Dx() * 254 / (labelDPI * 10),
+		HeightMM: bounds.Dy() * 254 / (labelDPI * 10),
+	}, nil
 }
 
 func (r *LabelRenderer) buildRows(data LabelData) []row {
@@ -139,15 +150,25 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 	imageSize := calcImageSizeForData(data, contentWidth, availableHeight)
 	imageRow := imageSectionRow{data: data, size: imageSize}
 
-	return []row{
+	rows := []row{
 		tableRow,
 		spacerRow{px: spacer},
-		textQRRow{
+	}
+
+	// Traceable templates: QR is in textQRRow, skip imageSectionRow QR.
+	if isTraceableTemplate(data.Template) {
+		rows = append(rows, textQRRow{
 			lines: []string{"加熱して", "お召し上がりください"},
 			qrURL: data.QRCode,
-		},
-		imageRow,
+		})
+	} else {
+		rows = append(rows,
+			textRow{value: "加熱してお召し上がりください", fontSize: fontSize},
+			imageRow,
+		)
 	}
+
+	return rows
 }
 
 // buildCarcassRows creates the carcass label layout:

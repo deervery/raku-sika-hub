@@ -29,14 +29,16 @@ type PrintRequest struct {
 
 // Handler holds references to all service components.
 type Handler struct {
-	scaleClient *scale.Client
-	printer     *printer.Brother
-	scanner     ScannerClient
-	logger      *logging.Logger
-	version     string
-	commit      string
-	buildDate   string
-	assetsDir   string
+	scaleClient       *scale.Client
+	printer           *printer.Brother
+	scanner           ScannerClient
+	logger            *logging.Logger
+	version           string
+	commit            string
+	buildDate         string
+	assetsDir         string
+	processorName     string
+	processorLocation string
 }
 
 // NewHandler creates a Handler.
@@ -45,17 +47,19 @@ func NewHandler(
 	prn *printer.Brother,
 	scanner ScannerClient,
 	logger *logging.Logger,
-	version, commit, buildDate, assetsDir string,
+	version, commit, buildDate, assetsDir, processorName, processorLocation string,
 ) *Handler {
 	return &Handler{
-		scaleClient: scaleClient,
-		printer:     prn,
-		scanner:     scanner,
-		logger:      logger,
-		version:     version,
-		commit:      commit,
-		buildDate:   buildDate,
-		assetsDir:   assetsDir,
+		scaleClient:       scaleClient,
+		printer:           prn,
+		scanner:           scanner,
+		logger:            logger,
+		version:           version,
+		commit:            commit,
+		buildDate:         buildDate,
+		assetsDir:         assetsDir,
+		processorName:     processorName,
+		processorLocation: processorLocation,
 	}
 }
 
@@ -442,6 +446,14 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
 		ProcessorName:          req.Data["processorName"],
 		ProcessorLocation:      req.Data["processorLocation"],
+	}
+
+	// Apply defaults from config if not provided by client.
+	if strings.TrimSpace(data.ProcessorName) == "" {
+		data.ProcessorName = h.processorName
+	}
+	if strings.TrimSpace(data.ProcessorLocation) == "" {
+		data.ProcessorLocation = h.processorLocation
 	}
 
 	return &data, 0, nil

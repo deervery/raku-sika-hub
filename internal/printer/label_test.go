@@ -126,13 +126,13 @@ func TestRender_WithFont(t *testing.T) {
 		ProcessorLocation:  "札幌市",
 	}
 
-	path, err := renderer.Render(data)
+	result, err := renderer.Render(data)
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
-	defer os.Remove(path)
+	defer os.Remove(result.Path)
 
-	f, err := os.Open(path)
+	f, err := os.Open(result.Path)
 	if err != nil {
 		t.Fatalf("open output: %v", err)
 	}
@@ -151,5 +151,5 @@ func TestRender_WithFont(t *testing.T) {
 		t.Errorf("height too small: %d", bounds.Dy())
 	}
 
-	t.Logf("rendered label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), path)
+	t.Logf("rendered label: %dx%d px (%dx%d mm) → %s", bounds.Dx(), bounds.Dy(), result.WidthMM, result.HeightMM, result.Path)
 }

@@ -187,7 +187,7 @@ func (r *LabelRenderer) buildCarcassRows(data LabelData) []row {
 			},
 			qrURL:    strings.TrimSpace(data.QRCode),
 			qrSize:   280,
-			fontSize: 11.0,
+			fontSize: 18.0,
 		},
 	}
 }
@@ -964,7 +964,7 @@ func (c carcassRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 	ty := y + (rowHeight-textTotalH)/2
 	for _, text := range c.texts {
 		baseline := ty + int(c.fontSize*float64(labelDPI)/72)
-		drawString(img, face, text, left, baseline)
+		drawStringFitWidth(img, face, text, left, baseline, textWidth)
 		ty += lh
 	}
 

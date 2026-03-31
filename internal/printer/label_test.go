@@ -153,3 +153,46 @@ func TestRender_WithFont(t *testing.T) {
 
 	t.Logf("rendered label: %dx%d px (%dx%d mm) → %s", bounds.Dx(), bounds.Dy(), result.WidthMM, result.HeightMM, result.Path)
 }
+
+// TestRender_CarcassDeer tests carcass deer label rendering and saves a preview PNG.
+func TestRender_CarcassDeer(t *testing.T) {
+	renderer, err := NewLabelRenderer("", "")
+	if err != nil {
+		t.Skipf("skipping render test: %v", err)
+	}
+
+	data := LabelData{
+		Template:         "carcass_deer",
+		IndividualNumber: "2024-03-15-01",
+		Species:          "ニホンジカ",
+		Sex:              "メス",
+		ReceivingDate:    "2026年3月31日",
+		FacilityName:     "○○ジビエ加工施設",
+		QRCode:           "https://rakusika.com/t/abc123",
+	}
+
+	result, err := renderer.Render(data)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	// Copy to a predictable path for visual inspection
+	outPath := "/tmp/carcass-deer-preview.png"
+	srcBytes, _ := os.ReadFile(result.Path)
+	os.WriteFile(outPath, srcBytes, 0644)
+	os.Remove(result.Path)
+
+	f, err := os.Open(outPath)
+	if err != nil {
+		t.Fatalf("open output: %v", err)
+	}
+	defer f.Close()
+
+	img, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("decode png: %v", err)
+	}
+
+	bounds := img.Bounds()
+	t.Logf("carcass label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), outPath)
+}

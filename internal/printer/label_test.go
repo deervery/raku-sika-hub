@@ -63,6 +63,7 @@ func TestBuildTableEntriesProcessed(t *testing.T) {
 func TestBuildTableEntriesTraceable_PrefersBlocks(t *testing.T) {
 	data := LabelData{
 		Template:           "traceable",
+		Locale:             "en",
 		ProductName:        "Venison",
 		ProductQuantity:    "100 g",
 		DeadlineDate:       "April 30, 2026",
@@ -76,11 +77,31 @@ func TestBuildTableEntriesTraceable_PrefersBlocks(t *testing.T) {
 	}
 
 	entries := buildTableEntries(data)
-	if entry, ok := findEntry(entries, "加工者"); !ok || entry.value != padBlockToMinLines(data.CompanyBlock, 3) {
-		t.Fatalf("加工者 block missing or wrong: %+v", entry)
+	if entry, ok := findEntry(entries, "Processor"); !ok || entry.value != padBlockToMinLines(data.CompanyBlock, 3) {
+		t.Fatalf("Processor block missing or wrong: %+v", entry)
 	}
-	if entry, ok := findEntry(entries, "加工所"); !ok || entry.value != padBlockToMinLines(data.FacilityBlock, 3) {
-		t.Fatalf("加工所 block missing or wrong: %+v", entry)
+	if entry, ok := findEntry(entries, "Facility"); !ok || entry.value != padBlockToMinLines(data.FacilityBlock, 3) {
+		t.Fatalf("Facility block missing or wrong: %+v", entry)
+	}
+}
+
+func TestBuildTableEntriesTraceable_EnglishCaptions(t *testing.T) {
+	data := LabelData{
+		Template:           "traceable",
+		Locale:             "en",
+		ProductName:        "Venison",
+		ProductQuantity:    "100 g",
+		DeadlineDate:       "April 30, 2026",
+		StorageTemperature: "Keep frozen",
+		IndividualNumber:   "IND-0001",
+		CaptureLocation:    "Hakodate",
+	}
+
+	entries := buildTableEntries(data)
+	for _, label := range []string{"Product Name", "Capture Location", "Net Weight", "Use By", "Storage", "Metal Detection", "Individual ID"} {
+		if _, ok := findEntry(entries, label); !ok {
+			t.Fatalf("missing english caption %q", label)
+		}
 	}
 }
 

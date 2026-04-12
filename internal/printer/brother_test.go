@@ -85,3 +85,10 @@ func TestSelectPreferredMediaOption_ReturnsEmptyWhen62mmUnavailable(t *testing.T
 		t.Fatalf("expected empty selection, got %q", got)
 	}
 }
+
+func TestParseSubmittedJobID(t *testing.T) {
+	output := "request id is Brother_QL_820NWB_USB-17 (1 file(s))"
+	if got := parseSubmittedJobID(output); got != "Brother_QL_820NWB_USB-17" {
+		t.Fatalf("expected job id, got %q", got)
+	}
+}

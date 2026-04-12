@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
@@ -203,11 +204,16 @@ func (b *Brother) PrintLabel(data LabelData) error {
 		"-o", "CutMedia=Auto",
 	}
 	args = append(args, result.Path)
-	cmd := exec.Command("lp", args...)
-	out, err := cmd.CombinedOutput()
+	out, err := exec.Command("lp", args...).CombinedOutput()
 	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))
 	if err != nil {
 		return classifyLpError(string(out), status)
+	}
+	jobID := parseSubmittedJobID(string(out))
+	if jobID != "" {
+		if err := b.ensureJobProgress(status.SelectedName, jobID, args, 12*time.Second); err != nil {
+			return err
+		}
 	}
 
 	b.logger.Info("label printed: %d copies via lp (printer=%q)", copies, status.SelectedName)
@@ -255,6 +261,95 @@ func validateStatus(status PrinterStatus) error {
 	}
 	if status.Source == "configured" && !contains(status.Available, status.SelectedName) {
 		return printerConfigError(status)
+	}
+	return nil
+}
+
+func parseSubmittedJobID(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+	const marker = "request id is "
+	idx := strings.Index(output, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := output[idx+len(marker):]
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(fields[0])
+}
+
+func (b *Brother) ensureJobProgress(printerName, jobID string, args []string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		stillQueued, err := queuedJobExists(printerName, jobID)
+		if err != nil {
+			b.logger.Warn("queue poll failed for %s: %v", jobID, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if !stillQueued {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	b.logger.Warn("print job %s remained queued for %s; attempting recovery", jobID, timeout)
+	if err := recoverQueuedJob(printerName, jobID); err != nil {
+		return fmt.Errorf("PRINTER_SLEEP_RECOVERY_FAILED: 印刷ジョブ %s が停止したままで、自動復旧に失敗しました: %w", jobID, err)
+	}
+
+	out, err := exec.Command("lp", args...).CombinedOutput()
+	b.logger.Info("lp output (retry label print, printer=%q): %s", printerName, strings.TrimSpace(string(out)))
+	if err != nil {
+		return classifyLpError(string(out), PrinterStatus{SelectedName: printerName})
+	}
+	retryJobID := parseSubmittedJobID(string(out))
+	if retryJobID == "" {
+		return nil
+	}
+	for i := 0; i < 6; i++ {
+		stillQueued, pollErr := queuedJobExists(printerName, retryJobID)
+		if pollErr == nil && !stillQueued {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("PRINTER_SLEEP_RECOVERY_FAILED: 印刷ジョブ %s がキューに残り続けています。プリンタの sleep 復帰または CUPS キュー設定を確認してください", retryJobID)
+}
+
+func queuedJobExists(printerName, jobID string) (bool, error) {
+	out, err := exec.Command("lpstat", "-W", "not-completed", "-o", printerName).CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed == "" {
+			return false, nil
+		}
+		return false, fmt.Errorf("lpstat failed: %s", trimmed)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) > 0 && fields[0] == jobID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func recoverQueuedJob(printerName, jobID string) error {
+	for _, cmdArgs := range [][]string{
+		{"cupsaccept", printerName},
+		{"cupsenable", printerName},
+		{"cancel", jobID},
+	} {
+		out, err := exec.Command(cmdArgs[0], cmdArgs[1:]...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s failed: %s", strings.Join(cmdArgs, " "), strings.TrimSpace(string(out)))
+		}
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ package printer
 type LabelData struct {
 	Template           string `json:"template"`           // traceable, non_traceable, processed, pet
 	Copies             int    `json:"copies"`             // number of copies (default 1, max 30)
+	Locale             string `json:"locale"`             // ja or en
 	ProductName        string `json:"productName"`        // 品名
 	ProductQuantity    string `json:"productQuantity"`    // 内容量 e.g. "2.35 kg"
 	DeadlineDate       string `json:"deadlineDate"`       // 消費期限 e.g. "2026年3月18日"

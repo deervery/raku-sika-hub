@@ -60,8 +60,11 @@ type row interface {
 }
 
 type tableEntry struct {
-	label string
-	value string
+	label         string
+	value         string
+	maxValueLines int
+	minValueLines int
+	keepValueFont bool
 }
 
 // LabelRenderer generates printed labels.
@@ -158,12 +161,12 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 	// Traceable templates: QR is in textQRRow, skip imageSectionRow QR.
 	if isTraceableTemplate(data.Template) {
 		rows = append(rows, textQRRow{
-			lines: []string{"加熱して", "お召し上がりください"},
+			lines: warningLines(data.Locale),
 			qrURL: data.QRCode,
 		})
 	} else {
 		rows = append(rows,
-			textRow{value: "加熱してお召し上がりください", fontSize: fontSize},
+			textRow{value: warningText(data.Locale), fontSize: fontSize},
 			imageRow,
 		)
 	}
@@ -266,13 +269,28 @@ func (t tableBlockRow) layout() tableLayout {
 	totalHeight := 0
 	for _, entry := range t.entries {
 		labelLines, labelSize := fitLines(entry.label, t.fontSize, minFontSize, t.maxLines, labelWidth-2*tableCellPadding)
-		valueLines, valueSize := fitLines(entry.value, t.fontSize, minFontSize, t.maxLines, valueWidth-2*tableCellPadding)
+		valueMaxLines := t.maxLines
+		if entry.maxValueLines > 0 {
+			valueMaxLines = entry.maxValueLines
+		}
+		var valueLines []string
+		var valueSize float64
+		if entry.keepValueFont {
+			valueLines = wrapText(entry.value, t.fontSize, valueWidth-2*tableCellPadding)
+			valueLines = clampLines(valueLines, valueMaxLines, t.fontSize, valueWidth-2*tableCellPadding)
+			valueSize = t.fontSize
+		} else {
+			valueLines, valueSize = fitLines(entry.value, t.fontSize, minFontSize, valueMaxLines, valueWidth-2*tableCellPadding)
+		}
 
 		if len(labelLines) == 0 {
 			labelLines = []string{""}
 		}
 		if len(valueLines) == 0 {
 			valueLines = []string{""}
+		}
+		for len(valueLines) < entry.minValueLines {
+			valueLines = append(valueLines, "")
 		}
 
 		linesCount := len(labelLines)
@@ -542,9 +560,15 @@ func companyEntry(data LabelData) (tableEntry, bool) {
 	trim := strings.TrimSpace
 	switch {
 	case trim(data.CompanyBlock) != "":
-		return tableEntry{label: "加工者", value: padBlockToMinLines(trim(data.CompanyBlock), 3)}, true
+		return tableEntry{
+			label:         localizedCaption(data.Locale, "加工者", "Processor"),
+			value:         padBlockToMinLines(trim(data.CompanyBlock), 3),
+			minValueLines: 3,
+			maxValueLines: 4,
+			keepValueFont: true,
+		}, true
 	case trim(data.ProcessorName) != "":
-		return tableEntry{label: "加工者", value: trim(data.ProcessorName)}, true
+		return tableEntry{label: localizedCaption(data.Locale, "加工者", "Processor"), value: trim(data.ProcessorName)}, true
 	default:
 		return tableEntry{}, false
 	}
@@ -554,11 +578,17 @@ func facilityEntry(data LabelData) (tableEntry, bool) {
 	trim := strings.TrimSpace
 	switch {
 	case trim(data.FacilityBlock) != "":
-		return tableEntry{label: "加工所", value: padBlockToMinLines(trim(data.FacilityBlock), 3)}, true
+		return tableEntry{
+			label:         localizedCaption(data.Locale, "加工所", "Facility"),
+			value:         padBlockToMinLines(trim(data.FacilityBlock), 3),
+			minValueLines: 3,
+			maxValueLines: 4,
+			keepValueFont: true,
+		}, true
 	case trim(data.ProcessorLocation) != "":
-		return tableEntry{label: "加工所", value: trim(data.ProcessorLocation)}, true
+		return tableEntry{label: localizedCaption(data.Locale, "加工所", "Facility"), value: trim(data.ProcessorLocation)}, true
 	case trim(data.FacilityName) != "":
-		return tableEntry{label: "加工所", value: trim(data.FacilityName)}, true
+		return tableEntry{label: localizedCaption(data.Locale, "加工所", "Facility"), value: trim(data.FacilityName)}, true
 	default:
 		return tableEntry{}, false
 	}
@@ -569,20 +599,20 @@ func buildTableEntries(data LabelData) []tableEntry {
 	if data.Template == "individual_qr" {
 		entries := []tableEntry{}
 		if name := trim(data.ProductName); name != "" {
-			entries = append(entries, tableEntry{label: "品名", value: name})
+			entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "品名", "Product"), value: name})
 		}
-		entries = append(entries, tableEntry{label: "個体識別番号", value: trim(data.IndividualNumber)})
+		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "個体識別番号", "Individual ID"), value: trim(data.IndividualNumber)})
 		return entries
 	}
 
 	switch data.Template {
 	case "traceable", "traceable_deer", "traceable_bear", "traceable_boar", "traceable_raccoon":
 		entries := []tableEntry{
-			{label: "商品名", value: trim(data.ProductName)},
-			{label: "捕獲地", value: trim(data.CaptureLocation)},
-			{label: "内容量", value: trim(data.ProductQuantity)},
-			{label: "消費期限", value: trim(data.DeadlineDate)},
-			{label: "保存方法", value: trim(data.StorageTemperature)},
+			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
+			{label: localizedCaption(data.Locale, "捕獲地", "Capture Location"), value: trim(data.CaptureLocation)},
+			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
+			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
 			entries = append(entries, entry)
@@ -591,16 +621,16 @@ func buildTableEntries(data LabelData) []tableEntry {
 			entries = append(entries, entry)
 		}
 		entries = append(entries,
-			tableEntry{label: "金属探知機", value: "検査済み"},
-			tableEntry{label: "個体識別番号", value: trim(data.IndividualNumber)},
+			tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")},
+			tableEntry{label: localizedCaption(data.Locale, "個体識別番号", "Individual ID"), value: trim(data.IndividualNumber)},
 		)
 		return entries
 	case "non_traceable", "non_traceable_deer":
 		entries := []tableEntry{
-			{label: "商品名", value: trim(data.ProductName)},
-			{label: "内容量", value: trim(data.ProductQuantity)},
-			{label: "消費期限", value: trim(data.DeadlineDate)},
-			{label: "保存方法", value: trim(data.StorageTemperature)},
+			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
+			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
+			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
 			entries = append(entries, entry)
@@ -608,34 +638,34 @@ func buildTableEntries(data LabelData) []tableEntry {
 		if entry, ok := facilityEntry(data); ok {
 			entries = append(entries, entry)
 		}
-		entries = append(entries, tableEntry{label: "金属探知機", value: "検査済み"})
+		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 		return entries
 	case "processed":
 		return []tableEntry{
-			{label: "名称", value: trim(data.ProductName)},
-			{label: "原材料名", value: trim(data.ProductIngredient)},
-			{label: "内容量", value: trim(data.ProductQuantity)},
-			{label: "賞味期限", value: trim(data.DeadlineDate)},
-			{label: "保存方法", value: trim(data.StorageTemperature)},
+			{label: localizedCaption(data.Locale, "名称", "Name"), value: trim(data.ProductName)},
+			{label: localizedCaption(data.Locale, "原材料名", "Ingredients"), value: trim(data.ProductIngredient)},
+			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
+			{label: localizedCaption(data.Locale, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
+			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 	case "pet":
 		entries := []tableEntry{
-			{label: "商品名", value: trim(data.ProductName)},
-			{label: "内容量", value: trim(data.ProductQuantity)},
-			{label: "消費期限", value: trim(data.DeadlineDate)},
-			{label: "保存方法", value: trim(data.StorageTemperature)},
+			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
+			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
+			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := facilityEntry(data); ok {
 			entries = append(entries, entry)
 		}
-		entries = append(entries, tableEntry{label: "金属探知機", value: "検査済み"})
+		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 		return entries
 	}
 	entries := []tableEntry{
-		{label: "商品名", value: trim(data.ProductName)},
-		{label: "内容量", value: trim(data.ProductQuantity)},
-		{label: "消費期限", value: trim(data.DeadlineDate)},
-		{label: "保存方法", value: trim(data.StorageTemperature)},
+		{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
+		{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
+		{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+		{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 	}
 	if entry, ok := companyEntry(data); ok {
 		entries = append(entries, entry)
@@ -643,8 +673,26 @@ func buildTableEntries(data LabelData) []tableEntry {
 	if entry, ok := facilityEntry(data); ok {
 		entries = append(entries, entry)
 	}
-	entries = append(entries, tableEntry{label: "金属探知機", value: "検査済み"})
+	entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 	return entries
+}
+
+func localizedCaption(locale, ja, en string) string {
+	if strings.EqualFold(strings.TrimSpace(locale), "en") {
+		return en
+	}
+	return ja
+}
+
+func warningText(locale string) string {
+	return localizedCaption(locale, "加熱してお召し上がりください", "Cook thoroughly before eating")
+}
+
+func warningLines(locale string) []string {
+	if strings.EqualFold(strings.TrimSpace(locale), "en") {
+		return []string{"Cook thoroughly", "before eating"}
+	}
+	return []string{"加熱して", "お召し上がりください"}
 }
 
 func labelWidthRatioForTemplate(template string) float64 {

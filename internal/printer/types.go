@@ -34,8 +34,8 @@ type LabelData struct {
 	Ingredient            string `json:"ingredient"`            // 原材料
 	LogoFile              string `json:"logoFile"`              // 企業ロゴ画像へのパス（assetsDir からの相対パスまたは絶対パス）
 	CertificationMarkFile string `json:"certificationMarkFile"` // 認証マーク画像へのパス（assetsDir からの相対パスまたは絶対パス）
-	ProcessorName         string `json:"processorName"`         // 加工者名（companyBlock が空の場合のフォールバック）
-	ProcessorLocation     string `json:"processorLocation"`     // 加工施設所在地（facilityBlock が空の場合のフォールバック）
+	ProcessorName         string `json:"processorName"`         // 旧API互換の加工者名
+	ProcessorLocation     string `json:"processorLocation"`     // 旧API互換の加工所所在地
 
 	// Carcass label fields
 	Species       string `json:"species"`       // 獣種

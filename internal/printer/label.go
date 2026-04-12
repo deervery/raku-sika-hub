@@ -538,6 +538,32 @@ func padBlockToMinLines(block string, minLines int) string {
 	return strings.Join(lines, "\n")
 }
 
+func companyEntry(data LabelData) (tableEntry, bool) {
+	trim := strings.TrimSpace
+	switch {
+	case trim(data.CompanyBlock) != "":
+		return tableEntry{label: "加工者", value: padBlockToMinLines(trim(data.CompanyBlock), 3)}, true
+	case trim(data.ProcessorName) != "":
+		return tableEntry{label: "加工者", value: trim(data.ProcessorName)}, true
+	default:
+		return tableEntry{}, false
+	}
+}
+
+func facilityEntry(data LabelData) (tableEntry, bool) {
+	trim := strings.TrimSpace
+	switch {
+	case trim(data.FacilityBlock) != "":
+		return tableEntry{label: "加工所", value: padBlockToMinLines(trim(data.FacilityBlock), 3)}, true
+	case trim(data.ProcessorLocation) != "":
+		return tableEntry{label: "加工所", value: trim(data.ProcessorLocation)}, true
+	case trim(data.FacilityName) != "":
+		return tableEntry{label: "加工所", value: trim(data.FacilityName)}, true
+	default:
+		return tableEntry{}, false
+	}
+}
+
 func buildTableEntries(data LabelData) []tableEntry {
 	trim := strings.TrimSpace
 	if data.Template == "individual_qr" {
@@ -558,20 +584,11 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: "消費期限", value: trim(data.DeadlineDate)},
 			{label: "保存方法", value: trim(data.StorageTemperature)},
 		}
-		// companyBlock が空の場合は既存の processorName/processorLocation にフォールバック
-		if trim(data.CompanyBlock) != "" {
-			entries = append(entries, tableEntry{label: "加工者", value: padBlockToMinLines(trim(data.CompanyBlock), 3)})
-		} else if trim(data.ProcessorName) != "" {
-			entries = append(entries, tableEntry{label: "加工者名", value: trim(data.ProcessorName)})
-			if trim(data.ProcessorLocation) != "" {
-				entries = append(entries, tableEntry{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)})
-			}
+		if entry, ok := companyEntry(data); ok {
+			entries = append(entries, entry)
 		}
-		// facilityBlock が空の場合は既存の facilityName にフォールバック
-		if trim(data.FacilityBlock) != "" {
-			entries = append(entries, tableEntry{label: "加工所", value: padBlockToMinLines(trim(data.FacilityBlock), 3)})
-		} else if trim(data.FacilityName) != "" {
-			entries = append(entries, tableEntry{label: "加工施設", value: trim(data.FacilityName)})
+		if entry, ok := facilityEntry(data); ok {
+			entries = append(entries, entry)
 		}
 		entries = append(entries,
 			tableEntry{label: "金属探知機", value: "検査済み"},
@@ -579,15 +596,20 @@ func buildTableEntries(data LabelData) []tableEntry {
 		)
 		return entries
 	case "non_traceable", "non_traceable_deer":
-		return []tableEntry{
+		entries := []tableEntry{
 			{label: "商品名", value: trim(data.ProductName)},
 			{label: "内容量", value: trim(data.ProductQuantity)},
 			{label: "消費期限", value: trim(data.DeadlineDate)},
 			{label: "保存方法", value: trim(data.StorageTemperature)},
-			{label: "加工者名", value: trim(data.ProcessorName)},
-			{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)},
-			{label: "金属探知機", value: "検査済み"},
 		}
+		if entry, ok := companyEntry(data); ok {
+			entries = append(entries, entry)
+		}
+		if entry, ok := facilityEntry(data); ok {
+			entries = append(entries, entry)
+		}
+		entries = append(entries, tableEntry{label: "金属探知機", value: "検査済み"})
+		return entries
 	case "processed":
 		return []tableEntry{
 			{label: "名称", value: trim(data.ProductName)},
@@ -603,29 +625,26 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: "消費期限", value: trim(data.DeadlineDate)},
 			{label: "保存方法", value: trim(data.StorageTemperature)},
 		}
-		// facilityBlock が空の場合は既存の processorName/processorLocation にフォールバック
-		if trim(data.FacilityBlock) != "" {
-			entries = append(entries, tableEntry{label: "加工所", value: padBlockToMinLines(trim(data.FacilityBlock), 3)})
-		} else {
-			if trim(data.ProcessorName) != "" {
-				entries = append(entries, tableEntry{label: "加工者名", value: trim(data.ProcessorName)})
-			}
-			if trim(data.ProcessorLocation) != "" {
-				entries = append(entries, tableEntry{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)})
-			}
+		if entry, ok := facilityEntry(data); ok {
+			entries = append(entries, entry)
 		}
 		entries = append(entries, tableEntry{label: "金属探知機", value: "検査済み"})
 		return entries
 	}
-	return []tableEntry{
+	entries := []tableEntry{
 		{label: "商品名", value: trim(data.ProductName)},
 		{label: "内容量", value: trim(data.ProductQuantity)},
 		{label: "消費期限", value: trim(data.DeadlineDate)},
 		{label: "保存方法", value: trim(data.StorageTemperature)},
-		{label: "加工者名", value: trim(data.ProcessorName)},
-		{label: "加工施設所在地", value: trim(data.ProcessorLocation)},
-		{label: "金属探知機", value: "検査済み"},
 	}
+	if entry, ok := companyEntry(data); ok {
+		entries = append(entries, entry)
+	}
+	if entry, ok := facilityEntry(data); ok {
+		entries = append(entries, entry)
+	}
+	entries = append(entries, tableEntry{label: "金属探知機", value: "検査済み"})
+	return entries
 }
 
 func labelWidthRatioForTemplate(template string) float64 {
@@ -751,6 +770,10 @@ func fitLines(text string, baseSize, minSize float64, maxLines, maxWidth int) ([
 		lines := wrapText(text, size, maxWidth)
 		if maxLines <= 0 || len(lines) <= maxLines {
 			return lines, size
+		}
+		if size == minSize {
+			lines = clampLines(lines, maxLines, minSize, maxWidth)
+			return lines, minSize
 		}
 		size -= 0.5
 		if size < minSize {

@@ -34,18 +34,15 @@ type PrintRequest struct {
 
 // Handler holds references to all service components.
 type Handler struct {
-	scaleClient       *scale.Client
-	printer           *printer.Brother
-	scanner           ScannerClient
-	broadcaster       Broadcaster
-	logger            *logging.Logger
-	version           string
-	commit            string
-	buildDate         string
-	assetsDir         string
-	processorName     string
-	processorLocation string
-	captureLocation   string
+	scaleClient *scale.Client
+	printer     *printer.Brother
+	scanner     ScannerClient
+	broadcaster Broadcaster
+	logger      *logging.Logger
+	version     string
+	commit      string
+	buildDate   string
+	assetsDir   string
 }
 
 // NewHandler creates a Handler.
@@ -55,21 +52,18 @@ func NewHandler(
 	scanner ScannerClient,
 	broadcaster Broadcaster,
 	logger *logging.Logger,
-	version, commit, buildDate, assetsDir, processorName, processorLocation, captureLocation string,
+	version, commit, buildDate, assetsDir string,
 ) *Handler {
 	return &Handler{
-		scaleClient:       scaleClient,
-		printer:           prn,
-		scanner:           scanner,
-		broadcaster:       broadcaster,
-		logger:            logger,
-		version:           version,
-		commit:            commit,
-		buildDate:         buildDate,
-		assetsDir:         assetsDir,
-		processorName:     processorName,
-		processorLocation: processorLocation,
-		captureLocation:   captureLocation,
+		scaleClient: scaleClient,
+		printer:     prn,
+		scanner:     scanner,
+		broadcaster: broadcaster,
+		logger:      logger,
+		version:     version,
+		commit:      commit,
+		buildDate:   buildDate,
+		assetsDir:   assetsDir,
 	}
 }
 
@@ -421,11 +415,7 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		}
 	}
 
-	// Normalize field aliases: storageMethod → storageTemperature
-	if req.Data["storageTemperature"] == "" && req.Data["storageMethod"] != "" {
-		req.Data["storageTemperature"] = req.Data["storageMethod"]
-	}
-
+	req.Data = printer.NormalizeRequestData(req.Data)
 	required := printer.RequiredFields(req.Template)
 	var missing []string
 	for _, f := range required {
@@ -449,53 +439,8 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		}
 	}
 
-	data := printer.LabelData{
-		Template:               req.Template,
-		Copies:                 copies,
-		ProductName:            req.Data["productName"],
-		ProductQuantity:        req.Data["productQuantity"],
-		DeadlineDate:           req.Data["deadlineDate"],
-		StorageTemperature:     req.Data["storageTemperature"],
-		IndividualNumber:       req.Data["individualNumber"],
-		CaptureLocation:        req.Data["captureLocation"],
-		QRCode:                 req.Data["qrCode"],
-		ProductIngredient:      req.Data["productIngredient"],
-		NutritionUnit:          req.Data["nutritionUnit"],
-		CaloriesQuantity:       req.Data["caloriesQuantity"],
-		ProteinQuantity:        req.Data["proteinQuantity"],
-		FatQuantity:            req.Data["fatQuantity"],
-		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
-		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
-		AttentionText:          req.Data["attentionText"],
-		FacilityName:           req.Data["facilityName"],
-		Ingredient:             req.Data["ingredient"],
-		LogoFile:               h.resolveLogoField(req.Data["logoFile"]),
-		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
-		ProcessorName:          req.Data["processorName"],
-		ProcessorLocation:      req.Data["processorLocation"],
-		CompanyBlock:           req.Data["companyBlock"],
-		FacilityBlock:          req.Data["facilityBlock"],
-	}
-
-	// Apply defaults from config if not provided by client.
-	if strings.TrimSpace(data.ProcessorName) == "" {
-		data.ProcessorName = h.processorName
-	}
-	if strings.TrimSpace(data.ProcessorLocation) == "" {
-		data.ProcessorLocation = h.processorLocation
-	}
-	if h.captureLocation != "" {
-		data.CaptureLocation = h.captureLocation
-	}
-
+	data := printer.BuildLabelDataFromMap(req.Template, copies, req.Data, h.assetsDir)
 	return &data, 0, nil
-}
-
-func (h *Handler) resolveLogoField(input string) string {
-	if trimmed := strings.TrimSpace(input); trimmed != "" {
-		return trimmed
-	}
-	return printer.DefaultLogoFile(h.assetsDir)
 }
 
 // classifyScaleError maps scale errors to error codes and Japanese messages.

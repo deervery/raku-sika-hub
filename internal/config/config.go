@@ -26,9 +26,6 @@ type Config struct {
 	ScannerVid        string `json:"scannerVid"`
 	ScannerPid        string `json:"scannerPid"`
 	ScannerDeviceName string `json:"scannerDeviceName"`
-	ProcessorName     string `json:"processorName"`
-	ProcessorLocation string `json:"processorLocation"`
-	CaptureLocation   string `json:"captureLocation"`
 }
 
 // Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
@@ -45,9 +42,7 @@ func Default() Config {
 		AssetsDir:       "assets",
 		ListenAddr:      "0.0.0.0:19800",
 		LogLevel:        "INFO",
-		EnableWebSocket:   false,
-		ProcessorName:     "(株)札幌カネシン水産",
-		ProcessorLocation: "北海道訓子府町大町113",
+		EnableWebSocket: false,
 	}
 }
 
@@ -134,14 +129,5 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("SCANNER_DEVICE_NAME")); v != "" {
 		cfg.ScannerDeviceName = v
-	}
-	if v := strings.TrimSpace(os.Getenv("PROCESSOR_NAME")); v != "" {
-		cfg.ProcessorName = v
-	}
-	if v := strings.TrimSpace(os.Getenv("PROCESSOR_LOCATION")); v != "" {
-		cfg.ProcessorLocation = v
-	}
-	if v := strings.TrimSpace(os.Getenv("CAPTURE_LOCATION")); v != "" {
-		cfg.CaptureLocation = v
 	}
 }

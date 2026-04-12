@@ -172,8 +172,8 @@ Base URL: `http://<host>:19800`
     "deadlineDate": "2024-06-15",
     "storageTemperature": "-18℃以下",
     "qrCode": "https://example.com/t/abc123/def456",
-    "facilityName": "○○ジビエ加工施設",
-    "ingredient": "シカ肉（北海道産）"
+    "companyBlock": "株式会社マノワ\n北海道札幌市...\nTEL: 011-000-0000",
+    "facilityBlock": "マノワ加工所\n北海道函館市...\nTEL: 0138-000-0000"
   }
 }
 ```
@@ -202,6 +202,8 @@ Base URL: `http://<host>:19800`
 | `individualNumber` | o | - | 個体識別番号 |
 | `captureLocation` | - | - | 捕獲場所 |
 | `qrCode` | - | - | QRコードURL |
+| `companyBlock` | - | - | 加工者欄に入れる複数行テキスト |
+| `facilityBlock` | - | - | 加工所欄に入れる複数行テキスト |
 | `facilityName` | - | - | 加工施設名 |
 | `ingredient` | - | - | 原材料 |
 | `productIngredient` | - | - | 原材料名（加工/ペット用） |
@@ -212,6 +214,8 @@ Base URL: `http://<host>:19800`
 | `carbohydratesQuantity` | - | - | 炭水化物 |
 | `saltEquivalentQuantity` | - | - | 食塩相当量 |
 | `attentionText` | - | - | 注意書き |
+
+`companyBlock` / `facilityBlock` が正規入力。Hub は環境変数で印刷データを補完しない。
 
 ### レスポンス `200 OK`
 

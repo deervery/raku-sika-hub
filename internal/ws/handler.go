@@ -347,6 +347,8 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		return
 	}
 
+	req.Data = printer.NormalizeRequestData(req.Data)
+
 	// Validate required fields.
 	required := printer.RequiredFields(req.Template)
 	var missing []string
@@ -376,32 +378,7 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		return
 	}
 
-	// Build LabelData from request.
-	data := printer.LabelData{
-		Template:               req.Template,
-		Copies:                 copies,
-		ProductName:            req.Data["productName"],
-		ProductQuantity:        req.Data["productQuantity"],
-		DeadlineDate:           req.Data["deadlineDate"],
-		StorageTemperature:     req.Data["storageTemperature"],
-		IndividualNumber:       req.Data["individualNumber"],
-		CaptureLocation:        req.Data["captureLocation"],
-		QRCode:                 req.Data["qrCode"],
-		ProductIngredient:      req.Data["productIngredient"],
-		NutritionUnit:          req.Data["nutritionUnit"],
-		CaloriesQuantity:       req.Data["caloriesQuantity"],
-		ProteinQuantity:        req.Data["proteinQuantity"],
-		FatQuantity:            req.Data["fatQuantity"],
-		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
-		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
-		AttentionText:          req.Data["attentionText"],
-		LogoFile:               h.resolveLogoField(req.Data["logoFile"]),
-		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
-		ProcessorName:          req.Data["processorName"],
-		ProcessorLocation:      req.Data["processorLocation"],
-		CompanyBlock:           req.Data["companyBlock"],
-		FacilityBlock:          req.Data["facilityBlock"],
-	}
+	data := printer.BuildLabelDataFromMap(req.Template, copies, req.Data, h.assetsDir)
 
 	err := h.printer.PrintLabel(data)
 	if err != nil {
@@ -506,11 +483,4 @@ func classifyScaleError(err error) (string, string) {
 		return ErrCodeUnknownError,
 			"予期しないエラーが発生しました: " + msg
 	}
-}
-
-func (h *Handler) resolveLogoField(input string) string {
-	if trimmed := strings.TrimSpace(input); trimmed != "" {
-		return trimmed
-	}
-	return printer.DefaultLogoFile(h.assetsDir)
 }

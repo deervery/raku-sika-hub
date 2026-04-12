@@ -3,6 +3,8 @@
 Raspberry Pi 上で常駐する機器制御ゲートウェイ（Go 実装）。
 A&D 防塵・防水デジタル台はかり HV-C シリーズ、Brother ラベルプリンタ（QL-800/QL-820）、USB バーコードリーダーを制御し、フロントエンド（[raku-sika-lite](https://github.com/deervery/raku-sika-lite)）に対して HTTP REST API を提供する。
 
+ラベル印刷は Hub 内部の Go renderer で行う。`lite/tmp/manoir/*.lbx` は Hub が直接読むわけではないため、テンプレート見た目の変更を Hub 印刷へ反映するには renderer 側の修正が必要。
+
 ## システム構成
 
 ```
@@ -201,6 +203,8 @@ PRINTER_NAME=Brother_QL_820NWB_USB
 | `listenAddr` | `"0.0.0.0:19800"` | `LISTEN_ADDR` | HTTPサーバーのリッスンアドレス |
 | `logLevel` | `"INFO"` | `LOG_LEVEL` | ログレベル（`ERROR` / `WARN` / `INFO`） |
 | `enableWebSocket` | `false` | `ENABLE_WEBSOCKET` | `/ws/health` WebSocket を有効化 |
+
+印刷データは API/WS 経由で完全に渡す前提。Hub は `companyBlock` / `facilityBlock` / `captureLocation` を環境変数で補完しない。
 
 ### WebSocket
 

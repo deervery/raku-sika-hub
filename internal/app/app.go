@@ -27,6 +27,11 @@ type App struct {
 	httpServer    *httpapi.Server
 }
 
+type printerState struct {
+	connected bool
+	name      string
+}
+
 // New creates a new App from the given configuration.
 func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 	level := logging.ParseLevel(cfg.LogLevel)
@@ -77,7 +82,7 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 		scannerIface = sc
 	}
 	httpHandler := httpapi.NewHandler(scaleClient, prn, scannerIface, hub, logger, version, commit, buildDate, cfg.AssetsDir, cfg.ProcessorName, cfg.ProcessorLocation, cfg.CaptureLocation)
-	a.httpServer = httpapi.NewServer(httpHandler, logger, cfg.ListenAddr)
+	a.httpServer = httpapi.NewServer(httpHandler, a.wsServer, logger, cfg.ListenAddr)
 
 	return a, nil
 }
@@ -94,10 +99,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Start periodic health broadcast to WebSocket clients (every 30s).
 	go a.runHealthBroadcast(ctx)
-
-	if a.cfg.EnableWebSocket && a.wsServer != nil {
-		return a.wsServer.Start(ctx)
-	}
+	go a.runPrinterStatusBroadcast(ctx)
 
 	return a.httpServer.Start(ctx)
 }
@@ -118,14 +120,50 @@ func (a *App) runHealthBroadcast(ctx context.Context) {
 			status, err := a.printer.Status()
 			printerConnected := err == nil && status.SelectedName != ""
 			a.hub.Broadcast(map[string]any{
-				"type":             "health",
-				"connected":        a.scaleClient.Connected(),
-				"port":             a.scaleClient.PortName(),
-				"printerConnected": printerConnected,
+				"type":              "health",
+				"connected":         a.scaleClient.Connected(),
+				"port":              a.scaleClient.PortName(),
+				"printerConnected":  printerConnected,
 				"configuredPrinter": status.ConfiguredName,
-				"selectedPrinter":  status.SelectedName,
+				"selectedPrinter":   status.SelectedName,
 			})
 		}
+	}
+}
+
+func (a *App) runPrinterStatusBroadcast(ctx context.Context) {
+	if !a.cfg.EnableWebSocket || a.wsHandler == nil {
+		return
+	}
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	last := a.currentPrinterState()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current := a.currentPrinterState()
+			if current == last {
+				continue
+			}
+			last = current
+			a.hub.Broadcast(a.wsHandler.PrinterStatusEvent())
+		}
+	}
+}
+
+func (a *App) currentPrinterState() printerState {
+	if a.wsHandler == nil {
+		return printerState{}
+	}
+	event := a.wsHandler.PrinterStatusEvent()
+	return printerState{
+		connected: event.PrinterConnected,
+		name:      event.PrinterName,
 	}
 }
 

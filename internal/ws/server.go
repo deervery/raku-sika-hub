@@ -107,8 +107,7 @@ func NewServer(hub *Hub, handler *Handler, logger *logging.Logger, listenAddr st
 // Start begins listening on the configured address.
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/", s.handleWS)
+	s.RegisterRoutes(mux)
 
 	s.httpSrv = &http.Server{
 		Addr:    s.listenAddr,
@@ -124,6 +123,13 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("http listen: %w", err)
 	}
 	return nil
+}
+
+// RegisterRoutes mounts the WebSocket endpoints on the provided mux.
+func (s *Server) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/ws/health", s.handleWS)
+	mux.HandleFunc("/ws", s.handleWS)
+	mux.HandleFunc("/ws/status", s.handleHealth)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

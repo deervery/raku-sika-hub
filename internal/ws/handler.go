@@ -105,6 +105,7 @@ func (h *Handler) SendCurrentStatus(client *WSClient) {
 		Connected: h.scaleClient.Connected(),
 		Port:      h.scaleClient.PortName(),
 	})
+	client.Send(h.PrinterStatusEvent())
 }
 
 func (h *Handler) handleWeigh(ctx context.Context, client *WSClient, req Request) {
@@ -239,6 +240,25 @@ func (h *Handler) SnapshotHealth() HealthSnapshot {
 		ConfiguredPrinter: status.ConfiguredName,
 		SelectedPrinter:   status.SelectedName,
 		AvailablePrinters: status.Available,
+	}
+}
+
+// PrinterStatusEvent returns the current printer connection state for WebSocket broadcasts.
+func (h *Handler) PrinterStatusEvent() PrinterStatusEvent {
+	status, err := h.printer.Status()
+	if err != nil {
+		h.logger.Warn("printer status event snapshot failed: %v", err)
+	}
+
+	printerName := status.SelectedName
+	if printerName == "" {
+		printerName = status.ConfiguredName
+	}
+
+	return PrinterStatusEvent{
+		Type:             "printer_status",
+		PrinterConnected: err == nil && printerReady(status),
+		PrinterName:      printerName,
 	}
 }
 

@@ -7,9 +7,11 @@ import (
 
 // SuccessResponse is a generic success JSON response.
 type SuccessResponse struct {
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
-	Copies  int    `json:"copies,omitempty"`
+	Status     string `json:"status"`
+	PrintState string `json:"printState,omitempty"`
+	JobID      string `json:"jobId,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Copies     int    `json:"copies,omitempty"`
 }
 
 // ErrorBody is the standard error response format.
@@ -86,8 +88,13 @@ func writeSuccess(w http.ResponseWriter, msg string) {
 
 // QueueResponse is returned by GET /printer/queue.
 type QueueResponse struct {
-	Status string     `json:"status"`
-	Jobs   []QueueJob `json:"jobs"`
+	Status       string     `json:"status"`
+	Printer      string     `json:"printer,omitempty"`
+	PrinterState string     `json:"printerState,omitempty"`
+	JobCount     int        `json:"jobCount"`
+	Clearable    bool       `json:"clearable"`
+	Message      string     `json:"message,omitempty"`
+	Jobs         []QueueJob `json:"jobs"`
 }
 
 // QueueJob represents a single CUPS print job.
@@ -97,6 +104,7 @@ type QueueJob struct {
 	User        string `json:"user"`
 	Size        string `json:"size"`
 	SubmittedAt string `json:"submittedAt"`
+	State       string `json:"state,omitempty"`
 }
 
 func writeError(w http.ResponseWriter, httpStatus int, code, message string) {

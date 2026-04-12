@@ -225,7 +225,8 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.printer.PrintLabel(*labelData); err != nil {
+	printResult, err := h.printer.PrintLabel(*labelData)
+	if err != nil {
 		code := classifyPrinterError(err)
 		writeError(w, http.StatusInternalServerError, code, err.Error())
 		h.logger.Warn("print failed: [%s] %s", code, err.Error())
@@ -242,16 +243,20 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SuccessResponse{
-		Status:  "ok",
-		Copies:  labelData.Copies,
-		Message: "印刷完了",
+		Status:     "ok",
+		PrintState: printResult.State,
+		JobID:      printResult.JobID,
+		Copies:     labelData.Copies,
+		Message:    printResult.Message,
 	})
 	if h.broadcaster != nil {
 		h.broadcaster.Broadcast(map[string]any{
 			"type":     "print_progress",
-			"status":   "done",
+			"status":   printResult.State,
 			"template": labelData.Template,
 			"copies":   labelData.Copies,
+			"jobId":    printResult.JobID,
+			"message":  printResult.Message,
 		})
 	}
 }
@@ -300,20 +305,68 @@ func (h *Handler) HandlePrinterPreview(w http.ResponseWriter, r *http.Request) {
 // HandlePrinterQueue handles GET /printer/queue.
 // Returns the CUPS print job queue via `lpstat -o`.
 func (h *Handler) HandlePrinterQueue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		h.handlePrinterQueueGet(w)
+	case http.MethodDelete:
+		h.handlePrinterQueueDelete(w)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
+	printerStatus, _ := h.printer.Status()
+	selectedPrinter := printerStatus.SelectedName
+	out, err := exec.Command("lpstat", "-W", "not-completed", "-o").CombinedOutput()
+	if err != nil {
+		// lpstat returns exit code 1 when there are no jobs — treat as empty
+		writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Printer: selectedPrinter, Jobs: []QueueJob{}})
 		return
 	}
 
-	out, err := exec.Command("lpstat", "-o").CombinedOutput()
-	if err != nil {
-		// lpstat returns exit code 1 when there are no jobs — treat as empty
+	printerState := ""
+	if selectedPrinter != "" {
+		if stateOut, stateErr := exec.Command("lpstat", "-p", selectedPrinter, "-l").CombinedOutput(); stateErr == nil {
+			printerState = parsePrinterStateFromLpstat(string(stateOut))
+		}
+	}
+	jobs := parseLpstatOutput(string(out))
+	message := ""
+	if len(jobs) > 0 && (printerState == "printing" || strings.Contains(printerState, "Connected to printer")) {
+		message = "印刷ジョブは送信済みです。プリンタの復帰または排紙完了を待っています。"
+	}
+	writeJSON(w, http.StatusOK, QueueResponse{
+		Status:       "ok",
+		Printer:      selectedPrinter,
+		PrinterState: printerState,
+		JobCount:     len(jobs),
+		Clearable:    len(jobs) > 0,
+		Message:      message,
+		Jobs:         jobs,
+	})
+}
+
+func (h *Handler) handlePrinterQueueDelete(w http.ResponseWriter) {
+	status, _ := h.printer.Status()
+	selectedPrinter := status.SelectedName
+	if selectedPrinter == "" {
 		writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Jobs: []QueueJob{}})
 		return
 	}
-
-	jobs := parseLpstatOutput(string(out))
-	writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Jobs: jobs})
+	out, err := exec.Command("cancel", "-a", selectedPrinter).CombinedOutput()
+	if err != nil && strings.TrimSpace(string(out)) != "" {
+		writeError(w, http.StatusInternalServerError, "PRINTER_ERROR", "印刷キューの削除に失敗しました: "+strings.TrimSpace(string(out)))
+		return
+	}
+	writeJSON(w, http.StatusOK, QueueResponse{
+		Status:    "ok",
+		Printer:   selectedPrinter,
+		JobCount:  0,
+		Clearable: false,
+		Message:   "印刷キューを削除しました。",
+		Jobs:      []QueueJob{},
+	})
 }
 
 // parseLpstatOutput parses `lpstat -o` output.
@@ -346,9 +399,25 @@ func parseLpstatOutput(output string) []QueueJob {
 			User:        user,
 			Size:        size,
 			SubmittedAt: submittedAt,
+			State:       "queued",
 		})
 	}
 	return jobs
+}
+
+func parsePrinterStateFromLpstat(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " is idle"):
+			return "idle"
+		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " now printing "):
+			return "printing"
+		case strings.HasPrefix(line, "Status:"):
+			return strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
+		}
+	}
+	return ""
 }
 
 // HandlePrinterTest handles POST /printer/test.

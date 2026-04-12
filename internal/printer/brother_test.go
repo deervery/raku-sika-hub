@@ -92,3 +92,26 @@ func TestParseSubmittedJobID(t *testing.T) {
 		t.Fatalf("expected job id, got %q", got)
 	}
 }
+
+func TestParseQueueJobs(t *testing.T) {
+	output := "Brother_QL_820NWB_USB-8 rakusika 104448 Sun Apr 12 22:37:10 2026\n"
+	jobs := parseQueueJobs(output)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].ID != "Brother_QL_820NWB_USB-8" {
+		t.Fatalf("unexpected job id %q", jobs[0].ID)
+	}
+	if jobs[0].State != "queued" {
+		t.Fatalf("unexpected job state %q", jobs[0].State)
+	}
+}
+
+func TestParsePrinterState(t *testing.T) {
+	if got := parsePrinterState("printer Brother_QL_820NWB_USB now printing Brother_QL_820NWB_USB-8. enabled since ..."); got != "printing" {
+		t.Fatalf("expected printing, got %q", got)
+	}
+	if got := parsePrinterState("printer Brother_QL_820NWB_USB is idle. enabled since ..."); got != "idle" {
+		t.Fatalf("expected idle, got %q", got)
+	}
+}

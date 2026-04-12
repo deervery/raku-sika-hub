@@ -380,7 +380,7 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 
 	data := printer.BuildLabelDataFromMap(req.Template, copies, req.Data, h.assetsDir)
 
-	err := h.printer.PrintLabel(data)
+	printResult, err := h.printer.PrintLabel(data)
 	if err != nil {
 		errMsg := err.Error()
 		code := "PRINTER_ERROR"
@@ -412,17 +412,22 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 	}
 
 	client.Send(PrintOKResponse{
-		Type:      "print_ok",
-		RequestID: req.RequestID,
-		Message:   fmt.Sprintf("ラベルを%d部印刷しました", copies),
-		Copies:    copies,
+		Type:       "print_ok",
+		RequestID:  req.RequestID,
+		Status:     "ok",
+		PrintState: printResult.State,
+		JobID:      printResult.JobID,
+		Message:    printResult.Message,
+		Copies:     copies,
 	})
 	// Broadcast print success to all clients
 	h.hub.Broadcast(PrintProgressEvent{
 		Type:     "print_progress",
-		Status:   "done",
+		Status:   printResult.State,
 		Template: req.Template,
 		Copies:   copies,
+		JobID:    printResult.JobID,
+		Message:  printResult.Message,
 	})
 }
 

@@ -98,6 +98,22 @@ type PrintTestErrorResponse struct {
 	Message   string `json:"message"`
 }
 
+// PrintProgressEvent is broadcast to all clients when a print job completes or fails.
+type PrintProgressEvent struct {
+	Type     string `json:"type"`               // "print_progress"
+	Status   string `json:"status"`             // "done" | "failed"
+	Template string `json:"template"`           // テンプレートID
+	Copies   int    `json:"copies"`             // 印刷部数
+	Error    string `json:"error,omitempty"`    // エラーメッセージ（失敗時のみ）
+}
+
+// PrinterStatusEvent is broadcast to all clients when printer connection state changes.
+type PrinterStatusEvent struct {
+	Type             string `json:"type"`             // "printer_status"
+	PrinterConnected bool   `json:"printerConnected"`
+	PrinterName      string `json:"printerName"`
+}
+
 // Error codes.
 const (
 	ErrCodeUnstable           = "UNSTABLE"

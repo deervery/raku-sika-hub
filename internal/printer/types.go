@@ -24,14 +24,18 @@ type LabelData struct {
 	CarbohydratesQuantity  string `json:"carbohydratesQuantity"`  // 炭水化物
 	SaltEquivalentQuantity string `json:"saltEquivalentQuantity"` // 食塩相当量
 
+	// Block fields (v0.8.2) - 改行区切りの複数行テキスト
+	CompanyBlock  string `json:"companyBlock"`  // 加工者情報ブロック（name/address/phone、改行区切り）
+	FacilityBlock string `json:"facilityBlock"` // 加工所情報ブロック（name/address/phone、改行区切り）
+
 	// Misc
 	AttentionText         string `json:"attentionText"`         // 注意書き
 	FacilityName          string `json:"facilityName"`          // 加工施設名
 	Ingredient            string `json:"ingredient"`            // 原材料
 	LogoFile              string `json:"logoFile"`              // 企業ロゴ画像へのパス（assetsDir からの相対パスまたは絶対パス）
 	CertificationMarkFile string `json:"certificationMarkFile"` // 認証マーク画像へのパス（assetsDir からの相対パスまたは絶対パス）
-	ProcessorName         string `json:"processorName"`         // 加工者名
-	ProcessorLocation     string `json:"processorLocation"`     // 加工施設所在地
+	ProcessorName         string `json:"processorName"`         // 加工者名（companyBlock が空の場合のフォールバック）
+	ProcessorLocation     string `json:"processorLocation"`     // 加工施設所在地（facilityBlock が空の場合のフォールバック）
 
 	// Carcass label fields
 	Species       string `json:"species"`       // 獣種
@@ -44,6 +48,8 @@ var ValidTemplates = map[string]bool{
 	"traceable":          true,
 	"traceable_deer":     true,
 	"traceable_bear":     true,
+	"traceable_boar":     true,
+	"traceable_raccoon":  true,
 	"non_traceable":      true,
 	"non_traceable_deer": true,
 	"processed":          true,
@@ -62,7 +68,7 @@ func RequiredFields(template string) []string {
 		"storageTemperature",
 	}
 	switch template {
-	case "traceable", "traceable_deer", "traceable_bear":
+	case "traceable", "traceable_deer", "traceable_bear", "traceable_boar", "traceable_raccoon":
 		return append(common, "individualNumber", "captureLocation", "qrCode")
 	case "carcass_deer", "carcass_bear":
 		return []string{"individualNumber"}

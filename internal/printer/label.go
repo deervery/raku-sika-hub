@@ -529,6 +529,15 @@ func (row imageSectionRow) drawQRCodeAt(img *image.RGBA, r *LabelRenderer, x, to
 	r.drawQRCodeIntoRect(img, rect, strings.TrimSpace(row.data.QRCode))
 }
 
+// padBlockToMinLines ensures a block text has at least minLines lines (padding with empty lines).
+func padBlockToMinLines(block string, minLines int) string {
+	lines := strings.Split(block, "\n")
+	for len(lines) < minLines {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
 func buildTableEntries(data LabelData) []tableEntry {
 	trim := strings.TrimSpace
 	if data.Template == "individual_qr" {
@@ -541,18 +550,34 @@ func buildTableEntries(data LabelData) []tableEntry {
 	}
 
 	switch data.Template {
-	case "traceable", "traceable_deer", "traceable_bear":
-		return []tableEntry{
+	case "traceable", "traceable_deer", "traceable_bear", "traceable_boar", "traceable_raccoon":
+		entries := []tableEntry{
 			{label: "商品名", value: trim(data.ProductName)},
 			{label: "捕獲地", value: trim(data.CaptureLocation)},
 			{label: "内容量", value: trim(data.ProductQuantity)},
 			{label: "消費期限", value: trim(data.DeadlineDate)},
 			{label: "保存方法", value: trim(data.StorageTemperature)},
-			{label: "加工者名", value: trim(data.ProcessorName)},
-			{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)},
-			{label: "金属探知機", value: "検査済み"},
-			{label: "個体識別番号", value: trim(data.IndividualNumber)},
 		}
+		// companyBlock が空の場合は既存の processorName/processorLocation にフォールバック
+		if trim(data.CompanyBlock) != "" {
+			entries = append(entries, tableEntry{label: "加工者", value: padBlockToMinLines(trim(data.CompanyBlock), 3)})
+		} else if trim(data.ProcessorName) != "" {
+			entries = append(entries, tableEntry{label: "加工者名", value: trim(data.ProcessorName)})
+			if trim(data.ProcessorLocation) != "" {
+				entries = append(entries, tableEntry{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)})
+			}
+		}
+		// facilityBlock が空の場合は既存の facilityName にフォールバック
+		if trim(data.FacilityBlock) != "" {
+			entries = append(entries, tableEntry{label: "加工所", value: padBlockToMinLines(trim(data.FacilityBlock), 3)})
+		} else if trim(data.FacilityName) != "" {
+			entries = append(entries, tableEntry{label: "加工施設", value: trim(data.FacilityName)})
+		}
+		entries = append(entries,
+			tableEntry{label: "金属探知機", value: "検査済み"},
+			tableEntry{label: "個体識別番号", value: trim(data.IndividualNumber)},
+		)
+		return entries
 	case "non_traceable", "non_traceable_deer":
 		return []tableEntry{
 			{label: "商品名", value: trim(data.ProductName)},
@@ -572,15 +597,25 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: "保存方法", value: trim(data.StorageTemperature)},
 		}
 	case "pet":
-		return []tableEntry{
+		entries := []tableEntry{
 			{label: "商品名", value: trim(data.ProductName)},
 			{label: "内容量", value: trim(data.ProductQuantity)},
 			{label: "消費期限", value: trim(data.DeadlineDate)},
 			{label: "保存方法", value: trim(data.StorageTemperature)},
-			{label: "加工者名", value: trim(data.ProcessorName)},
-			{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)},
-			{label: "金属探知機", value: "検査済み"},
 		}
+		// facilityBlock が空の場合は既存の processorName/processorLocation にフォールバック
+		if trim(data.FacilityBlock) != "" {
+			entries = append(entries, tableEntry{label: "加工所", value: padBlockToMinLines(trim(data.FacilityBlock), 3)})
+		} else {
+			if trim(data.ProcessorName) != "" {
+				entries = append(entries, tableEntry{label: "加工者名", value: trim(data.ProcessorName)})
+			}
+			if trim(data.ProcessorLocation) != "" {
+				entries = append(entries, tableEntry{label: "加工施設\n所在地", value: trim(data.ProcessorLocation)})
+			}
+		}
+		entries = append(entries, tableEntry{label: "金属探知機", value: "検査済み"})
+		return entries
 	}
 	return []tableEntry{
 		{label: "商品名", value: trim(data.ProductName)},
@@ -595,7 +630,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 
 func labelWidthRatioForTemplate(template string) float64 {
 	switch template {
-	case "traceable", "traceable_deer", "traceable_bear":
+	case "traceable", "traceable_deer", "traceable_bear", "traceable_boar", "traceable_raccoon":
 		return tableLabelWidthTraceable
 	case "non_traceable", "non_traceable_deer":
 		return tableLabelWidthNonTraceable
@@ -610,7 +645,7 @@ func labelWidthRatioForTemplate(template string) float64 {
 
 func isTraceableTemplate(template string) bool {
 	switch template {
-	case "traceable", "traceable_deer", "traceable_bear":
+	case "traceable", "traceable_deer", "traceable_bear", "traceable_boar", "traceable_raccoon":
 		return true
 	default:
 		return false

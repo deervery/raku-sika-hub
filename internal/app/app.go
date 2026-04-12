@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/deervery/raku-sika-hub/internal/config"
 	"github.com/deervery/raku-sika-hub/internal/httpapi"
@@ -75,7 +76,7 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 	if sc != nil {
 		scannerIface = sc
 	}
-	httpHandler := httpapi.NewHandler(scaleClient, prn, scannerIface, logger, version, commit, buildDate, cfg.AssetsDir, cfg.ProcessorName, cfg.ProcessorLocation, cfg.CaptureLocation)
+	httpHandler := httpapi.NewHandler(scaleClient, prn, scannerIface, hub, logger, version, commit, buildDate, cfg.AssetsDir, cfg.ProcessorName, cfg.ProcessorLocation, cfg.CaptureLocation)
 	a.httpServer = httpapi.NewServer(httpHandler, logger, cfg.ListenAddr)
 
 	return a, nil
@@ -91,11 +92,41 @@ func (a *App) Run(ctx context.Context) error {
 		a.scannerClient.Start(ctx)
 	}
 
+	// Start periodic health broadcast to WebSocket clients (every 30s).
+	go a.runHealthBroadcast(ctx)
+
 	if a.cfg.EnableWebSocket && a.wsServer != nil {
 		return a.wsServer.Start(ctx)
 	}
 
 	return a.httpServer.Start(ctx)
+}
+
+// runHealthBroadcast periodically broadcasts printer/scale health to all WebSocket clients.
+func (a *App) runHealthBroadcast(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if a.hub.ClientCount() == 0 {
+				continue
+			}
+			status, err := a.printer.Status()
+			printerConnected := err == nil && status.SelectedName != ""
+			a.hub.Broadcast(map[string]any{
+				"type":             "health",
+				"connected":        a.scaleClient.Connected(),
+				"port":             a.scaleClient.PortName(),
+				"printerConnected": printerConnected,
+				"configuredPrinter": status.ConfiguredName,
+				"selectedPrinter":  status.SelectedName,
+			})
+		}
+	}
 }
 
 // Stop gracefully shuts down all components.

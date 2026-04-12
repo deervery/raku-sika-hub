@@ -20,6 +20,11 @@ type ScannerClient interface {
 	Consume() (value string, scannedAt string, ok bool)
 }
 
+// Broadcaster sends messages to all connected WebSocket clients.
+type Broadcaster interface {
+	Broadcast(msg any)
+}
+
 // PrintRequest is the JSON body for POST /printer/print and /printer/preview.
 type PrintRequest struct {
 	Template string            `json:"template"`
@@ -32,6 +37,7 @@ type Handler struct {
 	scaleClient       *scale.Client
 	printer           *printer.Brother
 	scanner           ScannerClient
+	broadcaster       Broadcaster
 	logger            *logging.Logger
 	version           string
 	commit            string
@@ -47,6 +53,7 @@ func NewHandler(
 	scaleClient *scale.Client,
 	prn *printer.Brother,
 	scanner ScannerClient,
+	broadcaster Broadcaster,
 	logger *logging.Logger,
 	version, commit, buildDate, assetsDir, processorName, processorLocation, captureLocation string,
 ) *Handler {
@@ -54,6 +61,7 @@ func NewHandler(
 		scaleClient:       scaleClient,
 		printer:           prn,
 		scanner:           scanner,
+		broadcaster:       broadcaster,
 		logger:            logger,
 		version:           version,
 		commit:            commit,
@@ -227,6 +235,15 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 		code := classifyPrinterError(err)
 		writeError(w, http.StatusInternalServerError, code, err.Error())
 		h.logger.Warn("print failed: [%s] %s", code, err.Error())
+		if h.broadcaster != nil {
+			h.broadcaster.Broadcast(map[string]any{
+				"type":     "print_progress",
+				"status":   "failed",
+				"template": labelData.Template,
+				"copies":   labelData.Copies,
+				"error":    err.Error(),
+			})
+		}
 		return
 	}
 
@@ -235,6 +252,14 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 		Copies:  labelData.Copies,
 		Message: "印刷完了",
 	})
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(map[string]any{
+			"type":     "print_progress",
+			"status":   "done",
+			"template": labelData.Template,
+			"copies":   labelData.Copies,
+		})
+	}
 }
 
 // HandlePrinterPreview handles POST /printer/preview.
@@ -448,6 +473,8 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
 		ProcessorName:          req.Data["processorName"],
 		ProcessorLocation:      req.Data["processorLocation"],
+		CompanyBlock:           req.Data["companyBlock"],
+		FacilityBlock:          req.Data["facilityBlock"],
 	}
 
 	// Apply defaults from config if not provided by client.

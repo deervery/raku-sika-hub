@@ -379,6 +379,8 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
 		ProcessorName:          req.Data["processorName"],
 		ProcessorLocation:      req.Data["processorLocation"],
+		CompanyBlock:           req.Data["companyBlock"],
+		FacilityBlock:          req.Data["facilityBlock"],
 	}
 
 	err := h.printer.PrintLabel(data)
@@ -401,6 +403,14 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 			Message:   errMsg,
 		})
 		h.logger.Warn("print failed: [%s] %s", code, errMsg)
+		// Broadcast print failure to all clients
+		h.hub.Broadcast(PrintProgressEvent{
+			Type:     "print_progress",
+			Status:   "failed",
+			Template: req.Template,
+			Copies:   copies,
+			Error:    errMsg,
+		})
 		return
 	}
 
@@ -409,6 +419,13 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 		RequestID: req.RequestID,
 		Message:   fmt.Sprintf("ラベルを%d部印刷しました", copies),
 		Copies:    copies,
+	})
+	// Broadcast print success to all clients
+	h.hub.Broadcast(PrintProgressEvent{
+		Type:     "print_progress",
+		Status:   "done",
+		Template: req.Template,
+		Copies:   copies,
 	})
 }
 

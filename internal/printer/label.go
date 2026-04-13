@@ -65,6 +65,7 @@ type tableEntry struct {
 	maxValueLines int
 	minValueLines int
 	keepValueFont bool
+	valueLineGap  float64
 }
 
 // LabelRenderer generates printed labels.
@@ -253,11 +254,12 @@ type tableLayout struct {
 }
 
 type tableRowLayout struct {
-	labelLines    []string
-	valueLines    []string
-	labelFontSize float64
-	valueFontSize float64
-	height        int
+	labelLines      []string
+	valueLines      []string
+	labelFontSize   float64
+	valueFontSize   float64
+	valueLineHeight int
+	height          int
 }
 
 func (t tableBlockRow) layout() tableLayout {
@@ -291,6 +293,10 @@ func (t tableBlockRow) layout() tableLayout {
 		} else {
 			valueLines, valueSize = fitLines(entry.value, t.fontSize, minFontSize, valueMaxLines, valueWidth-2*tableCellPadding)
 		}
+		valueLineHeight := lineHeight(valueSize)
+		if entry.valueLineGap > 0 {
+			valueLineHeight = lineHeightWithRatio(valueSize, entry.valueLineGap)
+		}
 
 		if len(labelLines) == 0 {
 			labelLines = []string{""}
@@ -307,7 +313,7 @@ func (t tableBlockRow) layout() tableLayout {
 			linesCount = len(valueLines)
 		}
 		labelHeight := linesCount * lineHeight(labelSize)
-		valueHeight := linesCount * lineHeight(valueSize)
+		valueHeight := linesCount * valueLineHeight
 		rowHeight := labelHeight
 		if valueHeight > rowHeight {
 			rowHeight = valueHeight
@@ -319,11 +325,12 @@ func (t tableBlockRow) layout() tableLayout {
 		}
 
 		rows = append(rows, tableRowLayout{
-			labelLines:    labelLines,
-			valueLines:    valueLines,
-			labelFontSize: labelSize,
-			valueFontSize: valueSize,
-			height:        rowHeight,
+			labelLines:      labelLines,
+			valueLines:      valueLines,
+			labelFontSize:   labelSize,
+			valueFontSize:   valueSize,
+			valueLineHeight: valueLineHeight,
+			height:          rowHeight,
 		})
 		totalHeight += rowHeight
 	}
@@ -331,11 +338,12 @@ func (t tableBlockRow) layout() tableLayout {
 	if len(rows) == 0 {
 		rowHeight := lineHeight(t.fontSize) + 2*tableCellPadding
 		rows = append(rows, tableRowLayout{
-			labelLines:    []string{""},
-			valueLines:    []string{""},
-			labelFontSize: t.fontSize,
-			valueFontSize: t.fontSize,
-			height:        rowHeight,
+			labelLines:      []string{""},
+			valueLines:      []string{""},
+			labelFontSize:   t.fontSize,
+			valueFontSize:   t.fontSize,
+			valueLineHeight: lineHeight(t.fontSize),
+			height:          rowHeight,
 		})
 		totalHeight += rowHeight
 	}
@@ -384,7 +392,7 @@ func (t tableBlockRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		}
 		for _, line := range row.valueLines {
 			drawStringFitWidth(img, valueFace, line, valueX, valueBaseline, layout.valueWidth-2*tableCellPadding)
-			valueBaseline += lineHeight(row.valueFontSize)
+			valueBaseline += row.valueLineHeight
 		}
 
 		labelFace.Close()
@@ -573,8 +581,9 @@ func companyEntry(data LabelData) (tableEntry, bool) {
 			label:         localizedCaption(data.Locale, "加工者", "Processor"),
 			value:         padBlockToMinLines(trim(data.CompanyBlock), 3),
 			minValueLines: 3,
-			maxValueLines: 4,
+			maxValueLines: 3,
 			keepValueFont: true,
+			valueLineGap:  1.35,
 		}, true
 	case trim(data.ProcessorName) != "":
 		return tableEntry{label: localizedCaption(data.Locale, "加工者", "Processor"), value: trim(data.ProcessorName)}, true
@@ -591,8 +600,9 @@ func facilityEntry(data LabelData) (tableEntry, bool) {
 			label:         localizedCaption(data.Locale, "加工所", "Facility"),
 			value:         padBlockToMinLines(trim(data.FacilityBlock), 3),
 			minValueLines: 3,
-			maxValueLines: 4,
+			maxValueLines: 3,
 			keepValueFont: true,
+			valueLineGap:  1.35,
 		}, true
 	case trim(data.ProcessorLocation) != "":
 		return tableEntry{label: localizedCaption(data.Locale, "加工所", "Facility"), value: trim(data.ProcessorLocation)}, true
@@ -772,6 +782,13 @@ func (r *LabelRenderer) drawQRCodeIntoRect(img *image.RGBA, rect image.Rectangle
 
 func lineHeight(size float64) int {
 	return int(size * lineSpacingRatio * float64(labelDPI) / 72)
+}
+
+func lineHeightWithRatio(size, ratio float64) int {
+	if ratio <= 0 {
+		ratio = lineSpacingRatio
+	}
+	return int(size * ratio * float64(labelDPI) / 72)
 }
 
 func wrapText(text string, fontSize float64, maxWidth int) []string {

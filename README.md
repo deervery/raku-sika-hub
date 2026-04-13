@@ -169,6 +169,11 @@ curl http://localhost:19800/health
 PRINTER_NAME=Brother_QL_820NWB_USB
 ```
 
+印刷サイズに関する注意（重要）:
+
+- Hub から CUPS に渡すカスタム用紙は `Custom.WxHmm` 形式を使うこと（例: `Custom.62x43mm`）
+- `custom_62x43mm_62x43mm` のような非標準文字列では、ドライバ側で既定値（`62x100mm` や `29mm` 系）へフォールバックし、内容が小さく印刷されることがある
+
 ## 設定
 
 設定ファイル `config.json`（オプション）。未指定フィールドはデフォルト値を使用。環境変数で上書き可能。

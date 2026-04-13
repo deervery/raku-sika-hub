@@ -166,13 +166,19 @@ func (h *Handler) HandleScaleWeigh(w http.ResponseWriter, r *http.Request) {
 		weighingInProgress = true
 	})
 	if err != nil {
-		// If we got progress updates and the error is UNSTABLE, return weighing status.
+		// If we got progress updates and the error is UNSTABLE, return weighing status
+		// with the last unstable reading so the frontend can use it.
 		if weighingInProgress && strings.Contains(err.Error(), "UNSTABLE") {
-			writeJSON(w, http.StatusOK, WeighingResponse{
+			resp := WeighingResponse{
 				Status:   "weighing",
 				Retry:    lastRetry,
 				MaxRetry: lastMaxRetry,
-			})
+			}
+			if result != nil {
+				resp.Value = result.Value
+				resp.Unit = result.Unit
+			}
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 		code, message := classifyScaleError(err)

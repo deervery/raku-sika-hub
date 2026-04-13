@@ -30,10 +30,13 @@ type WeighResponse struct {
 }
 
 // WeighingResponse is returned when the scale is still unstable.
+// Value/Unit contain the last unstable reading (may be useful as approximation).
 type WeighingResponse struct {
-	Status   string `json:"status"`
-	Retry    int    `json:"retry"`
-	MaxRetry int    `json:"maxRetry"`
+	Status   string  `json:"status"`
+	Retry    int     `json:"retry"`
+	MaxRetry int     `json:"maxRetry"`
+	Value    float64 `json:"value,omitempty"`
+	Unit     string  `json:"unit,omitempty"`
 }
 
 // HealthResponse is the structured /health response.

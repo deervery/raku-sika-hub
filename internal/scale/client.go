@@ -119,6 +119,7 @@ func (c *Client) Weigh(ctx context.Context, progress ProgressFunc) (*WeighResult
 		return nil, errors.New("not connected")
 	}
 
+	var lastResult *WeighResult
 	for i := 0; i < maxWeighRetries; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -141,6 +142,7 @@ func (c *Client) Weigh(ctx context.Context, progress ProgressFunc) (*WeighResult
 		case HeaderOL:
 			return nil, errors.New("OVERLOAD")
 		case HeaderUS:
+			lastResult = result
 			if progress != nil {
 				progress(i+1, maxWeighRetries)
 			}
@@ -162,6 +164,10 @@ func (c *Client) Weigh(ctx context.Context, progress ProgressFunc) (*WeighResult
 		}
 	}
 
+	// Return last unstable reading so caller can use the value
+	if lastResult != nil {
+		return lastResult, errors.New("UNSTABLE")
+	}
 	return nil, errors.New("UNSTABLE")
 }
 

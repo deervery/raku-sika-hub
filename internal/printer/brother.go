@@ -222,7 +222,7 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 	if mediaHeightMM < 1 {
 		mediaHeightMM = 1
 	}
-	media := fmt.Sprintf("custom_%dx%dmm_%dx%dmm", mediaWidthMM, mediaHeightMM, mediaWidthMM, mediaHeightMM)
+	media := fmt.Sprintf("Custom.%dx%dmm", mediaWidthMM, mediaHeightMM)
 	b.logger.Info(
 		"label media resolved: template=%s copies=%d media=%s rendered=%dx%dmm",
 		data.Template,

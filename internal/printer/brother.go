@@ -216,16 +216,29 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 		copies = 1
 	}
 
-	media := fmt.Sprintf("custom_%dx%dmm_%dx%dmm", result.WidthMM, result.HeightMM, result.WidthMM, result.HeightMM)
-	b.logger.Info("label media: %s (%dx%d mm)", media, result.WidthMM, result.HeightMM)
+	// Keep width fixed to 62mm and adjust only height per rendered label.
+	const mediaWidthMM = 62
+	mediaHeightMM := result.HeightMM
+	if mediaHeightMM < 1 {
+		mediaHeightMM = 1
+	}
+	media := fmt.Sprintf("custom_%dx%dmm_%dx%dmm", mediaWidthMM, mediaHeightMM, mediaWidthMM, mediaHeightMM)
+	b.logger.Info(
+		"label media resolved: template=%s copies=%d media=%s rendered=%dx%dmm",
+		data.Template,
+		copies,
+		media,
+		result.WidthMM,
+		result.HeightMM,
+	)
 
 	args := []string{
 		"-d", status.SelectedName,
 		"-n", fmt.Sprintf("%d", copies),
 		"-o", "media=" + media,
-		"-o", "fit-to-page",
 		"-o", "CutMedia=Auto",
 	}
+	b.logger.Info("lp args: %s", strings.Join(args, " "))
 	args = append(args, result.Path)
 	out, err := exec.Command("lp", args...).CombinedOutput()
 	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))

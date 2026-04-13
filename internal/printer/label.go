@@ -144,7 +144,11 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 	}
 	warningRow1 := textRow{value: "加熱して", fontSize: fontSize}
 	warningRow2 := textRow{value: "お召し上がりください", fontSize: fontSize}
-	baseHeight := tableRow.height() + spacer + warningRow1.height() + warningRow2.height()
+	warningHeight := warningRow1.height() + warningRow2.height()
+	if data.Template == "pet" {
+		warningHeight = 0 // Pet labels don't have warning text
+	}
+	baseHeight := tableRow.height() + spacer + warningHeight
 	targetContentHeight := labelHeightPx - 2*marginYPx
 	availableHeight := targetContentHeight - baseHeight
 	if availableHeight < 0 {
@@ -164,8 +168,10 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			lines: warningLines(data.Locale),
 			qrURL: data.QRCode,
 		})
-	} else if data.Template == "processed" || data.Template == "pet" {
-		// Processed/pet: no image section, just warning text
+	} else if data.Template == "pet" {
+		// Pet: no warning text, no image section
+	} else if data.Template == "processed" {
+		// Processed: warning text only, no image section
 		rows = append(rows, textRow{value: warningText(data.Locale), fontSize: fontSize})
 	} else {
 		rows = append(rows,

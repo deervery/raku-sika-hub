@@ -20,6 +20,11 @@ type ScannerClient interface {
 	Consume() (value string, scannedAt string, ok bool)
 }
 
+// Broadcaster sends messages to all connected WebSocket clients.
+type Broadcaster interface {
+	Broadcast(msg any)
+}
+
 // PrintRequest is the JSON body for POST /printer/print and /printer/preview.
 type PrintRequest struct {
 	Template string            `json:"template"`
@@ -29,17 +34,15 @@ type PrintRequest struct {
 
 // Handler holds references to all service components.
 type Handler struct {
-	scaleClient       *scale.Client
-	printer           *printer.Brother
-	scanner           ScannerClient
-	logger            *logging.Logger
-	version           string
-	commit            string
-	buildDate         string
-	assetsDir         string
-	processorName     string
-	processorLocation string
-	captureLocation   string
+	scaleClient *scale.Client
+	printer     *printer.Brother
+	scanner     ScannerClient
+	broadcaster Broadcaster
+	logger      *logging.Logger
+	version     string
+	commit      string
+	buildDate   string
+	assetsDir   string
 }
 
 // NewHandler creates a Handler.
@@ -47,21 +50,20 @@ func NewHandler(
 	scaleClient *scale.Client,
 	prn *printer.Brother,
 	scanner ScannerClient,
+	broadcaster Broadcaster,
 	logger *logging.Logger,
-	version, commit, buildDate, assetsDir, processorName, processorLocation, captureLocation string,
+	version, commit, buildDate, assetsDir string,
 ) *Handler {
 	return &Handler{
-		scaleClient:       scaleClient,
-		printer:           prn,
-		scanner:           scanner,
-		logger:            logger,
-		version:           version,
-		commit:            commit,
-		buildDate:         buildDate,
-		assetsDir:         assetsDir,
-		processorName:     processorName,
-		processorLocation: processorLocation,
-		captureLocation:   captureLocation,
+		scaleClient: scaleClient,
+		printer:     prn,
+		scanner:     scanner,
+		broadcaster: broadcaster,
+		logger:      logger,
+		version:     version,
+		commit:      commit,
+		buildDate:   buildDate,
+		assetsDir:   assetsDir,
 	}
 }
 
@@ -223,18 +225,40 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.printer.PrintLabel(*labelData); err != nil {
+	printResult, err := h.printer.PrintLabel(*labelData)
+	if err != nil {
 		code := classifyPrinterError(err)
 		writeError(w, http.StatusInternalServerError, code, err.Error())
 		h.logger.Warn("print failed: [%s] %s", code, err.Error())
+		if h.broadcaster != nil {
+			h.broadcaster.Broadcast(map[string]any{
+				"type":     "print_progress",
+				"status":   "failed",
+				"template": labelData.Template,
+				"copies":   labelData.Copies,
+				"error":    err.Error(),
+			})
+		}
 		return
 	}
 
 	writeJSON(w, http.StatusOK, SuccessResponse{
-		Status:  "ok",
-		Copies:  labelData.Copies,
-		Message: "印刷完了",
+		Status:     "ok",
+		PrintState: printResult.State,
+		JobID:      printResult.JobID,
+		Copies:     labelData.Copies,
+		Message:    printResult.Message,
 	})
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(map[string]any{
+			"type":     "print_progress",
+			"status":   printResult.State,
+			"template": labelData.Template,
+			"copies":   labelData.Copies,
+			"jobId":    printResult.JobID,
+			"message":  printResult.Message,
+		})
+	}
 }
 
 // HandlePrinterPreview handles POST /printer/preview.
@@ -281,20 +305,78 @@ func (h *Handler) HandlePrinterPreview(w http.ResponseWriter, r *http.Request) {
 // HandlePrinterQueue handles GET /printer/queue.
 // Returns the CUPS print job queue via `lpstat -o`.
 func (h *Handler) HandlePrinterQueue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		h.handlePrinterQueueGet(w)
+	case http.MethodDelete:
+		h.handlePrinterQueueDelete(w)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
-	out, err := exec.Command("lpstat", "-o").CombinedOutput()
+func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
+	printerStatus, _ := h.printer.Status()
+	selectedPrinter := printerStatus.SelectedName
+	out, err := exec.Command("lpstat", "-W", "not-completed", "-o").CombinedOutput()
 	if err != nil {
 		// lpstat returns exit code 1 when there are no jobs — treat as empty
-		writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Jobs: []QueueJob{}})
+		writeJSON(w, http.StatusOK, QueueResponse{
+			Status:     "ok",
+			Printer:    selectedPrinter,
+			QueueState: "cleared",
+			Jobs:       []QueueJob{},
+		})
 		return
 	}
 
+	printerState := ""
+	if selectedPrinter != "" {
+		if stateOut, stateErr := exec.Command("lpstat", "-p", selectedPrinter, "-l").CombinedOutput(); stateErr == nil {
+			printerState = parsePrinterStateFromLpstat(string(stateOut))
+		}
+	}
 	jobs := parseLpstatOutput(string(out))
-	writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Jobs: jobs})
+	queueState := normalizeQueueState(printerState, len(jobs))
+	applyQueueJobStates(jobs, queueState)
+	message := queueStateMessage(queueState)
+	writeJSON(w, http.StatusOK, QueueResponse{
+		Status:       "ok",
+		Printer:      selectedPrinter,
+		PrinterState: printerState,
+		QueueState:   queueState,
+		JobCount:     len(jobs),
+		Clearable:    len(jobs) > 0,
+		Message:      message,
+		Jobs:         jobs,
+	})
+}
+
+func (h *Handler) handlePrinterQueueDelete(w http.ResponseWriter) {
+	status, _ := h.printer.Status()
+	selectedPrinter := status.SelectedName
+	if selectedPrinter == "" {
+		writeJSON(w, http.StatusOK, QueueResponse{
+			Status:     "ok",
+			QueueState: "cleared",
+			Jobs:       []QueueJob{},
+		})
+		return
+	}
+	out, err := exec.Command("cancel", "-a", selectedPrinter).CombinedOutput()
+	if err != nil && strings.TrimSpace(string(out)) != "" {
+		writeError(w, http.StatusInternalServerError, "PRINTER_ERROR", "印刷キューの削除に失敗しました: "+strings.TrimSpace(string(out)))
+		return
+	}
+	writeJSON(w, http.StatusOK, QueueResponse{
+		Status:    "ok",
+		Printer:   selectedPrinter,
+		QueueState: "cleared",
+		JobCount:  0,
+		Clearable: false,
+		Message:   "印刷キューを削除しました。",
+		Jobs:      []QueueJob{},
+	})
 }
 
 // parseLpstatOutput parses `lpstat -o` output.
@@ -327,9 +409,74 @@ func parseLpstatOutput(output string) []QueueJob {
 			User:        user,
 			Size:        size,
 			SubmittedAt: submittedAt,
+			State:       "queued",
 		})
 	}
 	return jobs
+}
+
+func parsePrinterStateFromLpstat(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " is idle"):
+			return "idle"
+		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " now printing "):
+			return "printing"
+		case strings.HasPrefix(line, "Status:"):
+			return strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
+		}
+	}
+	return ""
+}
+
+func normalizeQueueState(printerState string, jobCount int) string {
+	if jobCount == 0 {
+		return "cleared"
+	}
+	state := strings.TrimSpace(strings.ToLower(printerState))
+	switch {
+	case state == "printing", strings.Contains(state, "connected to printer"):
+		return "printing"
+	case state == "idle", state == "disabled", state == "":
+		return "stalled"
+	default:
+		return "queued"
+	}
+}
+
+func applyQueueJobStates(jobs []QueueJob, queueState string) {
+	if len(jobs) == 0 {
+		return
+	}
+	switch queueState {
+	case "printing":
+		jobs[0].State = "printing"
+		for i := 1; i < len(jobs); i++ {
+			jobs[i].State = "queued"
+		}
+	case "stalled":
+		for i := range jobs {
+			jobs[i].State = "stalled"
+		}
+	case "queued":
+		for i := range jobs {
+			jobs[i].State = "queued"
+		}
+	}
+}
+
+func queueStateMessage(queueState string) string {
+	switch queueState {
+	case "printing":
+		return "印刷ジョブは送信済みです。プリンタの排紙完了を待っています。"
+	case "stalled":
+		return "印刷キューが残っています。プリンタの復帰待ち、またはキュー停滞の可能性があります。"
+	case "queued":
+		return "印刷ジョブはキューに入っています。状態を確認してください。"
+	default:
+		return ""
+	}
 }
 
 // HandlePrinterTest handles POST /printer/test.
@@ -396,11 +543,7 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		}
 	}
 
-	// Normalize field aliases: storageMethod → storageTemperature
-	if req.Data["storageTemperature"] == "" && req.Data["storageMethod"] != "" {
-		req.Data["storageTemperature"] = req.Data["storageMethod"]
-	}
-
+	req.Data = printer.NormalizeRequestData(req.Data)
 	required := printer.RequiredFields(req.Template)
 	var missing []string
 	for _, f := range required {
@@ -424,54 +567,8 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 		}
 	}
 
-	data := printer.LabelData{
-		Template:               req.Template,
-		Copies:                 copies,
-		ProductName:            req.Data["productName"],
-		ProductQuantity:        req.Data["productQuantity"],
-		DeadlineDate:           req.Data["deadlineDate"],
-		StorageTemperature:     req.Data["storageTemperature"],
-		IndividualNumber:       req.Data["individualNumber"],
-		CaptureLocation:        req.Data["captureLocation"],
-		QRCode:                 req.Data["qrCode"],
-		ProductIngredient:      req.Data["productIngredient"],
-		NutritionUnit:          req.Data["nutritionUnit"],
-		CaloriesQuantity:       req.Data["caloriesQuantity"],
-		ProteinQuantity:        req.Data["proteinQuantity"],
-		FatQuantity:            req.Data["fatQuantity"],
-		CarbohydratesQuantity:  req.Data["carbohydratesQuantity"],
-		SaltEquivalentQuantity: req.Data["saltEquivalentQuantity"],
-		AttentionText:          req.Data["attentionText"],
-		FacilityName:           req.Data["facilityName"],
-		Species:                req.Data["species"],
-		Sex:                    req.Data["sex"],
-		ReceivingDate:          req.Data["receivingDate"],
-		Ingredient:             req.Data["ingredient"],
-		LogoFile:               h.resolveLogoField(req.Data["logoFile"]),
-		CertificationMarkFile:  strings.TrimSpace(req.Data["certificationMarkFile"]),
-		ProcessorName:          req.Data["processorName"],
-		ProcessorLocation:      req.Data["processorLocation"],
-	}
-
-	// Apply defaults from config if not provided by client.
-	if strings.TrimSpace(data.ProcessorName) == "" {
-		data.ProcessorName = h.processorName
-	}
-	if strings.TrimSpace(data.ProcessorLocation) == "" {
-		data.ProcessorLocation = h.processorLocation
-	}
-	if h.captureLocation != "" {
-		data.CaptureLocation = h.captureLocation
-	}
-
+	data := printer.BuildLabelDataFromMap(req.Template, copies, req.Data, h.assetsDir)
 	return &data, 0, nil
-}
-
-func (h *Handler) resolveLogoField(input string) string {
-	if trimmed := strings.TrimSpace(input); trimmed != "" {
-		return trimmed
-	}
-	return printer.DefaultLogoFile(h.assetsDir)
 }
 
 // classifyScaleError maps scale errors to error codes and Japanese messages.

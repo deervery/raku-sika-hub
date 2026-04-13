@@ -10,17 +10,20 @@ type Request struct {
 type PrintRequest struct {
 	Type      string            `json:"type"`
 	RequestID string            `json:"requestId,omitempty"`
-	Template  string            `json:"template"`  // traceable, non_traceable, processed, pet
-	Copies    int               `json:"copies"`    // 1-30
-	Data      map[string]string `json:"data"`      // label field values
+	Template  string            `json:"template"` // traceable, non_traceable, processed, pet
+	Copies    int               `json:"copies"`   // 1-30
+	Data      map[string]string `json:"data"`     // label field values
 }
 
 // PrintOKResponse is sent when a label print succeeds.
 type PrintOKResponse struct {
-	Type      string `json:"type"`
-	RequestID string `json:"requestId,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Copies    int    `json:"copies"`
+	Type       string `json:"type"`
+	RequestID  string `json:"requestId,omitempty"`
+	Status     string `json:"status,omitempty"`
+	PrintState string `json:"printState,omitempty"`
+	JobID      string `json:"jobId,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Copies     int    `json:"copies"`
 }
 
 // PrintErrorResponse is sent when a label print fails.
@@ -96,6 +99,24 @@ type PrintTestErrorResponse struct {
 	Type      string `json:"type"`
 	RequestID string `json:"requestId,omitempty"`
 	Message   string `json:"message"`
+}
+
+// PrintProgressEvent is broadcast to all clients when a print job completes or fails.
+type PrintProgressEvent struct {
+	Type     string `json:"type"`              // "print_progress"
+	Status   string `json:"status"`            // "done" | "pending" | "failed"
+	Template string `json:"template"`          // テンプレートID
+	Copies   int    `json:"copies"`            // 印刷部数
+	JobID    string `json:"jobId,omitempty"`   // CUPS job id
+	Message  string `json:"message,omitempty"` // status details
+	Error    string `json:"error,omitempty"`   // エラーメッセージ（失敗時のみ）
+}
+
+// PrinterStatusEvent is broadcast to all clients when printer connection state changes.
+type PrinterStatusEvent struct {
+	Type             string `json:"type"` // "printer_status"
+	PrinterConnected bool   `json:"printerConnected"`
+	PrinterName      string `json:"printerName"`
 }
 
 // Error codes.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/deervery/raku-sika-hub/internal/config"
 	"github.com/deervery/raku-sika-hub/internal/logging"
@@ -207,5 +208,74 @@ func TestZero_Success(t *testing.T) {
 	err := client.Zero(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStart_ConnectsImmediately(t *testing.T) {
+	mock := newMockPort("ST,+00000.00  kg\r\n")
+	statusCh := make(chan bool, 10)
+	cfg := config.Default()
+	cfg.Port = "/dev/ttyTEST"
+
+	client := NewClient(cfg, testLogger(t), func(connected bool, port string) {
+		statusCh <- connected
+	})
+	client.openPort = func(name string, cfg config.Config) (Port, error) {
+		return mock, nil
+	}
+	client.reconnect = 10 * time.Second
+	client.watchdog = 10 * time.Second
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client.Start(ctx)
+	defer client.Stop()
+
+	select {
+	case connected := <-statusCh:
+		if !connected {
+			t.Fatalf("expected immediate connected=true callback")
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatalf("expected immediate connection callback")
+	}
+}
+
+func TestWatchdog_DetectsDisconnect(t *testing.T) {
+	mock := newMockPort("ST,+00000.00  kg\r\n")
+	statusCh := make(chan bool, 10)
+	cfg := config.Default()
+	cfg.Port = "/dev/ttyTEST"
+
+	client := NewClient(cfg, testLogger(t), func(connected bool, port string) {
+		statusCh <- connected
+	})
+	client.openPort = func(name string, cfg config.Config) (Port, error) {
+		return mock, nil
+	}
+	client.reconnect = 10 * time.Second
+	client.watchdog = 30 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client.Start(ctx)
+	defer client.Stop()
+
+	select {
+	case connected := <-statusCh:
+		if !connected {
+			t.Fatalf("expected first callback to be connected=true")
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatalf("expected initial connected callback")
+	}
+
+	select {
+	case connected := <-statusCh:
+		if connected {
+			t.Fatalf("expected watchdog disconnect callback connected=false")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected watchdog disconnect callback")
 	}
 }

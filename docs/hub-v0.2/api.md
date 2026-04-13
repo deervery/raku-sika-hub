@@ -54,6 +54,12 @@ Base URL: `http://<host>:19800`
 | `scanner.connected` | bool | バーコードリーダーが接続中か |
 | `scanner.device` | string | evdevデバイスパス（未接続時は空） |
 
+補足:
+
+- `printer.connected=true` は CUPS 上でプリンタ名を解決できることを表す
+- プリンタ本体が sleep 中でも `true` のままのことがある
+- 実際に印字が進行しているかは `/printer/queue` と `print_progress` を参照する
+
 ---
 
 ## GET /version
@@ -172,8 +178,8 @@ Base URL: `http://<host>:19800`
     "deadlineDate": "2024-06-15",
     "storageTemperature": "-18℃以下",
     "qrCode": "https://example.com/t/abc123/def456",
-    "facilityName": "○○ジビエ加工施設",
-    "ingredient": "シカ肉（北海道産）"
+    "companyBlock": "株式会社マノワ\n北海道札幌市...\nTEL: 011-000-0000",
+    "facilityBlock": "マノワ加工所\n北海道函館市...\nTEL: 0138-000-0000"
   }
 }
 ```
@@ -202,6 +208,8 @@ Base URL: `http://<host>:19800`
 | `individualNumber` | o | - | 個体識別番号 |
 | `captureLocation` | - | - | 捕獲場所 |
 | `qrCode` | - | - | QRコードURL |
+| `companyBlock` | - | - | 加工者欄に入れる複数行テキスト |
+| `facilityBlock` | - | - | 加工所欄に入れる複数行テキスト |
 | `facilityName` | - | - | 加工施設名 |
 | `ingredient` | - | - | 原材料 |
 | `productIngredient` | - | - | 原材料名（加工/ペット用） |
@@ -213,15 +221,23 @@ Base URL: `http://<host>:19800`
 | `saltEquivalentQuantity` | - | - | 食塩相当量 |
 | `attentionText` | - | - | 注意書き |
 
+`companyBlock` / `facilityBlock` が正規入力。Hub は環境変数で印刷データを補完しない。
+
 ### レスポンス `200 OK`
 
 ```json
 {
   "status": "ok",
+  "printState": "pending",
+  "jobId": "Brother_QL_820NWB_USB-17",
   "copies": 2,
-  "message": "印刷完了"
+  "message": "印刷ジョブは送信済みですが、プリンタの復帰待ちです。"
 }
 ```
+
+- `printState: 'done'` — ジョブが速やかに消化された
+- `printState: 'pending'` — CUPS キュー投入済みだが、まだ印字確認できない
+- `jobId` — CUPS ジョブ ID。`pending` 時のキュー確認に使う
 
 ### エラー `400 Bad Request`
 
@@ -275,6 +291,48 @@ Content-Type: image/png
 ### エラー
 
 `/printer/print` と同一のプリンタエラーコード体系。
+
+---
+
+## GET /printer/queue
+
+現在の CUPS キュー状態を返す。
+
+### レスポンス `200 OK`
+
+```json
+{
+  "status": "ok",
+  "printer": "Brother_QL_820NWB_USB",
+  "printerState": "idle",
+  "queueState": "stalled",
+  "jobCount": 1,
+  "clearable": true,
+  "message": "印刷キューが残っています。プリンタの復帰待ち、またはキュー停滞の可能性があります。",
+  "jobs": [
+    {
+      "id": "Brother_QL_820NWB_USB-17",
+      "printer": "Brother QL 820NWB USB",
+      "user": "rakusika",
+      "size": "104448",
+      "submittedAt": "Sun Apr 12 22:37:10 2026",
+      "state": "stalled"
+    }
+  ]
+}
+```
+
+- `queueState`
+  - `cleared` — キューなし
+  - `queued` — キューあり、進行待ち
+  - `printing` — 印字進行中
+  - `stalled` — キューは残っているが進行が見えず、復帰待ちまたは停滞
+- `printerState` は raw な CUPS 状態文字列
+- `jobs[].state` は UI 向け正規化状態
+
+## DELETE /printer/queue
+
+選択プリンタの CUPS キューを全削除する。
 
 ---
 

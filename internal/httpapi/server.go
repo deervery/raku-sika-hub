@@ -12,15 +12,22 @@ import (
 // Server is the HTTP REST API server.
 type Server struct {
 	handler    *Handler
+	wsRoutes   RouteRegistrar
 	httpSrv    *http.Server
 	logger     *logging.Logger
 	listenAddr string
 }
 
+// RouteRegistrar mounts extra routes onto the HTTP mux.
+type RouteRegistrar interface {
+	RegisterRoutes(mux *http.ServeMux)
+}
+
 // NewServer creates a new HTTP API server.
-func NewServer(handler *Handler, logger *logging.Logger, listenAddr string) *Server {
+func NewServer(handler *Handler, wsRoutes RouteRegistrar, logger *logging.Logger, listenAddr string) *Server {
 	return &Server{
 		handler:    handler,
+		wsRoutes:   wsRoutes,
 		logger:     logger,
 		listenAddr: listenAddr,
 	}
@@ -40,6 +47,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/printer/test", s.handler.HandlePrinterTest)
 	mux.HandleFunc("/printer/queue", s.handler.HandlePrinterQueue)
 	mux.HandleFunc("/scanner/scan", s.handler.HandleScannerScan)
+	if s.wsRoutes != nil {
+		s.wsRoutes.RegisterRoutes(mux)
+	}
 
 	// Apply middleware: CORS → LAN restriction → routes
 	var handler http.Handler = mux

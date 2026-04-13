@@ -55,3 +55,50 @@ func TestHandleScannerScan_NotConnected(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 }
+
+func TestParseLpstatOutput(t *testing.T) {
+	jobs := parseLpstatOutput("Brother_QL_820NWB_USB-8 rakusika 104448 Sun Apr 12 22:37:10 2026\n")
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].ID != "Brother_QL_820NWB_USB-8" {
+		t.Fatalf("unexpected job id %q", jobs[0].ID)
+	}
+	if jobs[0].State != "queued" {
+		t.Fatalf("unexpected state %q", jobs[0].State)
+	}
+}
+
+func TestParsePrinterStateFromLpstat(t *testing.T) {
+	if got := parsePrinterStateFromLpstat("printer Brother_QL_820NWB_USB now printing Brother_QL_820NWB_USB-8.  enabled since ..."); got != "printing" {
+		t.Fatalf("expected printing, got %q", got)
+	}
+	if got := parsePrinterStateFromLpstat("printer Brother_QL_820NWB_USB is idle.  enabled since ..."); got != "idle" {
+		t.Fatalf("expected idle, got %q", got)
+	}
+}
+
+func TestNormalizeQueueState(t *testing.T) {
+	if got := normalizeQueueState("printing", 1); got != "printing" {
+		t.Fatalf("expected printing, got %q", got)
+	}
+	if got := normalizeQueueState("idle", 1); got != "stalled" {
+		t.Fatalf("expected stalled, got %q", got)
+	}
+	if got := normalizeQueueState("", 0); got != "cleared" {
+		t.Fatalf("expected cleared, got %q", got)
+	}
+}
+
+func TestApplyQueueJobStates(t *testing.T) {
+	jobs := []QueueJob{{ID: "job-1"}, {ID: "job-2"}}
+	applyQueueJobStates(jobs, "printing")
+	if jobs[0].State != "printing" || jobs[1].State != "queued" {
+		t.Fatalf("unexpected states: %+v", jobs)
+	}
+
+	applyQueueJobStates(jobs, "stalled")
+	if jobs[0].State != "stalled" || jobs[1].State != "stalled" {
+		t.Fatalf("unexpected stalled states: %+v", jobs)
+	}
+}

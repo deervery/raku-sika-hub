@@ -17,6 +17,7 @@ const (
 	maxWeighRetries = 10
 	weighRetryDelay = 500 * time.Millisecond
 	reconnectDelay  = 3 * time.Second
+	watchdogDelay   = 1 * time.Second
 	commandTimeout  = 3 * time.Second
 	weighCacheTTL   = 500 * time.Millisecond
 )
@@ -43,6 +44,8 @@ type Client struct {
 	logger    *logging.Logger
 	cancel    context.CancelFunc
 	done      chan struct{}
+	reconnect time.Duration
+	watchdog  time.Duration
 
 	// Weigh cache: avoids hitting the serial port for rapid successive requests.
 	cacheMu     sync.Mutex
@@ -53,10 +56,12 @@ type Client struct {
 // NewClient creates a new scale Client.
 func NewClient(cfg config.Config, logger *logging.Logger, onStatus StatusFunc) *Client {
 	return &Client{
-		cfg:      cfg,
-		onStatus: onStatus,
-		openPort: nil,
-		logger:   logger,
+		cfg:       cfg,
+		onStatus:  onStatus,
+		openPort:  nil,
+		logger:    logger,
+		reconnect: reconnectDelay,
+		watchdog:  watchdogDelay,
 	}
 }
 
@@ -249,8 +254,12 @@ func (c *Client) sendCommandLocked(cmd string) (string, error) {
 func (c *Client) reconnectLoop(ctx context.Context) {
 	defer close(c.done)
 
-	reconnect := time.NewTicker(reconnectDelay)
+	c.tryConnect()
+
+	reconnect := time.NewTicker(c.reconnect)
 	defer reconnect.Stop()
+	watchdog := time.NewTicker(c.watchdog)
+	defer watchdog.Stop()
 
 	for {
 		select {
@@ -260,8 +269,30 @@ func (c *Client) reconnectLoop(ctx context.Context) {
 			if !c.connected.Load() {
 				c.tryConnect()
 			}
+		case <-watchdog.C:
+			if c.connected.Load() {
+				c.watchdogCheck()
+			}
 		}
 	}
+}
+
+func (c *Client) watchdogCheck() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected.Load() || c.port == nil || c.reader == nil {
+		return
+	}
+
+	_, err := c.sendCommandLocked(CmdWeigh)
+	if err == nil {
+		return
+	}
+
+	c.logger.Warn("scale watchdog failed on %s: %v", c.PortName(), err)
+	c.closePortLocked()
+	c.setStatusLocked(false, "")
 }
 
 func (c *Client) tryConnect() {

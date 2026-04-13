@@ -29,6 +29,12 @@ func TestBuildTableEntriesTraceable(t *testing.T) {
 	if _, ok := findEntry(entries, "金属探知機"); !ok {
 		t.Fatalf("metal detector row missing")
 	}
+	if _, ok := findEntry(entries, "加工者"); !ok {
+		t.Fatalf("traceable entries missing 加工者")
+	}
+	if _, ok := findEntry(entries, "加工所"); !ok {
+		t.Fatalf("traceable entries missing 加工所")
+	}
 }
 
 func TestBuildTableEntriesProcessed(t *testing.T) {
@@ -51,6 +57,51 @@ func TestBuildTableEntriesProcessed(t *testing.T) {
 	}
 	if _, ok := findEntry(entries, "栄養成分表示（100gあたり）"); ok {
 		t.Fatalf("nutrition heading should not be included for processed")
+	}
+}
+
+func TestBuildTableEntriesTraceable_PrefersBlocks(t *testing.T) {
+	data := LabelData{
+		Template:           "traceable",
+		Locale:             "en",
+		ProductName:        "Venison",
+		ProductQuantity:    "100 g",
+		DeadlineDate:       "April 30, 2026",
+		StorageTemperature: "Keep frozen",
+		IndividualNumber:   "IND-0001",
+		CaptureLocation:    "Hakodate",
+		CompanyBlock:       "Manoir Foods\n1-2-3 Sapporo\nTEL: 011-000-0000",
+		FacilityBlock:      "Plant A\n4-5-6 Hakodate\nTEL: 0138-000-000",
+		ProcessorName:      "legacy name",
+		ProcessorLocation:  "legacy location",
+	}
+
+	entries := buildTableEntries(data)
+	if entry, ok := findEntry(entries, "Processor"); !ok || entry.value != padBlockToMinLines(data.CompanyBlock, 3) {
+		t.Fatalf("Processor block missing or wrong: %+v", entry)
+	}
+	if entry, ok := findEntry(entries, "Facility"); !ok || entry.value != padBlockToMinLines(data.FacilityBlock, 3) {
+		t.Fatalf("Facility block missing or wrong: %+v", entry)
+	}
+}
+
+func TestBuildTableEntriesTraceable_EnglishCaptions(t *testing.T) {
+	data := LabelData{
+		Template:           "traceable",
+		Locale:             "en",
+		ProductName:        "Venison",
+		ProductQuantity:    "100 g",
+		DeadlineDate:       "April 30, 2026",
+		StorageTemperature: "Keep frozen",
+		IndividualNumber:   "IND-0001",
+		CaptureLocation:    "Hakodate",
+	}
+
+	entries := buildTableEntries(data)
+	for _, label := range []string{"Product Name", "Capture Location", "Net Weight", "Use By", "Storage", "Metal Detection", "Individual ID"} {
+		if _, ok := findEntry(entries, label); !ok {
+			t.Fatalf("missing english caption %q", label)
+		}
 	}
 }
 
@@ -102,6 +153,16 @@ func TestValidTemplates(t *testing.T) {
 		if ValidTemplates[key] {
 			t.Errorf("expected %q to be invalid", key)
 		}
+	}
+}
+
+func TestFitLines_ClampsAtMinSize(t *testing.T) {
+	lines, size := fitLines("Manoir Foods\n1-2-3 Sapporo\nTel: 011-000-0000", 9.5, 8.0, 2, 120)
+	if size != 8.0 {
+		t.Fatalf("expected min size 8.0, got %.1f", size)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected clamped 2 lines, got %d", len(lines))
 	}
 }
 

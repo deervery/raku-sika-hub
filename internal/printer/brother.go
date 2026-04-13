@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
@@ -18,6 +19,29 @@ type PrinterStatus struct {
 	DefaultName    string
 	Available      []string
 	Source         string
+}
+
+type PrintResult struct {
+	State        string
+	JobID        string
+	Message      string
+	PrinterState string
+	JobState     string
+}
+
+type QueueSnapshot struct {
+	PrinterName  string
+	PrinterState string
+	QueueState   string
+	Jobs         []QueueJobStatus
+}
+
+type QueueJobStatus struct {
+	ID          string
+	User        string
+	Size        string
+	SubmittedAt string
+	State       string
 }
 
 // Brother manages printing to a Brother label printer via CUPS lp command.
@@ -154,10 +178,10 @@ func (b *Brother) TestPrint() error {
 }
 
 // PrintLabel renders a label image and sends it to the printer.
-func (b *Brother) PrintLabel(data LabelData) error {
+func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 	status, err := b.Status()
 	if err != nil {
-		return fmt.Errorf("PRINTER_ERROR: CUPS の状態確認に失敗しました: %s", err)
+		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: CUPS の状態確認に失敗しました: %s", err)
 	}
 	b.logger.Info(
 		"print label requested: template=%s, copies=%d, product=%s, configured=%q, selected=%q, source=%s, available=%s",
@@ -171,18 +195,18 @@ func (b *Brother) PrintLabel(data LabelData) error {
 	)
 
 	if err := validateStatus(status); err != nil {
-		return err
+		return PrintResult{}, err
 	}
 
 	if b.renderer == nil {
-		return fmt.Errorf("PRINTER_ERROR: ラベルレンダラが初期化されていません。" +
+		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: ラベルレンダラが初期化されていません。" +
 			"日本語フォントをインストールしてください: sudo apt-get install fonts-noto-cjk")
 	}
 
 	// Render the label image.
 	result, err := b.renderer.Render(data)
 	if err != nil {
-		return fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
+		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
 	}
 	defer os.Remove(result.Path)
 
@@ -203,15 +227,26 @@ func (b *Brother) PrintLabel(data LabelData) error {
 		"-o", "CutMedia=Auto",
 	}
 	args = append(args, result.Path)
-	cmd := exec.Command("lp", args...)
-	out, err := cmd.CombinedOutput()
+	out, err := exec.Command("lp", args...).CombinedOutput()
 	b.logger.Info("lp output (label print, printer=%q): %s", status.SelectedName, strings.TrimSpace(string(out)))
 	if err != nil {
-		return classifyLpError(string(out), status)
+		return PrintResult{}, classifyLpError(string(out), status)
+	}
+	jobID := parseSubmittedJobID(string(out))
+	if jobID != "" {
+		printResult, err := b.verifySubmittedJob(status.SelectedName, jobID, 12*time.Second)
+		if err != nil {
+			return PrintResult{}, err
+		}
+		b.logger.Info("label print state: job=%s state=%s printer_state=%s", printResult.JobID, printResult.State, printResult.PrinterState)
+		return printResult, nil
 	}
 
 	b.logger.Info("label printed: %d copies via lp (printer=%q)", copies, status.SelectedName)
-	return nil
+	return PrintResult{
+		State:   "done",
+		Message: "印刷ジョブを送信しました。",
+	}, nil
 }
 
 // CanRenderLabels reports whether the label renderer is available.
@@ -257,6 +292,154 @@ func validateStatus(status PrinterStatus) error {
 		return printerConfigError(status)
 	}
 	return nil
+}
+
+func parseSubmittedJobID(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+	const marker = "request id is "
+	idx := strings.Index(output, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := output[idx+len(marker):]
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(fields[0])
+}
+
+func (b *Brother) verifySubmittedJob(printerName, jobID string, timeout time.Duration) (PrintResult, error) {
+	deadline := time.Now().Add(timeout)
+	lastState := ""
+	lastQueueState := ""
+	for time.Now().Before(deadline) {
+		snapshot, err := readQueueSnapshot(printerName)
+		if err != nil {
+			b.logger.Warn("queue poll failed for %s: %v", jobID, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		job, ok := snapshot.findJob(jobID)
+		if !ok {
+			return PrintResult{
+				State:        "done",
+				JobID:        jobID,
+				Message:      "印刷ジョブを送信しました。",
+				PrinterState: snapshot.PrinterState,
+				JobState:     "cleared",
+			}, nil
+		}
+		lastState = job.State
+		lastQueueState = snapshot.QueueState
+		b.logger.Info("queue poll: job=%s queue_state=%s printer_state=%s job_state=%s", jobID, snapshot.QueueState, snapshot.PrinterState, job.State)
+		time.Sleep(2 * time.Second)
+	}
+	snapshot, err := readQueueSnapshot(printerName)
+	if err != nil {
+		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: 印刷キューの確認に失敗しました: %w", err)
+	}
+	if job, ok := snapshot.findJob(jobID); ok {
+		lastState = job.State
+	}
+	if snapshot.QueueState == "" {
+		snapshot.QueueState = lastQueueState
+	}
+	message := "印刷ジョブは送信済みですが、プリンタの復帰待ちです。"
+	if snapshot.QueueState == "stalled" {
+		message = "印刷ジョブは送信済みですが、キューが停滞しています。プリンタ状態とキューを確認してください。"
+	}
+	return PrintResult{
+		State:        "pending",
+		JobID:        jobID,
+		Message:      message,
+		PrinterState: snapshot.PrinterState,
+		JobState:     lastState,
+	}, nil
+}
+
+func readQueueSnapshot(printerName string) (QueueSnapshot, error) {
+	out, err := exec.Command("lpstat", "-W", "not-completed", "-o", printerName).CombinedOutput()
+	if err != nil && strings.TrimSpace(string(out)) != "" {
+		return QueueSnapshot{}, fmt.Errorf("lpstat queue failed: %s", strings.TrimSpace(string(out)))
+	}
+	jobs := parseQueueJobs(string(out))
+	printerState := ""
+	if stateOut, stateErr := exec.Command("lpstat", "-p", printerName, "-l").CombinedOutput(); stateErr == nil {
+		printerState = parsePrinterState(string(stateOut))
+	}
+	return QueueSnapshot{
+		PrinterName:  printerName,
+		PrinterState: printerState,
+		QueueState:   normalizePrinterQueueState(printerState, len(jobs)),
+		Jobs:         jobs,
+	}, nil
+}
+
+func (q QueueSnapshot) findJob(jobID string) (QueueJobStatus, bool) {
+	for _, job := range q.Jobs {
+		if job.ID == jobID {
+			return job, true
+		}
+	}
+	return QueueJobStatus{}, false
+}
+
+func parseQueueJobs(output string) []QueueJobStatus {
+	var jobs []QueueJobStatus
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		jobs = append(jobs, QueueJobStatus{
+			ID:          fields[0],
+			User:        fields[1],
+			Size:        fields[2],
+			SubmittedAt: strings.Join(fields[3:], " "),
+			State:       "queued",
+		})
+	}
+	return jobs
+}
+
+func normalizePrinterQueueState(printerState string, jobCount int) string {
+	if jobCount == 0 {
+		return "cleared"
+	}
+	state := strings.TrimSpace(strings.ToLower(printerState))
+	switch {
+	case state == "printing", strings.Contains(state, "connected to printer"):
+		return "printing"
+	case state == "idle", state == "disabled", state == "":
+		return "stalled"
+	default:
+		return "queued"
+	}
+}
+
+func parsePrinterState(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " is idle"):
+			return "idle"
+		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " now printing "):
+			return "printing"
+		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " disabled"):
+			return "disabled"
+		case strings.HasPrefix(line, "Status:"):
+			return strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
+		}
+	}
+	return ""
 }
 
 func printerConfigError(status PrinterStatus) error {

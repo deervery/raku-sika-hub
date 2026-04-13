@@ -38,6 +38,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", s.handler.HandleHealth)
+	mux.HandleFunc("/ws/status", s.handler.HandleWSStatus)
 	mux.HandleFunc("/version", s.handler.HandleVersion)
 	mux.HandleFunc("/scale/weigh", s.handler.HandleScaleWeigh)
 	mux.HandleFunc("/scale/tare", s.handler.HandleScaleTare)

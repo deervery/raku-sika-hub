@@ -62,6 +62,16 @@ type ScannerHealth struct {
 	Device    string `json:"device,omitempty"`
 }
 
+// WSStatusResponse is the structured HTTP fallback response for GET /ws/status.
+type WSStatusResponse struct {
+	Connected         bool     `json:"connected"`
+	Port              string   `json:"port"`
+	PrinterConnected  bool     `json:"printerConnected"`
+	ConfiguredPrinter string   `json:"configuredPrinter"`
+	SelectedPrinter   string   `json:"selectedPrinter"`
+	AvailablePrinters []string `json:"availablePrinters"`
+}
+
 // VersionResponse is returned by GET /version.
 type VersionResponse struct {
 	Version   string `json:"version"`

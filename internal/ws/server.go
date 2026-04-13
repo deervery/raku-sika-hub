@@ -129,20 +129,6 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/ws/health", s.handleWS)
 	mux.HandleFunc("/ws", s.handleWS)
-	mux.HandleFunc("/ws/status", s.handleHealth)
-}
-
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	snapshot := s.handler.SnapshotHealth()
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
-		s.logger.Warn("health encode: %v", err)
-	}
 }
 
 // Stop gracefully shuts down the HTTP server.

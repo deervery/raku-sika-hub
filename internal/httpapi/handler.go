@@ -106,6 +106,30 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// HandleWSStatus handles GET /ws/status as an HTTP snapshot endpoint.
+// This endpoint is always available, even when ENABLE_WEBSOCKET=false.
+func (h *Handler) HandleWSStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	status, err := h.printer.Status()
+	if err != nil {
+		h.logger.Warn("printer status snapshot failed: %v", err)
+	}
+
+	resp := WSStatusResponse{
+		Connected:         h.scaleClient.Connected(),
+		Port:              h.scaleClient.PortName(),
+		PrinterConnected:  err == nil && printerReadyForStatus(status),
+		ConfiguredPrinter: status.ConfiguredName,
+		SelectedPrinter:   status.SelectedName,
+		AvailablePrinters: status.Available,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // HandleVersion handles GET /version.
 func (h *Handler) HandleVersion(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -569,6 +593,21 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 
 	data := printer.BuildLabelDataFromMap(req.Template, copies, req.Data, h.assetsDir)
 	return &data, 0, nil
+}
+
+func printerReadyForStatus(status printer.PrinterStatus) bool {
+	if status.SelectedName == "" {
+		return false
+	}
+	if status.Source != "configured" {
+		return true
+	}
+	for _, name := range status.Available {
+		if name == status.SelectedName {
+			return true
+		}
+	}
+	return false
 }
 
 // classifyScaleError maps scale errors to error codes and Japanese messages.

@@ -164,6 +164,9 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			lines: warningLines(data.Locale),
 			qrURL: data.QRCode,
 		})
+	} else if data.Template == "processed" || data.Template == "pet" {
+		// Processed/pet: no image section, just warning text
+		rows = append(rows, textRow{value: warningText(data.Locale), fontSize: fontSize})
 	} else {
 		rows = append(rows,
 			textRow{value: warningText(data.Locale), fontSize: fontSize},
@@ -641,13 +644,38 @@ func buildTableEntries(data LabelData) []tableEntry {
 		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 		return entries
 	case "processed":
-		return []tableEntry{
+		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "名称", "Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "原材料名", "Ingredients"), value: trim(data.ProductIngredient)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
 			{label: localizedCaption(data.Locale, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
+		if trim(data.NutritionUnit) != "" {
+			entries = append(entries, tableEntry{label: trim(data.NutritionUnit), value: ""})
+			nutrition := []string{}
+			if v := trim(data.CaloriesQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "熱量", "Energy")+" "+v) }
+			if v := trim(data.ProteinQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "たんぱく質", "Protein")+" "+v) }
+			if v := trim(data.FatQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "脂質", "Fat")+" "+v) }
+			if v := trim(data.CarbohydratesQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "炭水化物", "Carbs")+" "+v) }
+			if v := trim(data.SaltEquivalentQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v) }
+			if len(nutrition) > 0 {
+				entries = append(entries, tableEntry{label: "", value: strings.Join(nutrition, " / ")})
+			}
+		}
+		if v := trim(data.IsHeatedMeatProducts); v != "" && v != "false" {
+			entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "食肉製品区分", "Meat Product"), value: v})
+		}
+		if entry, ok := companyEntry(data); ok {
+			entries = append(entries, entry)
+		}
+		if entry, ok := facilityEntry(data); ok {
+			entries = append(entries, entry)
+		}
+		if v := trim(data.AttentionText); v != "" {
+			entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "注意事項", "Note"), value: v})
+		}
+		return entries
 	case "pet":
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
@@ -655,10 +683,12 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
+		if entry, ok := companyEntry(data); ok {
+			entries = append(entries, entry)
+		}
 		if entry, ok := facilityEntry(data); ok {
 			entries = append(entries, entry)
 		}
-		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 		return entries
 	}
 	entries := []tableEntry{

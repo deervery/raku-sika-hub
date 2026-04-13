@@ -29,6 +29,9 @@ type LabelData struct {
 	CompanyBlock  string `json:"companyBlock"`  // 加工者情報ブロック（name/address/phone、改行区切り）
 	FacilityBlock string `json:"facilityBlock"` // 加工所情報ブロック（name/address/phone、改行区切り）
 
+	// Processed-specific
+	IsHeatedMeatProducts string `json:"isHeatedMeatProducts"` // 加熱食肉製品区分
+
 	// Misc
 	AttentionText         string `json:"attentionText"`         // 注意書き
 	FacilityName          string `json:"facilityName"`          // 加工施設名

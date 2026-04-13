@@ -321,7 +321,12 @@ func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
 	out, err := exec.Command("lpstat", "-W", "not-completed", "-o").CombinedOutput()
 	if err != nil {
 		// lpstat returns exit code 1 when there are no jobs — treat as empty
-		writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Printer: selectedPrinter, Jobs: []QueueJob{}})
+		writeJSON(w, http.StatusOK, QueueResponse{
+			Status:     "ok",
+			Printer:    selectedPrinter,
+			QueueState: "cleared",
+			Jobs:       []QueueJob{},
+		})
 		return
 	}
 
@@ -332,14 +337,14 @@ func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
 		}
 	}
 	jobs := parseLpstatOutput(string(out))
-	message := ""
-	if len(jobs) > 0 && (printerState == "printing" || strings.Contains(printerState, "Connected to printer")) {
-		message = "印刷ジョブは送信済みです。プリンタの復帰または排紙完了を待っています。"
-	}
+	queueState := normalizeQueueState(printerState, len(jobs))
+	applyQueueJobStates(jobs, queueState)
+	message := queueStateMessage(queueState)
 	writeJSON(w, http.StatusOK, QueueResponse{
 		Status:       "ok",
 		Printer:      selectedPrinter,
 		PrinterState: printerState,
+		QueueState:   queueState,
 		JobCount:     len(jobs),
 		Clearable:    len(jobs) > 0,
 		Message:      message,
@@ -351,7 +356,11 @@ func (h *Handler) handlePrinterQueueDelete(w http.ResponseWriter) {
 	status, _ := h.printer.Status()
 	selectedPrinter := status.SelectedName
 	if selectedPrinter == "" {
-		writeJSON(w, http.StatusOK, QueueResponse{Status: "ok", Jobs: []QueueJob{}})
+		writeJSON(w, http.StatusOK, QueueResponse{
+			Status:     "ok",
+			QueueState: "cleared",
+			Jobs:       []QueueJob{},
+		})
 		return
 	}
 	out, err := exec.Command("cancel", "-a", selectedPrinter).CombinedOutput()
@@ -362,6 +371,7 @@ func (h *Handler) handlePrinterQueueDelete(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, QueueResponse{
 		Status:    "ok",
 		Printer:   selectedPrinter,
+		QueueState: "cleared",
 		JobCount:  0,
 		Clearable: false,
 		Message:   "印刷キューを削除しました。",
@@ -418,6 +428,55 @@ func parsePrinterStateFromLpstat(output string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeQueueState(printerState string, jobCount int) string {
+	if jobCount == 0 {
+		return "cleared"
+	}
+	state := strings.TrimSpace(strings.ToLower(printerState))
+	switch {
+	case state == "printing", strings.Contains(state, "connected to printer"):
+		return "printing"
+	case state == "idle", state == "disabled", state == "":
+		return "stalled"
+	default:
+		return "queued"
+	}
+}
+
+func applyQueueJobStates(jobs []QueueJob, queueState string) {
+	if len(jobs) == 0 {
+		return
+	}
+	switch queueState {
+	case "printing":
+		jobs[0].State = "printing"
+		for i := 1; i < len(jobs); i++ {
+			jobs[i].State = "queued"
+		}
+	case "stalled":
+		for i := range jobs {
+			jobs[i].State = "stalled"
+		}
+	case "queued":
+		for i := range jobs {
+			jobs[i].State = "queued"
+		}
+	}
+}
+
+func queueStateMessage(queueState string) string {
+	switch queueState {
+	case "printing":
+		return "印刷ジョブは送信済みです。プリンタの排紙完了を待っています。"
+	case "stalled":
+		return "印刷キューが残っています。プリンタの復帰待ち、またはキュー停滞の可能性があります。"
+	case "queued":
+		return "印刷ジョブはキューに入っています。状態を確認してください。"
+	default:
+		return ""
+	}
 }
 
 // HandlePrinterTest handles POST /printer/test.

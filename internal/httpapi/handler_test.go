@@ -77,3 +77,28 @@ func TestParsePrinterStateFromLpstat(t *testing.T) {
 		t.Fatalf("expected idle, got %q", got)
 	}
 }
+
+func TestNormalizeQueueState(t *testing.T) {
+	if got := normalizeQueueState("printing", 1); got != "printing" {
+		t.Fatalf("expected printing, got %q", got)
+	}
+	if got := normalizeQueueState("idle", 1); got != "stalled" {
+		t.Fatalf("expected stalled, got %q", got)
+	}
+	if got := normalizeQueueState("", 0); got != "cleared" {
+		t.Fatalf("expected cleared, got %q", got)
+	}
+}
+
+func TestApplyQueueJobStates(t *testing.T) {
+	jobs := []QueueJob{{ID: "job-1"}, {ID: "job-2"}}
+	applyQueueJobStates(jobs, "printing")
+	if jobs[0].State != "printing" || jobs[1].State != "queued" {
+		t.Fatalf("unexpected states: %+v", jobs)
+	}
+
+	applyQueueJobStates(jobs, "stalled")
+	if jobs[0].State != "stalled" || jobs[1].State != "stalled" {
+		t.Fatalf("unexpected stalled states: %+v", jobs)
+	}
+}

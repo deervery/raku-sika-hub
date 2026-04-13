@@ -91,6 +91,7 @@ type QueueResponse struct {
 	Status       string     `json:"status"`
 	Printer      string     `json:"printer,omitempty"`
 	PrinterState string     `json:"printerState,omitempty"`
+	QueueState   string     `json:"queueState,omitempty"`
 	JobCount     int        `json:"jobCount"`
 	Clearable    bool       `json:"clearable"`
 	Message      string     `json:"message,omitempty"`

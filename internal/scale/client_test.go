@@ -211,6 +211,34 @@ func TestZero_Success(t *testing.T) {
 	}
 }
 
+func TestHealthCheck_DoesNotTouchSerialWhenConnected(t *testing.T) {
+	mock := newMockPort()
+	client, _ := newTestClient(t, mock)
+
+	if err := client.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case written := <-mock.writtenCh:
+		t.Fatalf("expected no serial write during health check, got %q", written)
+	default:
+	}
+}
+
+func TestWatchdogCheck_DoesNotTouchSerial(t *testing.T) {
+	mock := newMockPort()
+	client, _ := newTestClient(t, mock)
+
+	client.watchdogCheck()
+
+	select {
+	case written := <-mock.writtenCh:
+		t.Fatalf("expected no serial write during watchdog check, got %q", written)
+	default:
+	}
+}
+
 func TestStart_ConnectsImmediately(t *testing.T) {
 	mock := newMockPort("ST,+00000.00  kg\r\n")
 	statusCh := make(chan bool, 10)
@@ -241,7 +269,7 @@ func TestStart_ConnectsImmediately(t *testing.T) {
 	}
 }
 
-func TestWatchdog_DetectsDisconnect(t *testing.T) {
+func TestWatchdog_DoesNotProbeScaleDuringIdle(t *testing.T) {
 	mock := newMockPort("ST,+00000.00  kg\r\n")
 	statusCh := make(chan bool, 10)
 	cfg := config.Default()
@@ -272,10 +300,7 @@ func TestWatchdog_DetectsDisconnect(t *testing.T) {
 
 	select {
 	case connected := <-statusCh:
-		if connected {
-			t.Fatalf("expected watchdog disconnect callback connected=false")
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatalf("expected watchdog disconnect callback")
+		t.Fatalf("expected no watchdog status change, got connected=%v", connected)
+	case <-time.After(200 * time.Millisecond):
 	}
 }

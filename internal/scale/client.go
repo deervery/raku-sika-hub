@@ -217,6 +217,8 @@ func (c *Client) Zero(ctx context.Context) error {
 
 // HealthCheck verifies the scale is still responding.
 func (c *Client) HealthCheck(ctx context.Context) error {
+	_ = ctx
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -224,13 +226,13 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 		return errors.New("not connected")
 	}
 
-	_, err := c.sendCommandLocked(CmdWeigh)
-	if err != nil {
-		c.logger.Warn("health check failed: %v", err)
+	if c.port == nil || c.reader == nil {
+		c.logger.Warn("health check failed: connected but port is nil")
 		c.closePortLocked()
 		c.setStatusLocked(false, "")
-		return fmt.Errorf("PORT_ERROR: %w", err)
+		return errors.New("not connected")
 	}
+
 	return nil
 }
 
@@ -284,21 +286,14 @@ func (c *Client) reconnectLoop(ctx context.Context) {
 }
 
 func (c *Client) watchdogCheck() {
-	c.mu.Lock()
+	if !c.mu.TryLock() {
+		return
+	}
 	defer c.mu.Unlock()
 
 	if !c.connected.Load() || c.port == nil || c.reader == nil {
 		return
 	}
-
-	_, err := c.sendCommandLocked(CmdWeigh)
-	if err == nil {
-		return
-	}
-
-	c.logger.Warn("scale watchdog failed on %s: %v", c.PortName(), err)
-	c.closePortLocked()
-	c.setStatusLocked(false, "")
 }
 
 func (c *Client) tryConnect() {

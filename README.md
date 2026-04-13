@@ -95,6 +95,12 @@ GOOS=linux GOARCH=arm64 go build -o raku-sika-hub .
 scp raku-sika-hub rakusika@raku-sika-hub.local:~/raku-sika-hub/
 ```
 
+Release asset を作る場合（`/version` の metadata 埋め込み込み）:
+
+```bash
+VERSION=v0.3.3 scripts/build-release-arm64.sh raku-sika-hub-linux-arm64
+```
+
 ### Pi への配置メモ
 
 Pi 全体の初期化は [raku-sika-ops](https://github.com/deervery/raku-sika-ops) 側で行う。

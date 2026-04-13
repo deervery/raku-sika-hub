@@ -18,17 +18,13 @@ jobs:
           go-version: '1.24'
 
       - name: Build for Raspberry Pi (ARM64)
-        env:
-          GOOS: linux
-          GOARCH: arm64
         run: |
-          VERSION=${GITHUB_REF_NAME}
-          COMMIT=$(git rev-parse --short HEAD)
-          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" -o raku-sika-hub-linux-arm64
+          VERSION=${GITHUB_REF_NAME} scripts/build-release-arm64.sh raku-sika-hub-linux-arm64
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: raku-sika-hub-linux-arm64
+          files: |
+            raku-sika-hub-linux-arm64
+            raku-sika-hub-linux-arm64.sha256
           generate_release_notes: true

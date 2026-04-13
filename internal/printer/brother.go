@@ -236,6 +236,7 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 		"-d", status.SelectedName,
 		"-n", fmt.Sprintf("%d", copies),
 		"-o", "media=" + media,
+		"-o", "PageSize=" + media,
 		"-o", "CutMedia=Auto",
 	}
 	b.logger.Info("lp args: %s", strings.Join(args, " "))

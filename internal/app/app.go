@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/deervery/raku-sika-hub/internal/config"
@@ -38,6 +40,10 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 	logger, err := logging.New(logging.LogDir(), level)
 	if err != nil {
 		return nil, fmt.Errorf("create logger: %w", err)
+	}
+	if portEnv := strings.TrimSpace(os.Getenv("PORT")); strings.Contains(portEnv, "/") &&
+		strings.TrimSpace(os.Getenv("SCALE_PORT")) == "" {
+		logger.Warn("PORT=%q looks like a serial path, but PORT is HTTP listen-only. Use SCALE_PORT for serial device path.", portEnv)
 	}
 
 	hub := ws.NewHub()

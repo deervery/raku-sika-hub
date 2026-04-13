@@ -190,7 +190,7 @@ PRINTER_NAME=Brother_QL_820NWB_USB
 |-----------|-----------|---------|------|
 | `vid` | `"0403"` | `VID` | FTDI ベンダー ID |
 | `pid` | `"6015"` | `PID` | FTDI プロダクト ID |
-| `port` | `""` (自動検出) | `PORT` | シリアルポートパス |
+| `port` | `""` (自動検出) | `SCALE_PORT` | シリアルポートパス（通常は空で自動検出） |
 | `baudRate` | `2400` | `BAUD_RATE` | ボーレート |
 | `dataBits` | `7` | `DATA_BITS` | データビット |
 | `parity` | `"even"` | `PARITY` | パリティ |
@@ -203,6 +203,11 @@ PRINTER_NAME=Brother_QL_820NWB_USB
 | `listenAddr` | `"0.0.0.0:19800"` | `LISTEN_ADDR` | HTTPサーバーのリッスンアドレス |
 | `logLevel` | `"INFO"` | `LOG_LEVEL` | ログレベル（`ERROR` / `WARN` / `INFO`） |
 | `enableWebSocket` | `false` | `ENABLE_WEBSOCKET` | `/ws/health` WebSocket を有効化 |
+
+補足:
+
+- `PORT` は **HTTP待受ポート専用**（例: `PORT=19800`）
+- scale シリアルポート固定が必要な場合は `SCALE_PORT=/dev/ttyUSB0` を使う
 
 印刷データは API/WS 経由で完全に渡す前提。Hub は `companyBlock` / `facilityBlock` / `captureLocation` を環境変数で補完しない。
 

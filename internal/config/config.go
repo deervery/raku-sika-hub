@@ -82,8 +82,17 @@ func applyEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("PID")); v != "" {
 		cfg.PID = v
 	}
-	if v := strings.TrimSpace(os.Getenv("PORT")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("SCALE_PORT")); v != "" {
 		cfg.Port = v
+	}
+	if v := strings.TrimSpace(os.Getenv("PORT")); v != "" {
+		if _, err := strconv.Atoi(v); err == nil {
+			cfg.ListenAddr = "0.0.0.0:" + v
+		} else if strings.HasPrefix(v, ":") {
+			cfg.ListenAddr = "0.0.0.0" + v
+		} else if strings.Contains(v, ":") {
+			cfg.ListenAddr = v
+		}
 	}
 	if v := strings.TrimSpace(os.Getenv("PARITY")); v != "" {
 		cfg.Parity = v

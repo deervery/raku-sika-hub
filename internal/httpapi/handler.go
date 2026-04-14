@@ -151,6 +151,11 @@ func (h *Handler) HandleScaleWeigh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.scaleClient.Connected() {
+		// Attempt a synchronous reconnect before giving up.
+		// tryConnect verifies serial communication (up to commandTimeout=3s).
+		h.scaleClient.TryConnect()
+	}
+	if !h.scaleClient.Connected() {
 		writeError(w, http.StatusServiceUnavailable, "SCALE_NOT_CONNECTED",
 			"スケールが接続されていません。USBケーブルを確認してください。")
 		return

@@ -17,7 +17,7 @@ const (
 	maxWeighRetries = 10
 	weighRetryDelay = 500 * time.Millisecond
 	reconnectDelay  = 3 * time.Second
-	watchdogDelay   = 1 * time.Second
+	watchdogDelay   = 30 * time.Second // keepalive interval: verify serial is alive
 	commandTimeout  = 3 * time.Second
 	weighCacheTTL   = 500 * time.Millisecond
 )
@@ -88,6 +88,17 @@ func (c *Client) Stop() {
 
 // Connected returns true if the scale port is currently open.
 func (c *Client) Connected() bool {
+	return c.connected.Load()
+}
+
+// TryConnect attempts a single synchronous reconnect.
+// Safe to call concurrently; no-op if already connected.
+// Returns true if connected after the attempt.
+func (c *Client) TryConnect() bool {
+	if c.connected.Load() {
+		return true
+	}
+	c.tryConnect()
 	return c.connected.Load()
 }
 
@@ -293,6 +304,16 @@ func (c *Client) watchdogCheck() {
 
 	if !c.connected.Load() || c.port == nil || c.reader == nil {
 		return
+	}
+
+	// Send a real keepalive to verify the serial port is still responsive.
+	// This detects stale USB-serial connections before the user triggers a weigh.
+	_, err := c.sendCommandLocked(CmdWeigh)
+	if err != nil {
+		c.logger.Warn("watchdog: keepalive failed, marking disconnected: %v", err)
+		c.closePortLocked()
+		c.setStatusLocked(false, "")
+		// reconnectLoop will call tryConnect() within reconnectDelay (3s)
 	}
 }
 

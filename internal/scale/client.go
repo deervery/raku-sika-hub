@@ -1,7 +1,6 @@
 package scale
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -36,7 +35,6 @@ type Client struct {
 	cfg       config.Config
 	mu        sync.Mutex
 	port      Port
-	reader    *bufio.Reader
 	portName  atomic.Value // string
 	connected atomic.Bool
 	onStatus  StatusFunc
@@ -237,7 +235,7 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 		return errors.New("not connected")
 	}
 
-	if c.port == nil || c.reader == nil {
+	if c.port == nil {
 		c.logger.Warn("health check failed: connected but port is nil")
 		c.closePortLocked()
 		c.setStatusLocked(false, "")
@@ -263,11 +261,36 @@ func (c *Client) sendCommandLocked(cmd string) (string, error) {
 	if _, err := c.port.Write([]byte(cmd)); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
-	line, err := c.reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("read: %w", err)
+	// Read until newline with total-elapsed-time enforcement.
+	//
+	// bufio.Reader is intentionally avoided: go.bug.st/serial returns (0, nil)
+	// when its per-call SetReadTimeout expires with no data. bufio.Reader
+	// treats that as "no progress" and retries up to maxConsecutiveEmptyReads
+	// (=100) before returning ErrNoProgress, so a single ReadString('\n') can
+	// block for commandTimeout × 100 = 5 minutes while holding c.mu. This was
+	// observed in production as 288 stuck reconnect attempts per day.
+	// Read one byte at a time so we never consume beyond the delimiter.
+	// Scale responses are short (~20 bytes at 2400 baud), so the syscall
+	// overhead is negligible.
+	deadline := time.Now().Add(commandTimeout)
+	var line []byte
+	var one [1]byte
+	for {
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("read timeout (%s) after %d bytes", commandTimeout, len(line))
+		}
+		n, err := c.port.Read(one[:])
+		if err != nil {
+			return "", fmt.Errorf("read: %w", err)
+		}
+		if n == 0 {
+			continue
+		}
+		line = append(line, one[0])
+		if one[0] == '\n' {
+			return string(line), nil
+		}
 	}
-	return line, nil
 }
 
 func (c *Client) reconnectLoop(ctx context.Context) {
@@ -302,7 +325,7 @@ func (c *Client) watchdogCheck() {
 	}
 	defer c.mu.Unlock()
 
-	if !c.connected.Load() || c.port == nil || c.reader == nil {
+	if !c.connected.Load() || c.port == nil {
 		return
 	}
 
@@ -336,7 +359,6 @@ func (c *Client) tryConnect() {
 
 	c.mu.Lock()
 	c.port = port
-	c.reader = bufio.NewReader(port)
 
 	// Verify the scale actually responds before marking as connected.
 	_, err = c.sendCommandLocked(CmdWeigh)
@@ -344,7 +366,6 @@ func (c *Client) tryConnect() {
 		c.logger.Info("scale not responding on %s: %v", portName, err)
 		c.port.Close()
 		c.port = nil
-		c.reader = nil
 		c.mu.Unlock()
 		return
 	}
@@ -363,7 +384,6 @@ func (c *Client) closePortLocked() {
 	if c.port != nil {
 		c.port.Close()
 		c.port = nil
-		c.reader = nil
 	}
 	c.connected.Store(false)
 	c.portName.Store("")

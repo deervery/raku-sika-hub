@@ -1,7 +1,6 @@
 package scale
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -78,7 +77,6 @@ func newTestClient(t *testing.T, mock *mockPort) (*Client, chan bool) {
 	// Manually connect
 	client.mu.Lock()
 	client.port = mock
-	client.reader = bufio.NewReader(mock)
 	client.mu.Unlock()
 	client.portName.Store("/dev/ttyTEST")
 	client.connected.Store(true)
@@ -188,6 +186,42 @@ func TestWeigh_IOError(t *testing.T) {
 
 	if !mock.closed {
 		t.Error("expected port to be closed")
+	}
+}
+
+// emptyReadPort simulates go.bug.st/serial's behavior when SetReadTimeout
+// expires with no data: Read returns (0, nil). Previously, bufio.Reader wrapped
+// around such a port would retry 100 times before giving up, causing a single
+// ReadString call to block for commandTimeout × 100 = 5 minutes.
+type emptyReadPort struct {
+	closed bool
+}
+
+func (p *emptyReadPort) Read(_ []byte) (int, error)  { return 0, nil }
+func (p *emptyReadPort) Write(b []byte) (int, error) { return len(b), nil }
+func (p *emptyReadPort) Close() error                { p.closed = true; return nil }
+
+func TestSendCommand_ReturnsWithinCommandTimeoutOnEmptyReads(t *testing.T) {
+	cfg := config.Default()
+	cfg.Port = "/dev/ttyTEST"
+	client := NewClient(cfg, testLogger(t), nil)
+	client.mu.Lock()
+	client.port = &emptyReadPort{}
+	client.mu.Unlock()
+	client.connected.Store(true)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	start := time.Now()
+	_, err := client.sendCommandLocked("Q\r\n")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	// Must complete within ~commandTimeout, not 100× it (the pre-fix bufio bug).
+	if elapsed > commandTimeout*2 {
+		t.Errorf("sendCommandLocked took %s, expected ≤ %s", elapsed, commandTimeout*2)
 	}
 }
 

@@ -54,6 +54,19 @@ func BuildLabelDataFromMap(template string, copies int, data map[string]string, 
 		Species:                normalized["species"],
 		Sex:                    normalized["sex"],
 		ReceivingDate:          normalized["receivingDate"],
+
+		// EN bilingual traceable (issue #271)
+		ProductNameJa:        normalized["productNameJa"],
+		ProductQuantityJa:    normalized["productQuantityJa"],
+		DeadlineDateJa:       normalized["deadlineDateJa"],
+		StorageTemperatureJa: normalized["storageTemperatureJa"],
+		SpeciesOfOrigin:      normalized["speciesOfOrigin"],
+		SpeciesOfOriginJa:    normalized["speciesOfOriginJa"],
+		CountryOfOrigin:      normalized["countryOfOrigin"],
+		CountryOfOriginJa:    normalized["countryOfOriginJa"],
+		ProcessingPlantName:  normalized["processingPlantName"],
+		Address:              normalized["address"],
+		AddressJa:            normalized["addressJa"],
 	}
 }
 

@@ -45,6 +45,22 @@ type LabelData struct {
 	Species       string `json:"species"`       // 獣種
 	Sex           string `json:"sex"`           // 性別
 	ReceivingDate string `json:"receivingDate"` // 搬入日
+
+	// EN bilingual traceable label (issue #271): JA companion values for "EN / JA" display.
+	// Used only when Locale == "en" and template is traceable_*.
+	ProductNameJa        string `json:"productNameJa"`        // 商品名の JA 値 (例: "ウデ")
+	ProductQuantityJa    string `json:"productQuantityJa"`    // 内容量の JA 値 (通常は EN と共通なので省略可)
+	DeadlineDateJa       string `json:"deadlineDateJa"`       // 賞味期限の JA 表記 (例: "2028年5月1日")
+	StorageTemperatureJa string `json:"storageTemperatureJa"` // 保存方法の JA 値 (例: "要冷凍")
+
+	// EN bilingual traceable additional fields
+	SpeciesOfOrigin     string `json:"speciesOfOrigin"`     // 品種 EN 値 (例: "Cervus Nippon")
+	SpeciesOfOriginJa   string `json:"speciesOfOriginJa"`   // 品種 JA 値 (例: "日本鹿")
+	CountryOfOrigin     string `json:"countryOfOrigin"`     // 原産地 EN (例: "Product of Japan")
+	CountryOfOriginJa   string `json:"countryOfOriginJa"`   // 原産地 JA (例: "日本")
+	ProcessingPlantName string `json:"processingPlantName"` // 製造所名 (バイリンガル時に CompanyBlock の代替)
+	Address             string `json:"address"`             // 住所 EN (Address 行用)
+	AddressJa           string `json:"addressJa"`           // 住所 JA
 }
 
 // ValidTemplates lists the supported template keys.

@@ -91,7 +91,12 @@ type RenderResult struct {
 }
 
 // Render produces a PNG label. Width is fixed at 62mm; height is content-driven.
+// Exception: EN bilingual traceable labels use a fixed 101mm × 62mm landscape
+// canvas (see renderENTraceable).
 func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
+	if isENBilingualTraceable(data) {
+		return r.renderENTraceable(data)
+	}
 	rows := r.buildRows(data)
 
 	height := 0

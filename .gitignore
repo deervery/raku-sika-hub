@@ -2,3 +2,4 @@ raku-sika-hub
 logs/
 config.json
 *:Zone.Identifier
+_scratch/

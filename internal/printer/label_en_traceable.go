@@ -36,15 +36,18 @@ const (
 	enLandWidthMM  = 101.0
 	enLandHeightMM = 62.0
 
-	enLandMarginPx       = 12
-	enLandColumnGapPx    = 8
-	enLandFontBody       = 8.5
-	enLandFontMin        = 6.0
+	enLandMarginPx       = 10
+	enLandColumnGapPx    = 6
+	enLandFontBody       = 8.0
+	enLandFontMin        = 5.5
 	enLandFontJaScale    = 0.85
 	enLandFontWarning    = 10.0
 	enLandFontWarningJa  = 8.5
-	enLandTablePaddingPx = 4
-	enLandLineGap        = 0.98
+	enLandTablePaddingPx = 5
+	enLandLineGap        = 1.05
+	// Border thickness in pixels for table grid lines (drawn as multiple
+	// parallel pixel lines to match p-touch's thicker borders).
+	enLandBorderPx = 2
 
 	// Default fallback values for traceable_deer.
 	defaultSpeciesEnDeer = "Cervus Nippon"
@@ -313,6 +316,20 @@ func wrapWords(text string, fontSize float64, maxWidth int) []string {
 	return lines
 }
 
+// drawThickHLine draws an `enLandBorderPx`-pixel-thick horizontal line.
+func drawThickHLine(img *image.RGBA, x1, x2, y int, c color.Color) {
+	for dy := 0; dy < enLandBorderPx; dy++ {
+		drawHLine(img, x1, x2, y+dy, c)
+	}
+}
+
+// drawThickVLine draws an `enLandBorderPx`-pixel-thick vertical line.
+func drawThickVLine(img *image.RGBA, x, y1, y2 int, c color.Color) {
+	for dx := 0; dx < enLandBorderPx; dx++ {
+		drawVLine(img, x+dx, y1, y2, c)
+	}
+}
+
 // isENBilingualTraceable reports whether the data should be rendered with the
 // bilingual landscape EN traceable layout.
 func isENBilingualTraceable(data LabelData) bool {
@@ -420,20 +437,21 @@ func (r *LabelRenderer) drawENLeftColumn(img *image.RGBA, data LabelData, x, y, 
 	}
 
 	rowH := h / len(rows)
-	labelW := int(float64(w) * 0.35)
+	labelW := int(float64(w) * 0.36)
 	valueW := w - labelW
+	tableH := rowH * len(rows)
 
 	border := color.RGBA{R: 0, G: 0, B: 0, A: 255}
-	drawHLine(img, x, x+w, y, border)
-	drawHLine(img, x, x+w, y+rowH*len(rows), border)
-	drawVLine(img, x, y, y+rowH*len(rows), border)
-	drawVLine(img, x+labelW, y, y+rowH*len(rows), border)
-	drawVLine(img, x+w, y, y+rowH*len(rows), border)
+	drawThickHLine(img, x, x+w, y, border)
+	drawThickHLine(img, x, x+w, y+tableH, border)
+	drawThickVLine(img, x, y, y+tableH, border)
+	drawThickVLine(img, x+labelW, y, y+tableH, border)
+	drawThickVLine(img, x+w-enLandBorderPx, y, y+tableH, border)
 
 	for i, row := range rows {
 		rowY := y + i*rowH
 		if i > 0 {
-			drawHLine(img, x, x+w, rowY, border)
+			drawThickHLine(img, x, x+w, rowY, border)
 		}
 		r.drawENCellBilingual(img, row.labelEn, row.labelJa, x+enLandTablePaddingPx, rowY, labelW-2*enLandTablePaddingPx, rowH, enLandFontBody)
 		r.drawENCellBilingual(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, rowY, valueW-2*enLandTablePaddingPx, rowH, enLandFontBody)
@@ -537,26 +555,30 @@ func (r *LabelRenderer) drawENFacilityTable(img *image.RGBA, data LabelData, x, 
 		{labelEn: "Address", labelJa: "住所", valueEn: addressEn, valueJa: addressJa},
 	}
 
-	rowH1 := h / 4       // Processing Plant row gets 1/4 (single short line typically)
-	rowH2 := h - rowH1   // Address row gets 3/4 (multi-line content)
+	rowH1 := h / 4     // Processing Plant row gets 1/4 (single short line typically)
+	rowH2 := h - rowH1 // Address row gets 3/4 (multi-line content)
 	rowHs := []int{rowH1, rowH2}
 
-	labelW := int(float64(w) * 0.34)
+	// Compromise label width: narrow enough for "Sauvage de Hakodate" to fit on
+	// a single line in the value cell, wide enough that the "Processing Plant"
+	// label can wrap to 3 lines without truncation.
+	labelW := int(float64(w) * 0.32)
 
 	border := color.RGBA{R: 0, G: 0, B: 0, A: 255}
-	drawHLine(img, x, x+w, y, border)
-	drawHLine(img, x, x+w, y+h, border)
-	drawVLine(img, x, y, y+h, border)
-	drawVLine(img, x+labelW, y, y+h, border)
-	drawVLine(img, x+w, y, y+h, border)
+	drawThickHLine(img, x, x+w, y, border)
+	drawThickHLine(img, x, x+w, y+h, border)
+	drawThickVLine(img, x, y, y+h, border)
+	drawThickVLine(img, x+labelW, y, y+h, border)
+	drawThickVLine(img, x+w-enLandBorderPx, y, y+h, border)
 
 	curY := y
 	for i, row := range rows {
 		rowH := rowHs[i]
 		if i > 0 {
-			drawHLine(img, x, x+w, curY, border)
+			drawThickHLine(img, x, x+w, curY, border)
 		}
-		r.drawENCellBilingual(img, row.labelEn, row.labelJa, x+enLandTablePaddingPx, curY, labelW-2*enLandTablePaddingPx, rowH, enLandFontBody)
+		// Facility table label cells need up to 3 lines for "Processing Plant/製造所名".
+		r.drawENCellBilingualBounded(img, row.labelEn, row.labelJa, x+enLandTablePaddingPx, curY, labelW-2*enLandTablePaddingPx, rowH, enLandFontBody, 3)
 		r.drawENCellMultiLine(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, curY, w-labelW-2*enLandTablePaddingPx, rowH, enLandFontBody)
 		curY += rowH
 	}
@@ -606,11 +628,11 @@ func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, 
 	slotCount := 3
 	gap := 6
 	slotW := (w - gap*(slotCount-1)) / slotCount
-	slotSize := slotW
-	if slotSize > h {
-		slotSize = h
-	}
-	slotY := y + (h-slotSize)/2
+	// Each slot is allowed to use the full vertical region; logos keep their
+	// natural aspect ratio via drawImageWithinRect so they grow as large as
+	// possible in the cell.
+	slotH := h
+	slotY := y
 
 	// Slot 1: 認証マーク (ninsyo_logo.jpg) — fall back to data.CertificationMarkFile.
 	certPath := strings.TrimSpace(data.CertificationMarkFile)
@@ -619,7 +641,7 @@ func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, 
 	}
 	if !strings.EqualFold(strings.TrimSpace(data.Template), "traceable_bear") {
 		if certImg, err := r.loadAssetImage(certPath); err == nil && certImg != nil {
-			rect := image.Rect(x, slotY, x+slotSize, slotY+slotSize)
+			rect := image.Rect(x, slotY, x+slotW, slotY+slotH)
 			r.drawImageWithinRect(img, certImg, rect)
 		}
 	}
@@ -627,19 +649,24 @@ func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, 
 	// Slot 2: 北海道HACCP.
 	haccpX := x + slotW + gap
 	if haccpImg, err := r.loadAssetImage("hokkaido_haccp.png"); err == nil && haccpImg != nil {
-		rect := image.Rect(haccpX, slotY, haccpX+slotSize, slotY+slotSize)
+		rect := image.Rect(haccpX, slotY, haccpX+slotW, slotY+slotH)
 		r.drawImageWithinRect(img, haccpImg, rect)
 	}
 
-	// Slot 3: QR code.
-	qrX := x + 2*(slotW+gap)
+	// Slot 3: QR code (kept square — pick the smaller dimension).
+	qrSize := slotW
+	if qrSize > slotH {
+		qrSize = slotH
+	}
+	qrX := x + 2*(slotW+gap) + (slotW-qrSize)/2
+	qrY := slotY + (slotH-qrSize)/2
 	qrURL := strings.TrimSpace(data.QRCode)
 	if qrURL != "" {
-		qrPng, err := qrcode.Encode(qrURL, qrcode.Medium, slotSize)
+		qrPng, err := qrcode.Encode(qrURL, qrcode.Medium, qrSize)
 		if err == nil {
 			qrImg, err := png.Decode(strings.NewReader(string(qrPng)))
 			if err == nil {
-				rect := image.Rect(qrX, slotY, qrX+slotSize, slotY+slotSize)
+				rect := image.Rect(qrX, qrY, qrX+qrSize, qrY+qrSize)
 				draw.Draw(img, rect, qrImg, image.Point{}, draw.Over)
 			}
 		}

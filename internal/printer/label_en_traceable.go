@@ -497,8 +497,8 @@ func (r *LabelRenderer) drawENCellBilingual(img *image.RGBA, en, ja string, x, y
 }
 
 func (r *LabelRenderer) drawENCellBilingualBounded(img *image.RGBA, en, ja string, x, y, w, h int, baseFontSize float64, maxLines int) {
-	en = strings.TrimSpace(en)
-	ja = strings.TrimSpace(ja)
+	en = normalizeDegreesC(strings.TrimSpace(en))
+	ja = normalizeDegreesC(strings.TrimSpace(ja))
 	combined := combineENJA(en, ja)
 	if combined == "" {
 		return
@@ -520,6 +520,16 @@ func (r *LabelRenderer) drawENCellBilingualBounded(img *image.RGBA, en, ja strin
 		drawString(img, face, line, x, baseline)
 		curY += lineH
 	}
+}
+
+// normalizeDegreesC converts the 2-character sequence "°C" (U+00B0 + U+0043)
+// into the single CJK rune "℃" (U+2103). lite 側で温度表記を `°C` 形式で
+// 送ってくると、tokenizeBilingual で `°` (>0x7F = CJK 扱い) と `C` (ASCII) の
+// 間に boundary が発生し、wrap で line が分裂する ("-18°", "C/" のように)。
+// 1 文字 ℃ に統一すれば CJK 連続 token として扱われ、wrap が word/CJK
+// boundary で素直に行われる。
+func normalizeDegreesC(s string) string {
+	return strings.ReplaceAll(s, "°C", "℃")
 }
 
 // extractENOnly returns the EN-only portion of a bilingual "EN\n/JA" or "EN/JA"

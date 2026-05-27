@@ -32,8 +32,10 @@ import (
 //   - Bottom: certification mark logo + Hokkaido HACCP logo + QR code
 
 const (
-	// Landscape canvas dimensions: 101mm × 62mm at 300 DPI.
-	enLandWidthMM  = 101.0
+	// Landscape canvas dimensions (#271): 102.5mm × 62mm at 300 DPI.
+	// 101 → 102.5 で +1.5 mm (≈ 18 px) 横拡張、その分を左テーブル label 列に振る。
+	// Brother QL-820 の連続テープは 62mm 幅 × 任意長なので W 拡張は印刷可能。
+	enLandWidthMM  = 102.5
 	enLandHeightMM = 62.0
 
 	enLandMarginPx       = 8
@@ -351,10 +353,11 @@ func (r *LabelRenderer) renderENTraceable(data LabelData) (RenderResult, error) 
 	contentW := contentRightX - contentLeftX
 	contentH := contentBottomY - contentTopY
 
-	// Split content into left and right columns (50% : 50%) — #271 で左右均等。
-	// labelW 0.42 で内幅 ~233px、"Country of Origin/原産地" の 8pt 1 行幅 223px に
-	// 余裕を持って収まる。
-	leftW := (contentW - enLandColumnGapPx) * 50 / 100
+	// Split content into left and right columns (50% : 50%) — left は base 50% に対し
+	// canvas 拡張分 (+18 px = 1 文字分) を leftW に全振り (labelExtraPx)。これにより
+	// 項目名列だけ 1 文字分広がり、value 列・右セクションは絶対幅を維持できる。
+	const labelExtraPx = 18 // 1 文字分 (8pt ASCII) の追加幅、すべて label 列に充当
+	leftW := (contentW-enLandColumnGapPx-labelExtraPx)/2 + labelExtraPx
 	rightX := contentLeftX + leftW + enLandColumnGapPx
 
 	r.drawENLeftColumn(img, data, contentLeftX, contentTopY, leftW, contentH)
@@ -379,9 +382,10 @@ func (r *LabelRenderer) renderENTraceable(data LabelData) (RenderResult, error) 
 
 	return RenderResult{
 		Path: tmpFile.Name(),
-		// 物理的に印字される向き: 62mm 幅 × 101mm 長 (テープ送り方向)。
-		WidthMM:  int(enLandHeightMM),
-		HeightMM: int(enLandWidthMM),
+		// 物理的に印字される向き: 62mm 幅 × N mm 長 (テープ送り方向)。
+		// enLandWidthMM が小数を含む可能性があるため math.Round で四捨五入。
+		WidthMM:  int(math.Round(enLandHeightMM)),
+		HeightMM: int(math.Round(enLandWidthMM)),
 	}, nil
 }
 
@@ -458,8 +462,9 @@ func (r *LabelRenderer) drawENLeftColumn(img *image.RGBA, data LabelData, x, y, 
 	}
 
 	rowH := h / len(rows)
-	// labelW を 0.42 比率 (#271): leftW 55% 拡張と合わせて、value 列の絶対値を
-	// 維持しつつ label 列の窮屈さを緩和。
+	// labelW を 0.42 比率 (#271): leftW に追加した +18 px (canvas 拡張分) を
+	// label 列に振る。0.40 比率 (base) → 0.42 で leftW の +18 px がほぼ label に
+	// 充当され、value 列の絶対幅は維持される。
 	labelW := int(float64(w) * 0.42)
 	valueW := w - labelW
 	tableH := rowH * len(rows)
@@ -696,8 +701,8 @@ func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, 
 	// 比率は ninsyo:haccp:qr = 1 : 1.5 : 1 で配分。
 	// #271: user 要望で CSS space-around 相当の配置にする。
 	// 端 1 単位 / 要素間 2 単位 / 端 1 単位 = 合計 6 単位の余白を確保する。
-	// #271: ロゴ間に 8pt 1 文字分相当の gap (~18 px) を入れて視覚的に分離する。
-	gap := 9 // ロゴ間 2*gap = 18 px ≈ 1 ASCII char @ 8pt
+	// #271: 余白なしレベルで画像を最大化。画像自体に白縁があるので gap 小さくて OK。
+	gap := 3 // ロゴ間 2*gap = 6 px (ごくわずか)
 	// space-around: 端=gap, 要素間=2*gap, 端=gap → 合計余白 = 6*gap。
 	// 比率変更 (#271): ninsyo:HACCP:QR = 1:1:1 (3 つとも同じ slot 幅)。
 	// HACCP は assets 側で trim 済みなので 1x slot でも実ロゴが大きく描画される。

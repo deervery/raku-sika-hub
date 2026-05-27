@@ -196,14 +196,15 @@ func TestRenderENTraceable_ProducesLandscapePNG(t *testing.T) {
 		}
 	}()
 
-	// Portrait 62mm × 101mm (Brother QL-820 tape feeds in 62mm width × variable length;
+	// Portrait 62mm × 103mm (Brother QL-820 tape feeds in 62mm width × variable length;
 	// renderENTraceable rotates the landscape canvas 90° to portrait so lp can send
 	// it on a 62mm-wide roll without scaling. See label_en_traceable.go #271).
+	// canvas 横は 102.5 mm (label 列拡張分 +1.5mm)、四捨五入で 103mm を返す。
 	if res.WidthMM != 62 {
 		t.Errorf("WidthMM = %d, want 62 (post-rotate)", res.WidthMM)
 	}
-	if res.HeightMM != 101 {
-		t.Errorf("HeightMM = %d, want 101 (post-rotate)", res.HeightMM)
+	if res.HeightMM != 103 {
+		t.Errorf("HeightMM = %d, want 103 (post-rotate)", res.HeightMM)
 	}
 }
 

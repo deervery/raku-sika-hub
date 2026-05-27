@@ -1005,6 +1005,13 @@ func (r *LabelRenderer) resolveAssetPath(file string) string {
 }
 
 func (r *LabelRenderer) drawImageWithinRect(dst *image.RGBA, src image.Image, rect image.Rectangle) {
+	r.drawImageWithinRectAligned(dst, src, rect, false)
+}
+
+// drawImageWithinRectAligned scales src into rect (aspect preserved) and
+// centers horizontally; vertically, centers by default or bottom-aligns when
+// alignBottom=true.
+func (r *LabelRenderer) drawImageWithinRectAligned(dst *image.RGBA, src image.Image, rect image.Rectangle, alignBottom bool) {
 	if src == nil || rect.Empty() {
 		return
 	}
@@ -1029,7 +1036,12 @@ func (r *LabelRenderer) drawImageWithinRect(dst *image.RGBA, src image.Image, re
 	scaled := image.NewRGBA(image.Rect(0, 0, scaledW, scaledH))
 	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), src, bounds, draw.Over, nil)
 	offsetX := rect.Min.X + (maxW-scaledW)/2
-	offsetY := rect.Min.Y + (maxH-scaledH)/2
+	var offsetY int
+	if alignBottom {
+		offsetY = rect.Max.Y - scaledH
+	} else {
+		offsetY = rect.Min.Y + (maxH-scaledH)/2
+	}
 	draw.Draw(dst, image.Rect(offsetX, offsetY, offsetX+scaledW, offsetY+scaledH), scaled, image.Point{}, draw.Over)
 }
 

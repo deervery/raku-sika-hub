@@ -36,13 +36,15 @@ const (
 	enLandWidthMM  = 101.0
 	enLandHeightMM = 62.0
 
-	enLandMarginPx       = 10
-	enLandColumnGapPx    = 6
-	enLandFontBody       = 8.0
-	enLandFontMin        = 5.5
-	enLandFontJaScale    = 0.85
-	enLandFontWarning    = 10.0
-	enLandFontWarningJa  = 8.5
+	enLandMarginPx       = 14
+	enLandColumnGapPx    = 3
+	enLandFontBody = 8.0
+	enLandFontMin  = 5.5
+	enLandFontJaScale = 0.85
+	// #271: user 要望で警告文 (Please cook thoroughly... / 加熱してお召し上がりください) も
+	// 本文と同じ 8pt に統一。
+	enLandFontWarning   = 8.0
+	enLandFontWarningJa = 8.0
 	enLandTablePaddingPx = 5
 	enLandLineGap        = 1.05
 	// Border thickness in pixels for table grid lines (drawn as multiple
@@ -77,22 +79,13 @@ func fitLinesBilingual(text string, baseSize, minSize float64, maxLines, maxWidt
 	if trimmed == "" {
 		return []string{""}, baseSize
 	}
-	size := baseSize
-	for size >= minSize {
-		lines := wrapBilingual(trimmed, size, maxWidth)
-		if maxLines <= 0 || len(lines) <= maxLines {
-			return lines, size
-		}
-		if size == minSize {
-			return clampLines(lines, maxLines, minSize, maxWidth), minSize
-		}
-		size -= 0.5
-		if size < minSize {
-			size = minSize
-		}
+	// #271: ユーザ要望でフォントサイズ統一 — 動的縮小を止めて baseSize 固定。
+	// baseSize で wrap し、maxLines を超えても clamp で対応 (font 縮小しない)。
+	lines := wrapBilingual(trimmed, baseSize, maxWidth)
+	if maxLines <= 0 || len(lines) <= maxLines {
+		return lines, baseSize
 	}
-	lines := wrapBilingual(trimmed, minSize, maxWidth)
-	return clampLines(lines, maxLines, minSize, maxWidth), minSize
+	return clampLines(lines, maxLines, baseSize, maxWidth), baseSize
 }
 
 // asciiCharPx / cjkCharPx estimate the rendered width per character class.
@@ -365,21 +358,44 @@ func (r *LabelRenderer) renderENTraceable(data LabelData) (RenderResult, error) 
 	r.drawENLeftColumn(img, data, contentLeftX, contentTopY, leftW, contentH)
 	r.drawENRightColumn(img, data, rightX, contentTopY, contentRightX-rightX, contentH)
 
+	// Brother QL-820NWB は連続テープを 62mm 幅 × 任意長で印刷する物理制約がある。
+	// landscape (101mm × 62mm) PNG をそのまま lp に渡すと、ドライバが 62mm 幅に
+	// 縮小して印字するため、ラベル全体が小さくなる。
+	// 解決: 90° 回転した portrait (62mm × 101mm) PNG にして送ることで、テープを
+	// 101mm 長ぶん流して 62mm 幅いっぱいに印字する。
+	rotated := rotate90(img)
+
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
 		return RenderResult{}, err
 	}
 	defer tmpFile.Close()
-	if err := png.Encode(tmpFile, img); err != nil {
+	if err := png.Encode(tmpFile, rotated); err != nil {
 		os.Remove(tmpFile.Name())
 		return RenderResult{}, err
 	}
 
 	return RenderResult{
-		Path:     tmpFile.Name(),
-		WidthMM:  int(enLandWidthMM),
-		HeightMM: int(enLandHeightMM),
+		Path: tmpFile.Name(),
+		// 物理的に印字される向き: 62mm 幅 × 101mm 長 (テープ送り方向)。
+		WidthMM:  int(enLandHeightMM),
+		HeightMM: int(enLandWidthMM),
 	}, nil
+}
+
+// rotate90 returns a new image rotated 90° clockwise.
+// The output dimensions are (src.height, src.width).
+func rotate90(src *image.RGBA) *image.RGBA {
+	b := src.Bounds()
+	w := b.Dx()
+	h := b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(h-1-y, x, src.At(x, y))
+		}
+	}
+	return dst
 }
 
 // buildENLeftRows builds the left-column 8 bilingual rows.
@@ -389,7 +405,10 @@ func buildENLeftRows(data LabelData) []enLandRow {
 	countryEn, countryJa := resolveCountryOfOrigin(data)
 
 	return []enLandRow{
-		{labelEn: "Name of Product", labelJa: "製品名", valueEn: trim(data.ProductName), valueJa: trim(data.ProductNameJa)},
+		// productName が lite 側で bilingual ("EN\n/JA") に組み立てられて送られてくる
+		// 後方互換ケースに備え、EN 部分のみ抽出。productNameJa が別途渡されていれば
+		// それを JA 側として使い、"EN/JA/JA" の重複表示を防ぐ。
+		{labelEn: "Name of Product", labelJa: "製品名", valueEn: extractENOnly(trim(data.ProductName)), valueJa: trim(data.ProductNameJa)},
 		// Best-by Date: per p-touch convention, JA date representation is omitted
 		// from the value (Japanese readers can parse "1 May 2028"). Provide JA
 		// only if explicitly set, otherwise show EN alone.
@@ -437,7 +456,9 @@ func (r *LabelRenderer) drawENLeftColumn(img *image.RGBA, data LabelData, x, y, 
 	}
 
 	rowH := h / len(rows)
-	labelW := int(float64(w) * 0.36)
+	// labelW を 0.44 比率に拡張 (#271): user 要望で項目名列をさらに 1 文字分大きくする。
+	// 8pt 固定で "Country of Origin/原産地" 等を余裕で 2 行に収める。
+	labelW := int(float64(w) * 0.44)
 	valueW := w - labelW
 	tableH := rowH * len(rows)
 
@@ -453,8 +474,10 @@ func (r *LabelRenderer) drawENLeftColumn(img *image.RGBA, data LabelData, x, y, 
 		if i > 0 {
 			drawThickHLine(img, x, x+w, rowY, border)
 		}
-		r.drawENCellBilingual(img, row.labelEn, row.labelJa, x+enLandTablePaddingPx, rowY, labelW-2*enLandTablePaddingPx, rowH, enLandFontBody)
-		r.drawENCellBilingual(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, rowY, valueW-2*enLandTablePaddingPx, rowH, enLandFontBody)
+		// 8pt 統一: baseSize=minSize=enLandFontBody で動的縮小を回避し、maxLines=3 で
+		// 2 行を超える wrap も許可する (Country of Origin/原産地 等の最長 label 対応)。
+		r.drawENCellBilingualBounded(img, row.labelEn, row.labelJa, x+enLandTablePaddingPx, rowY, labelW-2*enLandTablePaddingPx, rowH, enLandFontBody, 3)
+		r.drawENCellBilingualBounded(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, rowY, valueW-2*enLandTablePaddingPx, rowH, enLandFontBody, 3)
 	}
 }
 
@@ -491,6 +514,37 @@ func (r *LabelRenderer) drawENCellBilingualBounded(img *image.RGBA, en, ja strin
 	}
 }
 
+// extractENOnly returns the EN-only portion of a bilingual "EN\n/JA" or "EN/JA"
+// string. lite (raku-sika-lite) historically composes productName as
+// "Shoulder\n/ウデ" when sending to bPAC, and now also sends productNameJa
+// separately. Treating the combined string verbatim duplicates the JA portion.
+func extractENOnly(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// Drop everything from the first newline onward (lite uses "\n/" as a
+	// hint for p-touch label wrapping; the line after is the JA half).
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		s = s[:idx]
+	}
+	// Drop trailing "/" if present (some legacy payloads have "EN/" only).
+	s = strings.TrimRight(strings.TrimSpace(s), "/")
+	// Drop everything from the first "/" onward — but only if what follows
+	// contains CJK characters (= JA half). Plain ASCII "/" inside an EN string
+	// (e.g. product code "A/B") must be preserved.
+	if idx := strings.IndexByte(s, '/'); idx >= 0 {
+		tail := s[idx+1:]
+		for _, r := range tail {
+			if r > 0x7F {
+				s = s[:idx]
+				break
+			}
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
 // combineENJA joins EN and JA with "/" if both present; returns either alone.
 // Empty strings are dropped.
 func combineENJA(en, ja string) string {
@@ -511,10 +565,10 @@ func combineENJA(en, ja string) string {
 func (r *LabelRenderer) drawENRightColumn(img *image.RGBA, data LabelData, x, y, w, h int) {
 	// Allocate vertical regions to match p-touch proportions more closely:
 	//   - Facility table: 45% of right column height (needs space for wrapped address)
-	//   - Warning text:   13%
-	//   - Logos + QR:     42%
-	tableH := h * 45 / 100
-	warningH := h * 13 / 100
+	//   - Warning text:   3% (8pt 1 行で足りる)
+	//   - Logos + QR:     残り (画像を +10% さらに大きく取るため warning を圧縮 #271)
+	tableH := h*45/100 + 70
+	warningH := h * 3 / 100
 	logosY := y + tableH + warningH
 	logosH := h - tableH - warningH
 
@@ -555,14 +609,21 @@ func (r *LabelRenderer) drawENFacilityTable(img *image.RGBA, data LabelData, x, 
 		{labelEn: "Address", labelJa: "住所", valueEn: addressEn, valueJa: addressJa},
 	}
 
-	rowH1 := h / 4     // Processing Plant row gets 1/4 (single short line typically)
-	rowH2 := h - rowH1 // Address row gets 3/4 (multi-line content)
+	// #271: Processing Plant 行は label が "Processing Plant/製造所名" の 3 行 wrap に
+	// 必要な固定高 (8pt × 3 lines × line-gap = 約 110px) とし、残りを Address 行に
+	// 振る。drawENRightColumn が tableH を +70px しているため、その追加分は全部
+	// Address row (rowH2) に流れて住所行が 2 行分大きくなる。
+	const rowH1Fixed = 110
+	rowH1 := rowH1Fixed
+	if rowH1 > h/2 {
+		rowH1 = h / 2
+	}
+	rowH2 := h - rowH1
 	rowHs := []int{rowH1, rowH2}
 
-	// Compromise label width: narrow enough for "Sauvage de Hakodate" to fit on
-	// a single line in the value cell, wide enough that the "Processing Plant"
-	// label can wrap to 3 lines without truncation.
-	labelW := int(float64(w) * 0.32)
+	// #271: labelW 比率を 0.32 → 0.40 に拡張。"Processing Plant" が 8pt で 3 行に収まり、
+	// かつ value 側にも余裕を持たせる。
+	labelW := int(float64(w) * 0.40)
 
 	border := color.RGBA{R: 0, G: 0, B: 0, A: 255}
 	drawThickHLine(img, x, x+w, y, border)
@@ -579,7 +640,11 @@ func (r *LabelRenderer) drawENFacilityTable(img *image.RGBA, data LabelData, x, 
 		}
 		// Facility table label cells need up to 3 lines for "Processing Plant/製造所名".
 		r.drawENCellBilingualBounded(img, row.labelEn, row.labelJa, x+enLandTablePaddingPx, curY, labelW-2*enLandTablePaddingPx, rowH, enLandFontBody, 3)
-		r.drawENCellMultiLine(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, curY, w-labelW-2*enLandTablePaddingPx, rowH, enLandFontBody)
+		// #271: 製造所名・住所ともに 8pt 統一 (user 要望)。Processing Plant の cell は
+		// 元の rowH1 拡張 (3/8) で縦に余裕があるが、フォント自体は 8pt に揃える。
+		valueFontSize := enLandFontBody
+		valueMaxLines := 6
+		r.drawENCellBilingualBounded(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, curY, w-labelW-2*enLandTablePaddingPx, rowH, valueFontSize, valueMaxLines)
 		curY += rowH
 	}
 }
@@ -624,42 +689,50 @@ func (r *LabelRenderer) drawENWarning(img *image.RGBA, x, y, w, h int) {
 }
 
 func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, w, h int) {
-	// 3 equal slots: ninsyo logo (cert), Hokkaido HACCP, QR.
-	slotCount := 3
+	// 3 slots: ninsyo logo (cert), Hokkaido HACCP (1.5x #271), QR.
+	// 比率は ninsyo:haccp:qr = 1 : 1.5 : 1 で配分。
+	// #271: user 要望で CSS space-around 相当の配置にする。
+	// 端 1 単位 / 要素間 2 単位 / 端 1 単位 = 合計 6 単位の余白を確保する。
 	gap := 6
-	slotW := (w - gap*(slotCount-1)) / slotCount
-	// Each slot is allowed to use the full vertical region; logos keep their
-	// natural aspect ratio via drawImageWithinRect so they grow as large as
-	// possible in the cell.
+	// space-around: 端=gap, 要素間=2*gap, 端=gap → 合計余白 = 6*gap。
+	usableW := w - 6*gap
+	unitW := usableW * 2 / 7 // 1 単位 = usableW / 3.5 (比率 1:1.5:1 = 3.5 単位)
+	haccpW := unitW * 3 / 2  // 1.5 単位
 	slotH := h
 	slotY := y
+
+	certW := unitW
+	qrW := unitW
 
 	// Slot 1: 認証マーク (ninsyo_logo.jpg) — fall back to data.CertificationMarkFile.
 	certPath := strings.TrimSpace(data.CertificationMarkFile)
 	if certPath == "" {
 		certPath = "ninsyo_logo.jpg"
 	}
+	// space-around 配置: 左端 gap → ninsyo → 2*gap → HACCP → 2*gap → QR → 右端 gap。
+	certX := x + gap
 	if !strings.EqualFold(strings.TrimSpace(data.Template), "traceable_bear") {
 		if certImg, err := r.loadAssetImage(certPath); err == nil && certImg != nil {
-			rect := image.Rect(x, slotY, x+slotW, slotY+slotH)
-			r.drawImageWithinRect(img, certImg, rect)
+			rect := image.Rect(certX, slotY, certX+certW, slotY+slotH)
+			r.drawImageWithinRectAligned(img, certImg, rect, true)
 		}
 	}
 
-	// Slot 2: 北海道HACCP.
-	haccpX := x + slotW + gap
+	// Slot 2: 北海道HACCP (1.5x 幅 #271).
+	haccpX := certX + certW + 2*gap
 	if haccpImg, err := r.loadAssetImage("hokkaido_haccp.png"); err == nil && haccpImg != nil {
-		rect := image.Rect(haccpX, slotY, haccpX+slotW, slotY+slotH)
-		r.drawImageWithinRect(img, haccpImg, rect)
+		rect := image.Rect(haccpX, slotY, haccpX+haccpW, slotY+slotH)
+		r.drawImageWithinRectAligned(img, haccpImg, rect, true)
 	}
 
-	// Slot 3: QR code (kept square — pick the smaller dimension).
-	qrSize := slotW
+	// Slot 3: QR code (kept square — pick the smaller dimension). Bottom align (#271).
+	qrSlotX := haccpX + haccpW + 2*gap
+	qrSize := qrW
 	if qrSize > slotH {
 		qrSize = slotH
 	}
-	qrX := x + 2*(slotW+gap) + (slotW-qrSize)/2
-	qrY := slotY + (slotH-qrSize)/2
+	qrX := qrSlotX + (qrW-qrSize)/2
+	qrY := slotY + slotH - qrSize // bottom align
 	qrURL := strings.TrimSpace(data.QRCode)
 	if qrURL != "" {
 		qrPng, err := qrcode.Encode(qrURL, qrcode.Medium, qrSize)

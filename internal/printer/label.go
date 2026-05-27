@@ -174,6 +174,11 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			lines: warningLines(data.Locale),
 			qrURL: data.QRCode,
 		})
+		// #271: JA traceable では warning text の下にロゴ (認証マーク + 北海道 HACCP)
+		// を追加。EN bilingual は別 renderer (renderENTraceable) で完結している。
+		if data.Locale != "en" {
+			rows = append(rows, bottomLogosRow{data: data, size: imageSize})
+		}
 	} else if data.Template == "pet" {
 		// Pet: no warning text, no image section
 	} else if data.Template == "processed" {
@@ -475,6 +480,11 @@ func (row imageSectionRow) showCertification() bool {
 	if row.data.Template == "traceable_bear" {
 		return false
 	}
+	// ezoshika 認証マークは施設が認証取得済みのときだけ描画 (#271)。
+	// CertificationMarkFile が空の場合も skip (後方互換)。
+	if !row.data.EzoshikaCertified {
+		return false
+	}
 	if strings.TrimSpace(row.data.CertificationMarkFile) == "" {
 		return false
 	}
@@ -534,6 +544,57 @@ func (row imageSectionRow) drawTraceableImages(img *image.RGBA, r *LabelRenderer
 		cursor += imageSlotGap
 		row.drawQRCodeAt(img, r, cursor, top, size)
 	}
+}
+
+// bottomLogosRow は JA traceable ラベルで「加熱してお召し上がりください」の下に
+// 配置する横並びのロゴ画像セクション (#271)。
+// ezoshikaCertified=true なら認証マーク (ninsyo_logo.jpg) + HACCP の 2 個、
+// false なら HACCP のみ。traceable_bear では認証マーク非表示は別事情で従来通り。
+type bottomLogosRow struct {
+	data LabelData
+	size int
+}
+
+func (b bottomLogosRow) height() int {
+	if b.size <= 0 {
+		return 0
+	}
+	return b.size + imageSlotGap
+}
+
+func (b bottomLogosRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
+	if b.size <= 0 {
+		return y + b.height()
+	}
+	top := y + imageSlotGap/2
+
+	showEzoshika := b.data.EzoshikaCertified &&
+		b.data.Template != "traceable_bear" &&
+		strings.TrimSpace(b.data.CertificationMarkFile) != ""
+
+	if showEzoshika {
+		// 2 つを space-around 風に並べる: 左 ninsyo, 右 HACCP。
+		// slot 幅は (contentWidth - gap) / 2。
+		slotW := (contentWidth - imageSlotGap) / 2
+		certX := contentLeft
+		haccpX := certX + slotW + imageSlotGap
+		if certImg, err := r.loadAssetImage(strings.TrimSpace(b.data.CertificationMarkFile)); err == nil && certImg != nil {
+			rect := image.Rect(certX, top, certX+slotW, top+b.size)
+			r.drawImageWithinRect(img, certImg, rect)
+		}
+		if haccpImg, err := r.loadAssetImage("hokkaido_haccp.png"); err == nil && haccpImg != nil {
+			rect := image.Rect(haccpX, top, haccpX+slotW, top+b.size)
+			r.drawImageWithinRect(img, haccpImg, rect)
+		}
+	} else {
+		// HACCP のみ中央配置。
+		if haccpImg, err := r.loadAssetImage("hokkaido_haccp.png"); err == nil && haccpImg != nil {
+			haccpX := contentLeft + (contentWidth-b.size)/2
+			rect := image.Rect(haccpX, top, haccpX+b.size, top+b.size)
+			r.drawImageWithinRect(img, haccpImg, rect)
+		}
+	}
+	return y + b.height()
 }
 
 func (row imageSectionRow) drawLogoAt(img *image.RGBA, r *LabelRenderer, x, top, width, size int) {

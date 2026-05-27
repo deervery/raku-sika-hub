@@ -740,7 +740,10 @@ func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, 
 	}
 	// space-around 配置: 左端 gap → ninsyo → 2*gap → HACCP → 2*gap → QR → 右端 gap。
 	certX := x + gap
-	if !strings.EqualFold(strings.TrimSpace(data.Template), "traceable_bear") {
+	// ezoshika 認証マークは施設が認証取得済みのときのみ描画 (#271)。
+	// traceable_bear は別事情で従来通り skip。
+	showEzoshika := data.EzoshikaCertified && !strings.EqualFold(strings.TrimSpace(data.Template), "traceable_bear")
+	if showEzoshika {
 		if certImg, err := r.loadAssetImage(certPath); err == nil && certImg != nil {
 			rect := image.Rect(certX, slotY, certX+certW, slotY+slotH)
 			r.drawImageWithinRectAligned(img, certImg, rect, true)

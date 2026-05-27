@@ -46,6 +46,11 @@ type LabelData struct {
 	Sex           string `json:"sex"`           // 性別
 	ReceivingDate string `json:"receivingDate"` // 搬入日
 
+	// EzoshikaCertified: 施設がエゾシカ協会認証を取得している場合のみ ninsyo_logo を
+	// ラベルに描画する。false (デフォルト) なら認証マークは表示しない。
+	// JA traceable / EN bilingual traceable 両方で参照される。
+	EzoshikaCertified bool `json:"ezoshikaCertified"`
+
 	// EN bilingual traceable label (issue #271): JA companion values for "EN / JA" display.
 	// Used only when Locale == "en" and template is traceable_*.
 	ProductNameJa        string `json:"productNameJa"`        // 商品名の JA 値 (例: "ウデ")

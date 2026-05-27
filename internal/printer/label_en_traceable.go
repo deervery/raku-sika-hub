@@ -37,7 +37,7 @@ const (
 	enLandHeightMM = 62.0
 
 	enLandMarginPx       = 14
-	enLandColumnGapPx    = 3
+	enLandColumnGapPx    = 12
 	enLandFontBody = 8.0
 	enLandFontMin  = 5.5
 	enLandFontJaScale = 0.85
@@ -474,10 +474,11 @@ func (r *LabelRenderer) drawENLeftColumn(img *image.RGBA, data LabelData, x, y, 
 		if i > 0 {
 			drawThickHLine(img, x, x+w, rowY, border)
 		}
-		// 8pt 統一: baseSize=minSize=enLandFontBody で動的縮小を回避し、maxLines=3 で
-		// 2 行を超える wrap も許可する (Country of Origin/原産地 等の最長 label 対応)。
+		// 8pt 統一: baseSize=minSize=enLandFontBody で動的縮小を回避し、maxLines を
+		// label 3 / value 4 まで許可 (Preservation の "Keep Frozen below -18C/要冷凍"
+		// のような長い保存方法表記が 2 行で切れないように)。
 		r.drawENCellBilingualBounded(img, row.labelEn, row.labelJa, x+enLandTablePaddingPx, rowY, labelW-2*enLandTablePaddingPx, rowH, enLandFontBody, 3)
-		r.drawENCellBilingualBounded(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, rowY, valueW-2*enLandTablePaddingPx, rowH, enLandFontBody, 3)
+		r.drawENCellBilingualBounded(img, row.valueEn, row.valueJa, x+labelW+enLandTablePaddingPx, rowY, valueW-2*enLandTablePaddingPx, rowH, enLandFontBody, 4)
 	}
 }
 
@@ -695,14 +696,16 @@ func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, 
 	// 端 1 単位 / 要素間 2 単位 / 端 1 単位 = 合計 6 単位の余白を確保する。
 	gap := 6
 	// space-around: 端=gap, 要素間=2*gap, 端=gap → 合計余白 = 6*gap。
+	// 比率変更 (#271): ninsyo:HACCP:QR = 1 : 1.5 : 2 (QR を ninsyo の 2 倍幅)。
+	// 合計 4.5 単位 = (1 + 1.5 + 2)。
 	usableW := w - 6*gap
-	unitW := usableW * 2 / 7 // 1 単位 = usableW / 3.5 (比率 1:1.5:1 = 3.5 単位)
+	unitW := usableW * 2 / 9 // 1 単位 = usableW / 4.5
 	haccpW := unitW * 3 / 2  // 1.5 単位
+	qrW := unitW * 2         // 2 単位 (QR 拡大)
 	slotH := h
 	slotY := y
 
 	certW := unitW
-	qrW := unitW
 
 	// Slot 1: 認証マーク (ninsyo_logo.jpg) — fall back to data.CertificationMarkFile.
 	certPath := strings.TrimSpace(data.CertificationMarkFile)

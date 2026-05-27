@@ -170,15 +170,19 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 
 	// Traceable templates: QR is in textQRRow, skip imageSectionRow QR.
 	if isTraceableTemplate(data.Template) {
-		rows = append(rows, textQRRow{
-			lines: warningLines(data.Locale),
-			qrURL: data.QRCode,
-		})
-		// #271: JA traceable では warning text の下にロゴ (認証マーク + 北海道 HACCP)
-		// を追加。EN bilingual は別 renderer (renderENTraceable) で完結している。
-		if data.Locale != "en" {
-			rows = append(rows, bottomLogosRow{data: data, size: imageSize})
+		// #271: JA traceable では警告文の右側にエゾシカ認証ロゴを配置 (HACCP は廃止)。
+		// EN bilingual は別 renderer (renderENTraceable) で完結している。
+		certPath := ""
+		if data.Locale != "en" &&
+			data.EzoshikaCertified &&
+			data.Template != "traceable_bear" {
+			certPath = strings.TrimSpace(data.CertificationMarkFile)
 		}
+		rows = append(rows, textQRRow{
+			lines:    warningLines(data.Locale),
+			qrURL:    data.QRCode,
+			certPath: certPath,
+		})
 	} else if data.Template == "pet" {
 		// Pet: no warning text, no image section
 	} else if data.Template == "processed" {
@@ -546,57 +550,6 @@ func (row imageSectionRow) drawTraceableImages(img *image.RGBA, r *LabelRenderer
 	}
 }
 
-// bottomLogosRow は JA traceable ラベルで「加熱してお召し上がりください」の下に
-// 配置する横並びのロゴ画像セクション (#271)。
-// ezoshikaCertified=true なら認証マーク (ninsyo_logo.jpg) + HACCP の 2 個、
-// false なら HACCP のみ。traceable_bear では認証マーク非表示は別事情で従来通り。
-type bottomLogosRow struct {
-	data LabelData
-	size int
-}
-
-func (b bottomLogosRow) height() int {
-	if b.size <= 0 {
-		return 0
-	}
-	return b.size + imageSlotGap
-}
-
-func (b bottomLogosRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
-	if b.size <= 0 {
-		return y + b.height()
-	}
-	top := y + imageSlotGap/2
-
-	showEzoshika := b.data.EzoshikaCertified &&
-		b.data.Template != "traceable_bear" &&
-		strings.TrimSpace(b.data.CertificationMarkFile) != ""
-
-	if showEzoshika {
-		// 2 つを space-around 風に並べる: 左 ninsyo, 右 HACCP。
-		// slot 幅は (contentWidth - gap) / 2。
-		slotW := (contentWidth - imageSlotGap) / 2
-		certX := contentLeft
-		haccpX := certX + slotW + imageSlotGap
-		if certImg, err := r.loadAssetImage(strings.TrimSpace(b.data.CertificationMarkFile)); err == nil && certImg != nil {
-			rect := image.Rect(certX, top, certX+slotW, top+b.size)
-			r.drawImageWithinRect(img, certImg, rect)
-		}
-		if haccpImg, err := r.loadAssetImage("hokkaido_haccp.png"); err == nil && haccpImg != nil {
-			rect := image.Rect(haccpX, top, haccpX+slotW, top+b.size)
-			r.drawImageWithinRect(img, haccpImg, rect)
-		}
-	} else {
-		// HACCP のみ中央配置。
-		if haccpImg, err := r.loadAssetImage("hokkaido_haccp.png"); err == nil && haccpImg != nil {
-			haccpX := contentLeft + (contentWidth-b.size)/2
-			rect := image.Rect(haccpX, top, haccpX+b.size, top+b.size)
-			r.drawImageWithinRect(img, haccpImg, rect)
-		}
-	}
-	return y + b.height()
-}
-
 func (row imageSectionRow) drawLogoAt(img *image.RGBA, r *LabelRenderer, x, top, width, size int) {
 	if width <= 0 {
 		return
@@ -804,7 +757,8 @@ func warningLines(locale string) []string {
 	if strings.EqualFold(strings.TrimSpace(locale), "en") {
 		return []string{"Cook thoroughly", "before eating"}
 	}
-	return []string{"加熱して", "お召し上がりください"}
+	// JA: 3 行構成。textQRRow の右側にエゾシカ認証ロゴを並べるため高さを確保 (#271)。
+	return []string{"加熱して", "お召し上がり", "ください"}
 }
 
 func labelWidthRatioForTemplate(template string) float64 {
@@ -1112,6 +1066,8 @@ type textQRRow struct {
 	lines    []string
 	qrURL    string
 	fontSize float64
+	// certPath: 空でなければ警告文と QR の間にエゾシカ認証ロゴを描画する (#271)。
+	certPath string
 }
 
 func (t textQRRow) effectiveFontSize() float64 {
@@ -1122,7 +1078,8 @@ func (t textQRRow) effectiveFontSize() float64 {
 }
 
 func (t textQRRow) qrSizePx() int {
-	return contentWidth * 40 / 100
+	// 警告文(3 行)+認証ロゴ+QR を 1 行に納めるため QR は控えめに (#271)。
+	return contentWidth * 33 / 100
 }
 
 func (t textQRRow) height() int {
@@ -1143,17 +1100,40 @@ func (t textQRRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 
 	rowHeight := t.height()
 	lh := lineHeight(fs)
+	qs := t.qrSizePx()
+	showCert := strings.TrimSpace(t.certPath) != ""
+
+	// レイアウト: [警告文(左)] [認証ロゴ(中央, optional)] [QR(右)]。
+	// 認証ロゴは QR と同サイズの正方形スロットに収める。
+	var certSize, textWidth int
+	if showCert {
+		certSize = qs
+		textWidth = contentWidth - qs - certSize - 2*imageSlotGap
+	} else {
+		textWidth = contentWidth - qs - imageSlotGap
+	}
+	if textWidth < 1 {
+		textWidth = 1
+	}
 
 	textTotalH := lh * len(t.lines)
 	ty := y + (rowHeight-textTotalH)/2
 	for _, line := range t.lines {
 		baseline := ty + int(fs*float64(labelDPI)/72)
-		drawString(img, face, line, contentLeft, baseline)
+		drawStringFitWidth(img, face, line, contentLeft, baseline, textWidth)
 		ty += lh
 	}
 
+	if showCert {
+		if certImg, err := r.loadAssetImage(strings.TrimSpace(t.certPath)); err == nil && certImg != nil {
+			certX := contentLeft + textWidth + imageSlotGap
+			certY := y + (rowHeight-certSize)/2
+			rect := image.Rect(certX, certY, certX+certSize, certY+certSize)
+			r.drawImageWithinRect(img, certImg, rect)
+		}
+	}
+
 	if strings.TrimSpace(t.qrURL) != "" {
-		qs := t.qrSizePx()
 		qrPng, err := qrcode.Encode(t.qrURL, qrcode.Medium, qs)
 		if err == nil {
 			qrImg, err := png.Decode(strings.NewReader(string(qrPng)))

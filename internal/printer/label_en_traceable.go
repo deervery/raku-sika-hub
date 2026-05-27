@@ -36,7 +36,7 @@ const (
 	enLandWidthMM  = 101.0
 	enLandHeightMM = 62.0
 
-	enLandMarginPx       = 14
+	enLandMarginPx       = 8
 	enLandColumnGapPx    = 12
 	enLandFontBody = 8.0
 	enLandFontMin  = 5.5
@@ -351,8 +351,10 @@ func (r *LabelRenderer) renderENTraceable(data LabelData) (RenderResult, error) 
 	contentW := contentRightX - contentLeftX
 	contentH := contentBottomY - contentTopY
 
-	// Split content into left and right columns (52% : 48%).
-	leftW := (contentW - enLandColumnGapPx) * 52 / 100
+	// Split content into left and right columns (50% : 50%) — #271 で左右均等。
+	// labelW 0.42 で内幅 ~233px、"Country of Origin/原産地" の 8pt 1 行幅 223px に
+	// 余裕を持って収まる。
+	leftW := (contentW - enLandColumnGapPx) * 50 / 100
 	rightX := contentLeftX + leftW + enLandColumnGapPx
 
 	r.drawENLeftColumn(img, data, contentLeftX, contentTopY, leftW, contentH)
@@ -456,9 +458,9 @@ func (r *LabelRenderer) drawENLeftColumn(img *image.RGBA, data LabelData, x, y, 
 	}
 
 	rowH := h / len(rows)
-	// labelW を 0.44 比率に拡張 (#271): user 要望で項目名列をさらに 1 文字分大きくする。
-	// 8pt 固定で "Country of Origin/原産地" 等を余裕で 2 行に収める。
-	labelW := int(float64(w) * 0.44)
+	// labelW を 0.42 比率 (#271): leftW 55% 拡張と合わせて、value 列の絶対値を
+	// 維持しつつ label 列の窮屈さを緩和。
+	labelW := int(float64(w) * 0.42)
 	valueW := w - labelW
 	tableH := rowH * len(rows)
 
@@ -694,16 +696,25 @@ func (r *LabelRenderer) drawENLogosAndQR(img *image.RGBA, data LabelData, x, y, 
 	// 比率は ninsyo:haccp:qr = 1 : 1.5 : 1 で配分。
 	// #271: user 要望で CSS space-around 相当の配置にする。
 	// 端 1 単位 / 要素間 2 単位 / 端 1 単位 = 合計 6 単位の余白を確保する。
-	gap := 6
+	// #271: ロゴ間に 8pt 1 文字分相当の gap (~18 px) を入れて視覚的に分離する。
+	gap := 9 // ロゴ間 2*gap = 18 px ≈ 1 ASCII char @ 8pt
 	// space-around: 端=gap, 要素間=2*gap, 端=gap → 合計余白 = 6*gap。
-	// 比率変更 (#271): ninsyo:HACCP:QR = 1 : 1.5 : 2 (QR を ninsyo の 2 倍幅)。
-	// 合計 4.5 単位 = (1 + 1.5 + 2)。
+	// 比率変更 (#271): ninsyo:HACCP:QR = 1:1:1 (3 つとも同じ slot 幅)。
+	// HACCP は assets 側で trim 済みなので 1x slot でも実ロゴが大きく描画される。
+	// cert / QR とも視覚的に同サイズに揃う。
 	usableW := w - 6*gap
-	unitW := usableW * 2 / 9 // 1 単位 = usableW / 4.5
-	haccpW := unitW * 3 / 2  // 1.5 単位
-	qrW := unitW * 2         // 2 単位 (QR 拡大)
-	slotH := h
-	slotY := y
+	unitW := usableW / 3
+	haccpW := unitW
+	qrW := unitW
+	// #271: slot を正方形 (W=H=unitW) にして 3 つの画像を最大サイズで表示する。
+	// HACCP は trim 済みで square、QR は元から square、ninsyo もほぼ square なので
+	// 正方形 slot にすれば縦余白がほぼ消えて全画像が同じ大きさで並ぶ。
+	// canvas 縦余裕 (h - slotH) は slot top 側に出て警告文と画像の間で吸収される。
+	slotH := unitW
+	if slotH > h {
+		slotH = h
+	}
+	slotY := y + (h - slotH)
 
 	certW := unitW
 

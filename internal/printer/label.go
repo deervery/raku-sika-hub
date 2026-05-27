@@ -172,11 +172,15 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 	if isTraceableTemplate(data.Template) {
 		// #271: JA traceable では警告文の右側にエゾシカ認証ロゴを配置 (HACCP は廃止)。
 		// EN bilingual は別 renderer (renderENTraceable) で完結している。
+		// lite は certificationMarkFile を送らないため空のときは ninsyo_logo.jpg にフォールバック。
 		certPath := ""
 		if data.Locale != "en" &&
 			data.EzoshikaCertified &&
 			data.Template != "traceable_bear" {
 			certPath = strings.TrimSpace(data.CertificationMarkFile)
+			if certPath == "" {
+				certPath = "ninsyo_logo.jpg"
+			}
 		}
 		rows = append(rows, textQRRow{
 			lines:    warningLines(data.Locale),

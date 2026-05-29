@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -46,6 +47,12 @@ type QueueJobStatus struct {
 
 // Brother manages printing to a Brother label printer via CUPS lp command.
 type Brother struct {
+	// mu serializes PrintLabel / TestPrint so that concurrent print
+	// requests don't trigger parallel label rendering. Parallel renders on a
+	// 4GB RPi 5 caused OOM-like freezes when CUPS stalls (e.g., paper jam):
+	// each goroutine held a ~10MB RGBA buffer plus a temp PNG for 12s while
+	// verifySubmittedJob polled lpstat. See #283.
+	mu       sync.Mutex
 	name     string
 	renderer *LabelRenderer
 	logger   *logging.Logger
@@ -149,6 +156,9 @@ func (b *Brother) LogStatus(context string) {
 
 // TestPrint sends a test print job to the printer.
 func (b *Brother) TestPrint() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	status, err := b.Status()
 	if err != nil {
 		return fmt.Errorf("PRINTER_ERROR: CUPS の状態確認に失敗しました: %s", err)
@@ -179,6 +189,9 @@ func (b *Brother) TestPrint() error {
 
 // PrintLabel renders a label image and sends it to the printer.
 func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	status, err := b.Status()
 	if err != nil {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: CUPS の状態確認に失敗しました: %s", err)

@@ -119,9 +119,13 @@ func (b *Brother) Status() (PrinterStatus, error) {
 		Available:      available,
 	}
 
+	configuredNames := parseConfiguredPrinterNames(b.name)
 	switch {
-	case b.name != "":
-		status.SelectedName = b.name
+	case len(configuredNames) > 0:
+		status.SelectedName = selectConfiguredPrinter(configuredNames, available)
+		if status.SelectedName == "" {
+			status.SelectedName = configuredNames[0]
+		}
 		status.Source = "configured"
 	case defaultName != "":
 		status.SelectedName = defaultName
@@ -525,6 +529,39 @@ func parseAvailablePrinters(output string) []string {
 		}
 	}
 	return printers
+}
+
+func parseConfiguredPrinterNames(input string) []string {
+	parts := strings.FieldsFunc(input, func(r rune) bool {
+		return r == ',' || r == ';'
+	})
+	names := make([]string, 0, len(parts))
+	seen := make(map[string]struct{})
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+func selectConfiguredPrinter(configured []string, available []string) string {
+	availableSet := make(map[string]struct{}, len(available))
+	for _, name := range available {
+		availableSet[name] = struct{}{}
+	}
+	for _, name := range configured {
+		if _, ok := availableSet[name]; ok {
+			return name
+		}
+	}
+	return ""
 }
 
 func parseDefaultPrinter(output string) string {

@@ -46,6 +46,43 @@ func TestValidateStatus_ConfiguredMismatch(t *testing.T) {
 	}
 }
 
+func TestParseConfiguredPrinterNames(t *testing.T) {
+	got := parseConfiguredPrinterNames(" Brother_QL_800_USB, Brother_QL_820NWB_USB ; Brother_QL_800_USB ")
+	want := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d names, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected name[%d]=%q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestSelectConfiguredPrinter_PicksFirstAvailableCandidate(t *testing.T) {
+	configured := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	available := []string{"Brother_QL_820NWB_USB", "Brother_QL_800_USB"}
+	if got := selectConfiguredPrinter(configured, available); got != "Brother_QL_800_USB" {
+		t.Fatalf("expected first configured available printer, got %q", got)
+	}
+}
+
+func TestSelectConfiguredPrinter_FallsBackToLaterCandidate(t *testing.T) {
+	configured := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	available := []string{"Brother_QL_820NWB_USB"}
+	if got := selectConfiguredPrinter(configured, available); got != "Brother_QL_820NWB_USB" {
+		t.Fatalf("expected later configured printer, got %q", got)
+	}
+}
+
+func TestSelectConfiguredPrinter_ReturnsEmptyWhenNoCandidateAvailable(t *testing.T) {
+	configured := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	available := []string{"Other_Printer"}
+	if got := selectConfiguredPrinter(configured, available); got != "" {
+		t.Fatalf("expected empty selection, got %q", got)
+	}
+}
+
 func TestParseMediaOptions(t *testing.T) {
 	output := strings.Join([]string{
 		"PageSize/Media Size: *w62h100/62 mm x 100 mm w62h29/62 mm x 29 mm roll-62/62 mm Continuous",

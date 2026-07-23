@@ -179,6 +179,13 @@ curl http://localhost:19800/health
 PRINTER_NAME=Brother_QL_820NWB_USB
 ```
 
+QL-800 / QL-820NWB のどちらでも動かす運用では、カンマ区切りで候補を指定できる。
+Hub は CUPS に登録済みの候補から左に書いた順で最初に見つかったプリンタを使う。
+
+```bash
+PRINTER_NAME=Brother_QL_800_USB,Brother_QL_820NWB_USB
+```
+
 印刷サイズに関する注意（重要）:
 
 - Hub から CUPS に渡すカスタム用紙は `Custom.WxHmm` 形式を使うこと（例: `Custom.62x43mm`）
@@ -217,7 +224,7 @@ PRINTER_NAME=Brother_QL_820NWB_USB
 | `dataBits` | `7` | `DATA_BITS` | データビット |
 | `parity` | `"even"` | `PARITY` | パリティ |
 | `stopBits` | `1` | `STOP_BITS` | ストップビット |
-| `printerName` | `""` | `PRINTER_NAME` | CUPS プリンタ名（空 = 自動選択） |
+| `printerName` | `""` | `PRINTER_NAME` | CUPS プリンタ名（空 = 自動選択、`,` / `;` 区切りで複数候補可） |
 | `fontPath` | `""` (自動検出) | `FONT_PATH` | 日本語フォントパス |
 | `scannerDeviceName` | `""` | `SCANNER_DEVICE_NAME` | バーコードリーダーのデバイス名パターン |
 | `scannerVid` | `""` | `SCANNER_VID` | バーコードリーダーの USB VID |

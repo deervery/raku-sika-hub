@@ -37,6 +37,27 @@ func TestBuildTableEntriesTraceable(t *testing.T) {
 	}
 }
 
+func TestBuildTableEntriesTraceable_UsesDeadlineLabel(t *testing.T) {
+	data := LabelData{
+		Template:           "traceable",
+		ProductName:        "脂付きロース",
+		ProductQuantity:    "0.37kg",
+		DeadlineDate:       "2026年12月23日",
+		DeadlineLabel:      "賞味期限",
+		StorageTemperature: "-18℃以下で保存する",
+		IndividualNumber:   "2025-12-24-04",
+		CaptureLocation:    "函館市",
+	}
+
+	entries := buildTableEntries(data)
+	if entry, ok := findEntry(entries, "賞味期限"); !ok || entry.value != "2026年12月23日" {
+		t.Fatalf("deadline row missing or wrong: %+v", entry)
+	}
+	if _, ok := findEntry(entries, "消費期限"); ok {
+		t.Fatalf("deadline row should not use 消費期限 when deadlineLabel is set")
+	}
+}
+
 func TestBuildTableEntriesProcessed(t *testing.T) {
 	data := LabelData{
 		Template:           "processed",

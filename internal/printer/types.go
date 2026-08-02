@@ -9,6 +9,7 @@ type LabelData struct {
 	ProductName        string `json:"productName"`        // 品名
 	ProductQuantity    string `json:"productQuantity"`    // 内容量 e.g. "2.35 kg"
 	DeadlineDate       string `json:"deadlineDate"`       // 消費期限 e.g. "2026年3月18日"
+	DeadlineLabel      string `json:"deadlineLabel"`      // 期限呼称 e.g. "賞味期限" / "消費期限"
 	StorageTemperature string `json:"storageTemperature"` // 保存温度 e.g. "-18℃以下"
 
 	// Traceable fields

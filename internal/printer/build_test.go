@@ -8,6 +8,7 @@ func TestBuildLabelDataFromMap_UsesAPIDataOnly(t *testing.T) {
 		"productName":        "Venison",
 		"productQuantity":    "100 g",
 		"deadlineDate":       "April 30, 2026",
+		"deadlineLabel":      "Best Before",
 		"storageTemperature": "Keep frozen",
 		"individualNumber":   "IND-0001",
 		"captureLocation":    "Hakodate",
@@ -29,6 +30,9 @@ func TestBuildLabelDataFromMap_UsesAPIDataOnly(t *testing.T) {
 	}
 	if got.Locale != "en" {
 		t.Fatalf("expected locale from API, got %q", got.Locale)
+	}
+	if got.DeadlineLabel != "Best Before" {
+		t.Fatalf("expected deadlineLabel from API, got %q", got.DeadlineLabel)
 	}
 }
 

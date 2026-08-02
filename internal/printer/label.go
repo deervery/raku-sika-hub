@@ -636,6 +636,13 @@ func facilityEntry(data LabelData) (tableEntry, bool) {
 	}
 }
 
+func deadlineCaption(data LabelData, fallbackJa, fallbackEn string) string {
+	if label := strings.TrimSpace(data.DeadlineLabel); label != "" {
+		return label
+	}
+	return localizedCaption(data.Locale, fallbackJa, fallbackEn)
+}
+
 func buildTableEntries(data LabelData) []tableEntry {
 	trim := strings.TrimSpace
 	if data.Template == "individual_qr" {
@@ -653,7 +660,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "捕獲地", "Capture Location"), value: trim(data.CaptureLocation)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
@@ -671,7 +678,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
@@ -687,17 +694,27 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: localizedCaption(data.Locale, "名称", "Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "原材料名", "Ingredients"), value: trim(data.ProductIngredient)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if trim(data.NutritionUnit) != "" {
 			entries = append(entries, tableEntry{label: trim(data.NutritionUnit), value: ""})
 			nutrition := []string{}
-			if v := trim(data.CaloriesQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "熱量", "Energy")+" "+v) }
-			if v := trim(data.ProteinQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "たんぱく質", "Protein")+" "+v) }
-			if v := trim(data.FatQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "脂質", "Fat")+" "+v) }
-			if v := trim(data.CarbohydratesQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "炭水化物", "Carbs")+" "+v) }
-			if v := trim(data.SaltEquivalentQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v) }
+			if v := trim(data.CaloriesQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "熱量", "Energy")+" "+v)
+			}
+			if v := trim(data.ProteinQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "たんぱく質", "Protein")+" "+v)
+			}
+			if v := trim(data.FatQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "脂質", "Fat")+" "+v)
+			}
+			if v := trim(data.CarbohydratesQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "炭水化物", "Carbs")+" "+v)
+			}
+			if v := trim(data.SaltEquivalentQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v)
+			}
 			if len(nutrition) > 0 {
 				entries = append(entries, tableEntry{label: "", value: strings.Join(nutrition, " / ")})
 			}
@@ -719,7 +736,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
@@ -733,7 +750,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 	entries := []tableEntry{
 		{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 		{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-		{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+		{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 		{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 	}
 	if entry, ok := companyEntry(data); ok {

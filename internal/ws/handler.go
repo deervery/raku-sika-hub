@@ -263,18 +263,7 @@ func (h *Handler) PrinterStatusEvent() PrinterStatusEvent {
 }
 
 func printerReady(status printer.PrinterStatus) bool {
-	if status.SelectedName == "" {
-		return false
-	}
-	if status.Source != "configured" {
-		return true
-	}
-	for _, name := range status.Available {
-		if name == status.SelectedName {
-			return true
-		}
-	}
-	return false
+	return status.Ready()
 }
 
 func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Request) {
@@ -291,6 +280,8 @@ func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Req
 			code = "PRINTER_DISABLED"
 		} else if strings.HasPrefix(errMsg, "PRINTER_PAPER_ERROR:") {
 			code = "PRINTER_PAPER_ERROR"
+		} else if strings.HasPrefix(errMsg, "PRINTER_UNAVAILABLE:") {
+			code = "PRINTER_UNAVAILABLE"
 		} else if strings.HasPrefix(errMsg, "PRINTER_ERROR:") {
 			code = "PRINTER_ERROR"
 		}
@@ -392,6 +383,8 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 			code = "PRINTER_DISABLED"
 		} else if strings.HasPrefix(errMsg, "PRINTER_PAPER_ERROR:") {
 			code = "PRINTER_PAPER_ERROR"
+		} else if strings.HasPrefix(errMsg, "PRINTER_UNAVAILABLE:") {
+			code = "PRINTER_UNAVAILABLE"
 		}
 		client.Send(PrintErrorResponse{
 			Type:      "print_error",

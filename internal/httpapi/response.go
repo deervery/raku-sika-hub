@@ -55,8 +55,12 @@ type ScaleHealth struct {
 
 // PrinterHealth is the printer section of the health response.
 type PrinterHealth struct {
-	Connected bool   `json:"connected"`
-	Name      string `json:"name,omitempty"`
+	Connected    bool   `json:"connected"`
+	Name         string `json:"name,omitempty"`
+	State        string `json:"state,omitempty"`
+	DeviceURI    string `json:"deviceUri,omitempty"`
+	BackendReady bool   `json:"backendReady"`
+	BackendError string `json:"backendError,omitempty"`
 }
 
 // ScannerHealth is the scanner section of the health response.
@@ -104,6 +108,9 @@ type QueueResponse struct {
 	Status       string     `json:"status"`
 	Printer      string     `json:"printer,omitempty"`
 	PrinterState string     `json:"printerState,omitempty"`
+	DeviceURI    string     `json:"deviceUri,omitempty"`
+	BackendReady bool       `json:"backendReady"`
+	BackendError string     `json:"backendError,omitempty"`
 	QueueState   string     `json:"queueState,omitempty"`
 	JobCount     int        `json:"jobCount"`
 	Clearable    bool       `json:"clearable"`

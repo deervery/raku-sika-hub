@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/deervery/raku-sika-hub/internal/printer"
 )
 
 func TestHandleVersion(t *testing.T) {
@@ -76,6 +78,9 @@ func TestParsePrinterStateFromLpstat(t *testing.T) {
 	if got := parsePrinterStateFromLpstat("printer Brother_QL_820NWB_USB is idle.  enabled since ..."); got != "idle" {
 		t.Fatalf("expected idle, got %q", got)
 	}
+	if got := parsePrinterStateFromLpstat("プリンター Brother_QL_820NWB_USB は待機中です。2026年08月17日 11時05分14秒 以来有効です"); got != "idle" {
+		t.Fatalf("expected Japanese idle, got %q", got)
+	}
 }
 
 func TestNormalizeQueueState(t *testing.T) {
@@ -100,5 +105,31 @@ func TestApplyQueueJobStates(t *testing.T) {
 	applyQueueJobStates(jobs, "stalled")
 	if jobs[0].State != "stalled" || jobs[1].State != "stalled" {
 		t.Fatalf("unexpected stalled states: %+v", jobs)
+	}
+}
+
+func TestQueueJobsFromSnapshot(t *testing.T) {
+	snapshot := printer.QueueSnapshot{
+		PrinterName: "Brother_QL_820NWB_USB",
+		Jobs: []printer.QueueJobStatus{
+			{
+				ID:          "Brother_QL_820NWB_USB-3798",
+				User:        "rakusika",
+				Size:        "185344",
+				SubmittedAt: "2026年08月17日 09時52分45秒",
+				State:       "stalled",
+			},
+		},
+	}
+
+	jobs := queueJobsFromSnapshot(snapshot)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].Printer != "Brother QL 820NWB USB" {
+		t.Fatalf("unexpected printer name %q", jobs[0].Printer)
+	}
+	if jobs[0].State != "stalled" {
+		t.Fatalf("unexpected job state %q", jobs[0].State)
 	}
 }

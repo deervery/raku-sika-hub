@@ -2,6 +2,8 @@ package printer
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -20,6 +22,10 @@ type PrinterStatus struct {
 	DefaultName    string
 	Available      []string
 	Source         string
+	DeviceURI      string
+	CUPSState      string
+	BackendReady   bool
+	BackendError   string
 }
 
 type PrintResult struct {
@@ -31,10 +37,13 @@ type PrintResult struct {
 }
 
 type QueueSnapshot struct {
-	PrinterName  string
-	PrinterState string
-	QueueState   string
-	Jobs         []QueueJobStatus
+	PrinterName   string
+	PrinterState  string
+	QueueState    string
+	BackendReady  bool
+	BackendError  string
+	BackendDevice string
+	Jobs          []QueueJobStatus
 }
 
 type QueueJobStatus struct {
@@ -137,7 +146,60 @@ func (b *Brother) Status() (PrinterStatus, error) {
 		status.Source = "unresolved"
 	}
 
+	if status.SelectedName != "" {
+		status.DeviceURI = readPrinterDeviceURI(status.SelectedName)
+		status.CUPSState, status.BackendError = readPrinterState(status.SelectedName)
+		status.BackendReady = status.BackendError == ""
+		if status.BackendReady {
+			status.BackendReady, status.BackendError = checkPrinterBackend(status.DeviceURI)
+		}
+	}
+
 	return status, nil
+}
+
+// Ready reports whether the selected CUPS printer resolves to a usable backend.
+func (s PrinterStatus) Ready() bool {
+	if s.SelectedName == "" {
+		return false
+	}
+	if s.Source == "configured" && !contains(s.Available, s.SelectedName) {
+		return false
+	}
+	return s.BackendReady
+}
+
+func (b *Brother) QueueSnapshot() (QueueSnapshot, error) {
+	status, err := b.Status()
+	if err != nil {
+		return QueueSnapshot{}, err
+	}
+	if status.SelectedName == "" {
+		return QueueSnapshot{
+			PrinterName:   status.SelectedName,
+			PrinterState:  status.CUPSState,
+			QueueState:    "cleared",
+			BackendReady:  status.BackendReady,
+			BackendError:  status.BackendError,
+			BackendDevice: status.DeviceURI,
+		}, nil
+	}
+
+	snapshot, err := readQueueSnapshot(status.SelectedName)
+	if err != nil {
+		return QueueSnapshot{}, err
+	}
+	snapshot.PrinterState = status.CUPSState
+	snapshot.BackendReady = status.BackendReady
+	snapshot.BackendError = status.BackendError
+	snapshot.BackendDevice = status.DeviceURI
+	if !status.BackendReady && len(snapshot.Jobs) > 0 {
+		snapshot.QueueState = "stalled"
+		for i := range snapshot.Jobs {
+			snapshot.Jobs[i].State = "stalled"
+		}
+	}
+	return snapshot, nil
 }
 
 // LogStatus logs the configured and discovered printers.
@@ -148,13 +210,17 @@ func (b *Brother) LogStatus(context string) {
 		return
 	}
 	b.logger.Info(
-		"printer status (%s): configured=%q, selected=%q, source=%s, default=%q, available=%s",
+		"printer status (%s): configured=%q, selected=%q, source=%s, default=%q, available=%s, device_uri=%q, cups_state=%q, backend_ready=%t, backend_error=%q",
 		context,
 		status.ConfiguredName,
 		status.SelectedName,
 		status.Source,
 		status.DefaultName,
 		formatPrinters(status.Available),
+		status.DeviceURI,
+		status.CUPSState,
+		status.BackendReady,
+		status.BackendError,
 	)
 }
 
@@ -323,7 +389,103 @@ func validateStatus(status PrinterStatus) error {
 	if status.Source == "configured" && !contains(status.Available, status.SelectedName) {
 		return printerConfigError(status)
 	}
+	if !status.BackendReady && status.BackendError != "" {
+		return fmt.Errorf("PRINTER_UNAVAILABLE: プリンタの送信先に接続できません。 printer=%q device_uri=%q state=%q error=%s",
+			status.SelectedName,
+			status.DeviceURI,
+			status.CUPSState,
+			status.BackendError,
+		)
+	}
 	return nil
+}
+
+func readPrinterDeviceURI(printerName string) string {
+	out, err := exec.Command("lpstat", "-v", printerName).CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return parsePrinterDeviceURI(string(out))
+}
+
+func parsePrinterDeviceURI(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if idx := strings.Index(line, ":"); idx >= 0 {
+			return strings.TrimSpace(line[idx+1:])
+		}
+	}
+	return ""
+}
+
+func readPrinterState(printerName string) (string, string) {
+	out, err := exec.Command("lpstat", "-p", printerName, "-l").CombinedOutput()
+	if err != nil && strings.TrimSpace(string(out)) == "" {
+		return "", err.Error()
+	}
+	return parsePrinterStateAndBackendError(string(out))
+}
+
+func parsePrinterStateAndBackendError(output string) (string, string) {
+	state := parsePrinterState(output)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "unavailable") ||
+			strings.Contains(lower, "may not exist") ||
+			strings.Contains(lower, "not connected") {
+			if state == "" {
+				state = "unavailable"
+			}
+			return state, line
+		}
+	}
+	return state, ""
+}
+
+func checkPrinterBackend(deviceURI string) (bool, string) {
+	if strings.TrimSpace(deviceURI) == "" {
+		return false, "device URI is empty"
+	}
+
+	parsed, err := url.Parse(deviceURI)
+	if err != nil {
+		return false, err.Error()
+	}
+
+	host := parsed.Hostname()
+	if !isLocalhost(host) {
+		return true, ""
+	}
+
+	port := parsed.Port()
+	if port == "" {
+		switch parsed.Scheme {
+		case "ipp", "ipps":
+			port = "631"
+		default:
+			return true, ""
+		}
+	}
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 1500*time.Millisecond)
+	if err != nil {
+		return false, err.Error()
+	}
+	_ = conn.Close()
+	return true, ""
+}
+
+func isLocalhost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseSubmittedJobID(output string) string {
@@ -404,10 +566,12 @@ func readQueueSnapshot(printerName string) (QueueSnapshot, error) {
 		printerState = parsePrinterState(string(stateOut))
 	}
 	return QueueSnapshot{
-		PrinterName:  printerName,
-		PrinterState: printerState,
-		QueueState:   normalizePrinterQueueState(printerState, len(jobs)),
-		Jobs:         jobs,
+		PrinterName:   printerName,
+		PrinterState:  printerState,
+		QueueState:    normalizePrinterQueueState(printerState, len(jobs)),
+		BackendReady:  true,
+		BackendDevice: readPrinterDeviceURI(printerName),
+		Jobs:          jobs,
 	}, nil
 }
 
@@ -467,6 +631,10 @@ func parsePrinterState(output string) string {
 			return "printing"
 		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " disabled"):
 			return "disabled"
+		case strings.HasPrefix(line, "プリンター ") && strings.Contains(line, " は待機中"):
+			return "idle"
+		case strings.HasPrefix(line, "プリンター ") && strings.Contains(line, " を印刷しています"):
+			return "printing"
 		case strings.HasPrefix(line, "Status:"):
 			return strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
 		}

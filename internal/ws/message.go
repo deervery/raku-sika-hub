@@ -117,6 +117,7 @@ type PrinterStatusEvent struct {
 	Type             string `json:"type"` // "printer_status"
 	PrinterConnected bool   `json:"printerConnected"`
 	PrinterName      string `json:"printerName"`
+	PrinterModel     string `json:"printerModel,omitempty"`
 }
 
 // Error codes.

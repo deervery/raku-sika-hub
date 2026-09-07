@@ -22,10 +22,13 @@ type PrinterStatus struct {
 	DefaultName    string
 	Available      []string
 	Source         string
-	DeviceURI      string
-	CUPSState      string
-	BackendReady   bool
-	BackendError   string
+	// Model is the Brother QL model implied by SelectedName ("QL-800",
+	// "QL-820NWB"), or "" when the queue name carries no known model.
+	Model        string
+	DeviceURI    string
+	CUPSState    string
+	BackendReady bool
+	BackendError string
 }
 
 type PrintResult struct {
@@ -129,22 +132,8 @@ func (b *Brother) Status() (PrinterStatus, error) {
 	}
 
 	configuredNames := parseConfiguredPrinterNames(b.name)
-	switch {
-	case len(configuredNames) > 0:
-		status.SelectedName = selectConfiguredPrinter(configuredNames, available)
-		if status.SelectedName == "" {
-			status.SelectedName = configuredNames[0]
-		}
-		status.Source = "configured"
-	case defaultName != "":
-		status.SelectedName = defaultName
-		status.Source = "cups-default"
-	case len(available) > 0:
-		status.SelectedName = available[0]
-		status.Source = "first-available"
-	default:
-		status.Source = "unresolved"
-	}
+	status.SelectedName, status.Source = resolvePrinter(configuredNames, available, defaultName)
+	status.Model = PrinterModel(status.SelectedName)
 
 	if status.SelectedName != "" {
 		status.DeviceURI = readPrinterDeviceURI(status.SelectedName)
@@ -210,10 +199,11 @@ func (b *Brother) LogStatus(context string) {
 		return
 	}
 	b.logger.Info(
-		"printer status (%s): configured=%q, selected=%q, source=%s, default=%q, available=%s, device_uri=%q, cups_state=%q, backend_ready=%t, backend_error=%q",
+		"printer status (%s): configured=%q, selected=%q, model=%q, source=%s, default=%q, available=%s, device_uri=%q, cups_state=%q, backend_ready=%t, backend_error=%q",
 		context,
 		status.ConfiguredName,
 		status.SelectedName,
+		status.Model,
 		status.Source,
 		status.DefaultName,
 		formatPrinters(status.Available),
@@ -719,6 +709,39 @@ func parseConfiguredPrinterNames(input string) []string {
 	return names
 }
 
+// resolvePrinter picks the CUPS queue to print to and reports how it was found.
+//
+// A configured name that actually exists always wins, so a site that pins
+// PRINTER_NAME keeps behaving exactly as before. Everything after that is a
+// fallback for sites whose queue name does not match what was configured —
+// most often a Brother QL-800 registered under a name the config never
+// listed. Auto-detection only ever selects a queue that looks like a Brother
+// QL label printer, so an unrelated default printer (an office laser, a PDF
+// queue) is never silently used for labels.
+func resolvePrinter(configured []string, available []string, defaultName string) (string, string) {
+	if name := selectConfiguredPrinter(configured, available); name != "" {
+		return name, "configured"
+	}
+	if defaultName != "" && scoreBrotherQL(defaultName) > 0 && contains(available, defaultName) {
+		return defaultName, "cups-default"
+	}
+	if name := DetectBrotherQL(available); name != "" {
+		return name, "auto-detected"
+	}
+	if len(configured) > 0 {
+		// Nothing matched: keep the configured name so the error reported to
+		// the operator names what the site asked for.
+		return configured[0], "configured"
+	}
+	if defaultName != "" {
+		return defaultName, "cups-default"
+	}
+	if len(available) > 0 {
+		return available[0], "first-available"
+	}
+	return "", "unresolved"
+}
+
 func selectConfiguredPrinter(configured []string, available []string) string {
 	availableSet := make(map[string]struct{}, len(available))
 	for _, name := range available {
@@ -811,14 +834,14 @@ func selectPreferredMediaOption(options []string) string {
 }
 
 func scoreMediaOption(option string) int {
-	normalized := normalizeMediaName(option)
+	normalized := normalizeAlnum(option)
 	if normalized == "" {
 		return -1
 	}
 
 	best := -1
 	for rank, candidate := range labelMediaCandidates {
-		candidate = normalizeMediaName(candidate)
+		candidate = normalizeAlnum(candidate)
 		if candidate == "" {
 			continue
 		}
@@ -860,7 +883,7 @@ func scoreMediaOption(option string) int {
 	return best
 }
 
-func normalizeMediaName(s string) string {
+func normalizeAlnum(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range strings.ToLower(s) {

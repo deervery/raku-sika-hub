@@ -26,6 +26,8 @@ type HealthSnapshot struct {
 	PrinterConnected  bool     `json:"printerConnected"`
 	ConfiguredPrinter string   `json:"configuredPrinter"`
 	SelectedPrinter   string   `json:"selectedPrinter"`
+	SelectedModel     string   `json:"selectedModel,omitempty"`
+	PrinterSource     string   `json:"printerSource,omitempty"`
 	AvailablePrinters []string `json:"availablePrinters"`
 }
 
@@ -239,6 +241,8 @@ func (h *Handler) SnapshotHealth() HealthSnapshot {
 		PrinterConnected:  err == nil && printerReady(status),
 		ConfiguredPrinter: status.ConfiguredName,
 		SelectedPrinter:   status.SelectedName,
+		SelectedModel:     status.Model,
+		PrinterSource:     status.Source,
 		AvailablePrinters: status.Available,
 	}
 }
@@ -259,6 +263,7 @@ func (h *Handler) PrinterStatusEvent() PrinterStatusEvent {
 		Type:             "printer_status",
 		PrinterConnected: err == nil && printerReady(status),
 		PrinterName:      printerName,
+		PrinterModel:     status.Model,
 	}
 }
 

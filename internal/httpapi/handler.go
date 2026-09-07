@@ -77,8 +77,10 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	status, err := h.printer.Status()
 	printerConnected := err == nil && status.Ready()
 	printerName := ""
+	printerModel := ""
 	if err == nil {
 		printerName = status.SelectedName
+		printerModel = status.Model
 	}
 
 	scannerConnected := false
@@ -97,6 +99,7 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		Printer: PrinterHealth{
 			Connected:    printerConnected,
 			Name:         printerName,
+			Model:        printerModel,
 			State:        status.CUPSState,
 			DeviceURI:    status.DeviceURI,
 			BackendReady: status.BackendReady,
@@ -129,6 +132,8 @@ func (h *Handler) HandleWSStatus(w http.ResponseWriter, r *http.Request) {
 		PrinterConnected:  err == nil && printerReadyForStatus(status),
 		ConfiguredPrinter: status.ConfiguredName,
 		SelectedPrinter:   status.SelectedName,
+		SelectedModel:     status.Model,
+		PrinterSource:     status.Source,
 		AvailablePrinters: status.Available,
 	}
 	writeJSON(w, http.StatusOK, resp)

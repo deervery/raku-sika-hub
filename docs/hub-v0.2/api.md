@@ -37,6 +37,7 @@ Base URL: `http://<host>:19800`
   "printer": {
     "connected": true,
     "name": "Brother_QL-820NWB",
+    "model": "QL-820NWB",
     "state": "idle",
     "deviceUri": "ipp://localhost:60000/ipp/print",
     "backendReady": true
@@ -54,6 +55,7 @@ Base URL: `http://<host>:19800`
 | `scale.port` | string | シリアルポートパス（未接続時は空） |
 | `printer.connected` | bool | CUPS上の選択プリンタと送信先バックエンドが使用可能か |
 | `printer.name` | string | 選択されたプリンタ名 |
+| `printer.model` | string | 検出された Brother QL 型番（`QL-800` / `QL-820NWB`）。型番を判別できない場合は省略 |
 | `printer.state` | string | CUPSのプリンタ状態 |
 | `printer.deviceUri` | string | CUPSの送信先URI |
 | `printer.backendReady` | bool | `ipp-usb` 等の送信先バックエンドへ接続可能か |

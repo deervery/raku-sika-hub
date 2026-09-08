@@ -242,3 +242,47 @@ func TestNormalizePrinterQueueState(t *testing.T) {
 		t.Fatalf("expected cleared, got %q", got)
 	}
 }
+
+func TestIsNoDestinationsOutput(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"c locale", "lpstat: No destinations added.", true},
+		{"ja locale", "lpstat: 宛先が追加されていません。", true},
+		{"empty output", "", false},
+		{"other failure", "lpstat: Bad file descriptor", false},
+		{"printer listed", "printer Brother_QL_820NWB_USB is idle.  enabled since Mon", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isNoDestinationsOutput(tc.output); got != tc.want {
+				t.Fatalf("isNoDestinationsOutput(%q) = %v, want %v", tc.output, got, tc.want)
+			}
+		})
+	}
+}
+
+// With no CUPS queue at all, the configured name is kept so the operator is
+// told what the site asked for, and the error must be the actionable
+// PRINTER_NOT_CONFIGURED rather than a generic status-read failure.
+func TestValidateStatus_NoDestinations(t *testing.T) {
+	selected, source := resolvePrinter([]string{"Brother_QL_820NWB_USB"}, nil, "")
+	status := PrinterStatus{
+		ConfiguredName: "Brother_QL_820NWB_USB",
+		SelectedName:   selected,
+		Source:         source,
+	}
+
+	if status.Ready() {
+		t.Fatal("expected Ready() == false when CUPS has no destination")
+	}
+	err := validateStatus(status)
+	if err == nil {
+		t.Fatal("expected error when no CUPS destination exists")
+	}
+	if !strings.HasPrefix(err.Error(), "PRINTER_NOT_CONFIGURED:") {
+		t.Fatalf("expected PRINTER_NOT_CONFIGURED, got %q", err.Error())
+	}
+}

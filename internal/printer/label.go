@@ -91,7 +91,12 @@ type RenderResult struct {
 }
 
 // Render produces a PNG label. Width is fixed at 62mm; height is content-driven.
+// Exception: EN bilingual traceable labels use a fixed 101mm × 62mm landscape
+// canvas (see renderENTraceable).
 func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
+	if isENBilingualTraceable(data) {
+		return r.renderENTraceable(data)
+	}
 	rows := r.buildRows(data)
 
 	height := 0
@@ -165,9 +170,22 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 
 	// Traceable templates: QR is in textQRRow, skip imageSectionRow QR.
 	if isTraceableTemplate(data.Template) {
+		// #271: JA traceable では警告文の右側にエゾシカ認証ロゴを配置 (HACCP は廃止)。
+		// EN bilingual は別 renderer (renderENTraceable) で完結している。
+		// lite は certificationMarkFile を送らないため空のときは ninsyo_logo.jpg にフォールバック。
+		certPath := ""
+		if data.Locale != "en" &&
+			data.EzoshikaCertified &&
+			data.Template != "traceable_bear" {
+			certPath = strings.TrimSpace(data.CertificationMarkFile)
+			if certPath == "" {
+				certPath = "ninsyo_logo.jpg"
+			}
+		}
 		rows = append(rows, textQRRow{
-			lines: warningLines(data.Locale),
-			qrURL: data.QRCode,
+			lines:    warningLines(data.Locale, certPath != ""),
+			qrURL:    data.QRCode,
+			certPath: certPath,
 		})
 	} else if data.Template == "pet" {
 		// Pet: no warning text, no image section
@@ -470,6 +488,11 @@ func (row imageSectionRow) showCertification() bool {
 	if row.data.Template == "traceable_bear" {
 		return false
 	}
+	// ezoshika 認証マークは施設が認証取得済みのときだけ描画 (#271)。
+	// CertificationMarkFile が空の場合も skip (後方互換)。
+	if !row.data.EzoshikaCertified {
+		return false
+	}
 	if strings.TrimSpace(row.data.CertificationMarkFile) == "" {
 		return false
 	}
@@ -613,6 +636,13 @@ func facilityEntry(data LabelData) (tableEntry, bool) {
 	}
 }
 
+func deadlineCaption(data LabelData, fallbackJa, fallbackEn string) string {
+	if label := strings.TrimSpace(data.DeadlineLabel); label != "" {
+		return label
+	}
+	return localizedCaption(data.Locale, fallbackJa, fallbackEn)
+}
+
 func buildTableEntries(data LabelData) []tableEntry {
 	trim := strings.TrimSpace
 	if data.Template == "individual_qr" {
@@ -630,7 +660,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "捕獲地", "Capture Location"), value: trim(data.CaptureLocation)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
@@ -648,7 +678,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
@@ -664,17 +694,27 @@ func buildTableEntries(data LabelData) []tableEntry {
 			{label: localizedCaption(data.Locale, "名称", "Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "原材料名", "Ingredients"), value: trim(data.ProductIngredient)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if trim(data.NutritionUnit) != "" {
 			entries = append(entries, tableEntry{label: trim(data.NutritionUnit), value: ""})
 			nutrition := []string{}
-			if v := trim(data.CaloriesQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "熱量", "Energy")+" "+v) }
-			if v := trim(data.ProteinQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "たんぱく質", "Protein")+" "+v) }
-			if v := trim(data.FatQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "脂質", "Fat")+" "+v) }
-			if v := trim(data.CarbohydratesQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "炭水化物", "Carbs")+" "+v) }
-			if v := trim(data.SaltEquivalentQuantity); v != "" { nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v) }
+			if v := trim(data.CaloriesQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "熱量", "Energy")+" "+v)
+			}
+			if v := trim(data.ProteinQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "たんぱく質", "Protein")+" "+v)
+			}
+			if v := trim(data.FatQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "脂質", "Fat")+" "+v)
+			}
+			if v := trim(data.CarbohydratesQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "炭水化物", "Carbs")+" "+v)
+			}
+			if v := trim(data.SaltEquivalentQuantity); v != "" {
+				nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v)
+			}
 			if len(nutrition) > 0 {
 				entries = append(entries, tableEntry{label: "", value: strings.Join(nutrition, " / ")})
 			}
@@ -696,7 +736,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 		}
 		if entry, ok := companyEntry(data); ok {
@@ -710,7 +750,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 	entries := []tableEntry{
 		{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
 		{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-		{label: localizedCaption(data.Locale, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
+		{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
 		{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
 	}
 	if entry, ok := companyEntry(data); ok {
@@ -734,9 +774,18 @@ func warningText(locale string) string {
 	return localizedCaption(locale, "加熱してお召し上がりください", "Cook thoroughly before eating")
 }
 
-func warningLines(locale string) []string {
+// warningLines returns the "cook thoroughly" warning shown next to the QR.
+//
+// withCertLogo=true splits the JA text into 3 shorter lines so that the
+// warning, the ezoshika certification logo and the QR all fit on one row
+// (#271). Facilities without the certification keep the original 2-line
+// wording, so their labels are unchanged.
+func warningLines(locale string, withCertLogo bool) []string {
 	if strings.EqualFold(strings.TrimSpace(locale), "en") {
 		return []string{"Cook thoroughly", "before eating"}
+	}
+	if withCertLogo {
+		return []string{"加熱して", "お召し上がり", "ください"}
 	}
 	return []string{"加熱して", "お召し上がりください"}
 }
@@ -1000,6 +1049,13 @@ func (r *LabelRenderer) resolveAssetPath(file string) string {
 }
 
 func (r *LabelRenderer) drawImageWithinRect(dst *image.RGBA, src image.Image, rect image.Rectangle) {
+	r.drawImageWithinRectAligned(dst, src, rect, false)
+}
+
+// drawImageWithinRectAligned scales src into rect (aspect preserved) and
+// centers horizontally; vertically, centers by default or bottom-aligns when
+// alignBottom=true.
+func (r *LabelRenderer) drawImageWithinRectAligned(dst *image.RGBA, src image.Image, rect image.Rectangle, alignBottom bool) {
 	if src == nil || rect.Empty() {
 		return
 	}
@@ -1024,7 +1080,12 @@ func (r *LabelRenderer) drawImageWithinRect(dst *image.RGBA, src image.Image, re
 	scaled := image.NewRGBA(image.Rect(0, 0, scaledW, scaledH))
 	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), src, bounds, draw.Over, nil)
 	offsetX := rect.Min.X + (maxW-scaledW)/2
-	offsetY := rect.Min.Y + (maxH-scaledH)/2
+	var offsetY int
+	if alignBottom {
+		offsetY = rect.Max.Y - scaledH
+	} else {
+		offsetY = rect.Min.Y + (maxH-scaledH)/2
+	}
 	draw.Draw(dst, image.Rect(offsetX, offsetY, offsetX+scaledW, offsetY+scaledH), scaled, image.Point{}, draw.Over)
 }
 
@@ -1034,6 +1095,8 @@ type textQRRow struct {
 	lines    []string
 	qrURL    string
 	fontSize float64
+	// certPath: 空でなければ警告文と QR の間にエゾシカ認証ロゴを描画する (#271)。
+	certPath string
 }
 
 func (t textQRRow) effectiveFontSize() float64 {
@@ -1044,6 +1107,12 @@ func (t textQRRow) effectiveFontSize() float64 {
 }
 
 func (t textQRRow) qrSizePx() int {
+	// 認証ロゴを併置する行では、警告文(3 行)+ロゴ+QR を 1 行に納めるため
+	// QR を控えめにする (#271)。ロゴを描かないラベルでは従来の大きさ
+	// (62mm 幅で約 23mm 角) を維持し、読み取り性を落とさない。
+	if strings.TrimSpace(t.certPath) != "" {
+		return contentWidth * 33 / 100
+	}
 	return contentWidth * 40 / 100
 }
 
@@ -1065,17 +1134,40 @@ func (t textQRRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 
 	rowHeight := t.height()
 	lh := lineHeight(fs)
+	qs := t.qrSizePx()
+	showCert := strings.TrimSpace(t.certPath) != ""
+
+	// レイアウト: [警告文(左)] [認証ロゴ(中央, optional)] [QR(右)]。
+	// 認証ロゴは QR と同サイズの正方形スロットに収める。
+	var certSize, textWidth int
+	if showCert {
+		certSize = qs
+		textWidth = contentWidth - qs - certSize - 2*imageSlotGap
+	} else {
+		textWidth = contentWidth - qs - imageSlotGap
+	}
+	if textWidth < 1 {
+		textWidth = 1
+	}
 
 	textTotalH := lh * len(t.lines)
 	ty := y + (rowHeight-textTotalH)/2
 	for _, line := range t.lines {
 		baseline := ty + int(fs*float64(labelDPI)/72)
-		drawString(img, face, line, contentLeft, baseline)
+		drawStringFitWidth(img, face, line, contentLeft, baseline, textWidth)
 		ty += lh
 	}
 
+	if showCert {
+		if certImg, err := r.loadAssetImage(strings.TrimSpace(t.certPath)); err == nil && certImg != nil {
+			certX := contentLeft + textWidth + imageSlotGap
+			certY := y + (rowHeight-certSize)/2
+			rect := image.Rect(certX, certY, certX+certSize, certY+certSize)
+			r.drawImageWithinRect(img, certImg, rect)
+		}
+	}
+
 	if strings.TrimSpace(t.qrURL) != "" {
-		qs := t.qrSizePx()
 		qrPng, err := qrcode.Encode(t.qrURL, qrcode.Medium, qs)
 		if err == nil {
 			qrImg, err := png.Decode(strings.NewReader(string(qrPng)))

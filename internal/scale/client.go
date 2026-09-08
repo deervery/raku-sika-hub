@@ -1,7 +1,6 @@
 package scale
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -17,7 +16,7 @@ const (
 	maxWeighRetries = 10
 	weighRetryDelay = 500 * time.Millisecond
 	reconnectDelay  = 3 * time.Second
-	watchdogDelay   = 1 * time.Second
+	watchdogDelay   = 30 * time.Second // keepalive interval: verify serial is alive
 	commandTimeout  = 3 * time.Second
 	weighCacheTTL   = 500 * time.Millisecond
 )
@@ -36,7 +35,6 @@ type Client struct {
 	cfg       config.Config
 	mu        sync.Mutex
 	port      Port
-	reader    *bufio.Reader
 	portName  atomic.Value // string
 	connected atomic.Bool
 	onStatus  StatusFunc
@@ -88,6 +86,17 @@ func (c *Client) Stop() {
 
 // Connected returns true if the scale port is currently open.
 func (c *Client) Connected() bool {
+	return c.connected.Load()
+}
+
+// TryConnect attempts a single synchronous reconnect.
+// Safe to call concurrently; no-op if already connected.
+// Returns true if connected after the attempt.
+func (c *Client) TryConnect() bool {
+	if c.connected.Load() {
+		return true
+	}
+	c.tryConnect()
 	return c.connected.Load()
 }
 
@@ -217,6 +226,8 @@ func (c *Client) Zero(ctx context.Context) error {
 
 // HealthCheck verifies the scale is still responding.
 func (c *Client) HealthCheck(ctx context.Context) error {
+	_ = ctx
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -224,13 +235,13 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 		return errors.New("not connected")
 	}
 
-	_, err := c.sendCommandLocked(CmdWeigh)
-	if err != nil {
-		c.logger.Warn("health check failed: %v", err)
+	if c.port == nil {
+		c.logger.Warn("health check failed: connected but port is nil")
 		c.closePortLocked()
 		c.setStatusLocked(false, "")
-		return fmt.Errorf("PORT_ERROR: %w", err)
+		return errors.New("not connected")
 	}
+
 	return nil
 }
 
@@ -250,11 +261,36 @@ func (c *Client) sendCommandLocked(cmd string) (string, error) {
 	if _, err := c.port.Write([]byte(cmd)); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
-	line, err := c.reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("read: %w", err)
+	// Read until newline with total-elapsed-time enforcement.
+	//
+	// bufio.Reader is intentionally avoided: go.bug.st/serial returns (0, nil)
+	// when its per-call SetReadTimeout expires with no data. bufio.Reader
+	// treats that as "no progress" and retries up to maxConsecutiveEmptyReads
+	// (=100) before returning ErrNoProgress, so a single ReadString('\n') can
+	// block for commandTimeout × 100 = 5 minutes while holding c.mu. This was
+	// observed in production as 288 stuck reconnect attempts per day.
+	// Read one byte at a time so we never consume beyond the delimiter.
+	// Scale responses are short (~20 bytes at 2400 baud), so the syscall
+	// overhead is negligible.
+	deadline := time.Now().Add(commandTimeout)
+	var line []byte
+	var one [1]byte
+	for {
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("read timeout (%s) after %d bytes", commandTimeout, len(line))
+		}
+		n, err := c.port.Read(one[:])
+		if err != nil {
+			return "", fmt.Errorf("read: %w", err)
+		}
+		if n == 0 {
+			continue
+		}
+		line = append(line, one[0])
+		if one[0] == '\n' {
+			return string(line), nil
+		}
 	}
-	return line, nil
 }
 
 func (c *Client) reconnectLoop(ctx context.Context) {
@@ -284,21 +320,24 @@ func (c *Client) reconnectLoop(ctx context.Context) {
 }
 
 func (c *Client) watchdogCheck() {
-	c.mu.Lock()
+	if !c.mu.TryLock() {
+		return
+	}
 	defer c.mu.Unlock()
 
-	if !c.connected.Load() || c.port == nil || c.reader == nil {
+	if !c.connected.Load() || c.port == nil {
 		return
 	}
 
+	// Send a real keepalive to verify the serial port is still responsive.
+	// This detects stale USB-serial connections before the user triggers a weigh.
 	_, err := c.sendCommandLocked(CmdWeigh)
-	if err == nil {
-		return
+	if err != nil {
+		c.logger.Warn("watchdog: keepalive failed, marking disconnected: %v", err)
+		c.closePortLocked()
+		c.setStatusLocked(false, "")
+		// reconnectLoop will call tryConnect() within reconnectDelay (3s)
 	}
-
-	c.logger.Warn("scale watchdog failed on %s: %v", c.PortName(), err)
-	c.closePortLocked()
-	c.setStatusLocked(false, "")
 }
 
 func (c *Client) tryConnect() {
@@ -320,7 +359,6 @@ func (c *Client) tryConnect() {
 
 	c.mu.Lock()
 	c.port = port
-	c.reader = bufio.NewReader(port)
 
 	// Verify the scale actually responds before marking as connected.
 	_, err = c.sendCommandLocked(CmdWeigh)
@@ -328,7 +366,6 @@ func (c *Client) tryConnect() {
 		c.logger.Info("scale not responding on %s: %v", portName, err)
 		c.port.Close()
 		c.port = nil
-		c.reader = nil
 		c.mu.Unlock()
 		return
 	}
@@ -347,7 +384,6 @@ func (c *Client) closePortLocked() {
 	if c.port != nil {
 		c.port.Close()
 		c.port = nil
-		c.reader = nil
 	}
 	c.connected.Store(false)
 	c.portName.Store("")

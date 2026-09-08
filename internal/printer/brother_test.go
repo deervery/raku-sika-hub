@@ -1,6 +1,8 @@
 package printer
 
 import (
+	"fmt"
+	"net"
 	"strings"
 	"testing"
 )
@@ -43,6 +45,100 @@ func TestValidateStatus_ConfiguredMismatch(t *testing.T) {
 	msg := err.Error()
 	if !strings.HasPrefix(msg, "PRINTER_NOT_CONFIGURED:") {
 		t.Fatalf("expected PRINTER_NOT_CONFIGURED, got %q", msg)
+	}
+}
+
+func TestValidateStatus_BackendUnavailable(t *testing.T) {
+	status := PrinterStatus{
+		ConfiguredName: "Brother_QL_820NWB_USB",
+		SelectedName:   "Brother_QL_820NWB_USB",
+		Available:      []string{"Brother_QL_820NWB_USB"},
+		Source:         "configured",
+		DeviceURI:      "ipp://localhost:60000/ipp/print",
+		BackendReady:   false,
+		BackendError:   "connect: connection refused",
+	}
+
+	err := validateStatus(status)
+	if err == nil {
+		t.Fatal("expected backend unavailable error")
+	}
+	if !strings.HasPrefix(err.Error(), "PRINTER_UNAVAILABLE:") {
+		t.Fatalf("expected PRINTER_UNAVAILABLE, got %q", err.Error())
+	}
+	if status.Ready() {
+		t.Fatal("expected status to be not ready")
+	}
+}
+
+func TestParsePrinterDeviceURI(t *testing.T) {
+	output := "device for Brother_QL_820NWB_USB: ipp://localhost:60000/ipp/print\n"
+	if got := parsePrinterDeviceURI(output); got != "ipp://localhost:60000/ipp/print" {
+		t.Fatalf("expected device uri, got %q", got)
+	}
+}
+
+func TestCheckPrinterBackend_LocalhostPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	ready, msg := checkPrinterBackend(fmt.Sprintf("ipp://localhost:%d/ipp/print", ln.Addr().(*net.TCPAddr).Port))
+	if !ready || msg != "" {
+		t.Fatalf("expected ready backend, ready=%v msg=%q", ready, msg)
+	}
+}
+
+func TestCheckPrinterBackend_LocalhostPortClosed(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	ready, msg := checkPrinterBackend(fmt.Sprintf("ipp://localhost:%d/ipp/print", port))
+	if ready || msg == "" {
+		t.Fatalf("expected closed backend, ready=%v msg=%q", ready, msg)
+	}
+}
+
+func TestParseConfiguredPrinterNames(t *testing.T) {
+	got := parseConfiguredPrinterNames(" Brother_QL_800_USB, Brother_QL_820NWB_USB ; Brother_QL_800_USB ")
+	want := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d names, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected name[%d]=%q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestSelectConfiguredPrinter_PicksFirstAvailableCandidate(t *testing.T) {
+	configured := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	available := []string{"Brother_QL_820NWB_USB", "Brother_QL_800_USB"}
+	if got := selectConfiguredPrinter(configured, available); got != "Brother_QL_800_USB" {
+		t.Fatalf("expected first configured available printer, got %q", got)
+	}
+}
+
+func TestSelectConfiguredPrinter_FallsBackToLaterCandidate(t *testing.T) {
+	configured := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	available := []string{"Brother_QL_820NWB_USB"}
+	if got := selectConfiguredPrinter(configured, available); got != "Brother_QL_820NWB_USB" {
+		t.Fatalf("expected later configured printer, got %q", got)
+	}
+}
+
+func TestSelectConfiguredPrinter_ReturnsEmptyWhenNoCandidateAvailable(t *testing.T) {
+	configured := []string{"Brother_QL_800_USB", "Brother_QL_820NWB_USB"}
+	available := []string{"Other_Printer"}
+	if got := selectConfiguredPrinter(configured, available); got != "" {
+		t.Fatalf("expected empty selection, got %q", got)
 	}
 }
 
@@ -113,6 +209,25 @@ func TestParsePrinterState(t *testing.T) {
 	}
 	if got := parsePrinterState("printer Brother_QL_820NWB_USB is idle. enabled since ..."); got != "idle" {
 		t.Fatalf("expected idle, got %q", got)
+	}
+	if got := parsePrinterState("プリンター Brother_QL_820NWB_USB は待機中です。2026年08月17日 11時05分14秒 以来有効です"); got != "idle" {
+		t.Fatalf("expected Japanese idle, got %q", got)
+	}
+	if got := parsePrinterState("プリンター Brother_QL_820NWB_USB は Brother_QL_820NWB_USB-3798 を印刷しています。"); got != "printing" {
+		t.Fatalf("expected Japanese printing, got %q", got)
+	}
+}
+
+func TestParsePrinterStateAndBackendError_Unavailable(t *testing.T) {
+	state, backendErr := parsePrinterStateAndBackendError(strings.Join([]string{
+		"プリンター Brother_QL_820NWB_USB は Brother_QL_820NWB_USB-3798 を印刷しています。",
+		"\tThe printer may not exist or is unavailable at this time.",
+	}, "\n"))
+	if state != "printing" {
+		t.Fatalf("expected printing state, got %q", state)
+	}
+	if !strings.Contains(backendErr, "unavailable") {
+		t.Fatalf("expected unavailable backend error, got %q", backendErr)
 	}
 }
 

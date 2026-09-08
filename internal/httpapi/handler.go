@@ -75,10 +75,12 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status, err := h.printer.Status()
-	printerConnected := err == nil && status.SelectedName != ""
+	printerConnected := err == nil && status.Ready()
 	printerName := ""
+	printerModel := ""
 	if err == nil {
 		printerName = status.SelectedName
+		printerModel = status.Model
 	}
 
 	scannerConnected := false
@@ -95,8 +97,13 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			Port:      h.scaleClient.PortName(),
 		},
 		Printer: PrinterHealth{
-			Connected: printerConnected,
-			Name:      printerName,
+			Connected:    printerConnected,
+			Name:         printerName,
+			Model:        printerModel,
+			State:        status.CUPSState,
+			DeviceURI:    status.DeviceURI,
+			BackendReady: status.BackendReady,
+			BackendError: status.BackendError,
 		},
 		Scanner: ScannerHealth{
 			Connected: scannerConnected,
@@ -125,6 +132,8 @@ func (h *Handler) HandleWSStatus(w http.ResponseWriter, r *http.Request) {
 		PrinterConnected:  err == nil && printerReadyForStatus(status),
 		ConfiguredPrinter: status.ConfiguredName,
 		SelectedPrinter:   status.SelectedName,
+		SelectedModel:     status.Model,
+		PrinterSource:     status.Source,
 		AvailablePrinters: status.Available,
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -150,6 +159,11 @@ func (h *Handler) HandleScaleWeigh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.scaleClient.Connected() {
+		// Attempt a synchronous reconnect before giving up.
+		// tryConnect verifies serial communication (up to commandTimeout=3s).
+		h.scaleClient.TryConnect()
+	}
 	if !h.scaleClient.Connected() {
 		writeError(w, http.StatusServiceUnavailable, "SCALE_NOT_CONNECTED",
 			"スケールが接続されていません。USBケーブルを確認してください。")
@@ -346,35 +360,24 @@ func (h *Handler) HandlePrinterQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
-	printerStatus, _ := h.printer.Status()
-	selectedPrinter := printerStatus.SelectedName
-	out, err := exec.Command("lpstat", "-W", "not-completed", "-o").CombinedOutput()
+	snapshot, err := h.printer.QueueSnapshot()
 	if err != nil {
-		// lpstat returns exit code 1 when there are no jobs — treat as empty
-		writeJSON(w, http.StatusOK, QueueResponse{
-			Status:     "ok",
-			Printer:    selectedPrinter,
-			QueueState: "cleared",
-			Jobs:       []QueueJob{},
-		})
+		writeError(w, http.StatusInternalServerError, "PRINTER_ERROR", "印刷キューの確認に失敗しました: "+err.Error())
 		return
 	}
-
-	printerState := ""
-	if selectedPrinter != "" {
-		if stateOut, stateErr := exec.Command("lpstat", "-p", selectedPrinter, "-l").CombinedOutput(); stateErr == nil {
-			printerState = parsePrinterStateFromLpstat(string(stateOut))
-		}
+	jobs := queueJobsFromSnapshot(snapshot)
+	message := queueStateMessage(snapshot.QueueState)
+	if snapshot.BackendError != "" && len(jobs) > 0 {
+		message = "印刷キューが残っていますが、プリンタ送信先に接続できません。キュー削除とプリンタ再起動を確認してください。"
 	}
-	jobs := parseLpstatOutput(string(out))
-	queueState := normalizeQueueState(printerState, len(jobs))
-	applyQueueJobStates(jobs, queueState)
-	message := queueStateMessage(queueState)
 	writeJSON(w, http.StatusOK, QueueResponse{
 		Status:       "ok",
-		Printer:      selectedPrinter,
-		PrinterState: printerState,
-		QueueState:   queueState,
+		Printer:      snapshot.PrinterName,
+		PrinterState: snapshot.PrinterState,
+		DeviceURI:    snapshot.BackendDevice,
+		BackendReady: snapshot.BackendReady,
+		BackendError: snapshot.BackendError,
+		QueueState:   snapshot.QueueState,
 		JobCount:     len(jobs),
 		Clearable:    len(jobs) > 0,
 		Message:      message,
@@ -399,14 +402,39 @@ func (h *Handler) handlePrinterQueueDelete(w http.ResponseWriter) {
 		return
 	}
 	writeJSON(w, http.StatusOK, QueueResponse{
-		Status:    "ok",
-		Printer:   selectedPrinter,
-		QueueState: "cleared",
-		JobCount:  0,
-		Clearable: false,
-		Message:   "印刷キューを削除しました。",
-		Jobs:      []QueueJob{},
+		Status:       "ok",
+		Printer:      selectedPrinter,
+		DeviceURI:    status.DeviceURI,
+		BackendReady: status.BackendReady,
+		BackendError: status.BackendError,
+		QueueState:   "cleared",
+		JobCount:     0,
+		Clearable:    false,
+		Message:      "印刷キューを削除しました。",
+		Jobs:         []QueueJob{},
 	})
+}
+
+func queueJobsFromSnapshot(snapshot printer.QueueSnapshot) []QueueJob {
+	jobs := make([]QueueJob, 0, len(snapshot.Jobs))
+	for _, job := range snapshot.Jobs {
+		printerName := snapshot.PrinterName
+		if printerName == "" {
+			printerName = job.ID
+			if idx := strings.LastIndex(job.ID, "-"); idx > 0 {
+				printerName = job.ID[:idx]
+			}
+		}
+		jobs = append(jobs, QueueJob{
+			ID:          job.ID,
+			Printer:     strings.ReplaceAll(printerName, "_", " "),
+			User:        job.User,
+			Size:        job.Size,
+			SubmittedAt: job.SubmittedAt,
+			State:       job.State,
+		})
+	}
+	return jobs
 }
 
 // parseLpstatOutput parses `lpstat -o` output.
@@ -452,6 +480,10 @@ func parsePrinterStateFromLpstat(output string) string {
 		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " is idle"):
 			return "idle"
 		case strings.HasPrefix(line, "printer ") && strings.Contains(line, " now printing "):
+			return "printing"
+		case strings.HasPrefix(line, "プリンター ") && strings.Contains(line, " は待機中"):
+			return "idle"
+		case strings.HasPrefix(line, "プリンター ") && strings.Contains(line, " を印刷しています"):
 			return "printing"
 		case strings.HasPrefix(line, "Status:"):
 			return strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
@@ -602,18 +634,7 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 }
 
 func printerReadyForStatus(status printer.PrinterStatus) bool {
-	if status.SelectedName == "" {
-		return false
-	}
-	if status.Source != "configured" {
-		return true
-	}
-	for _, name := range status.Available {
-		if name == status.SelectedName {
-			return true
-		}
-	}
-	return false
+	return status.Ready()
 }
 
 // classifyScaleError maps scale errors to error codes and Japanese messages.
@@ -653,6 +674,8 @@ func classifyPrinterError(err error) string {
 		return "PRINTER_DISABLED"
 	case strings.HasPrefix(msg, "PRINTER_PAPER_ERROR:"):
 		return "PRINTER_PAPER_ERROR"
+	case strings.HasPrefix(msg, "PRINTER_UNAVAILABLE:"):
+		return "PRINTER_UNAVAILABLE"
 	default:
 		return "PRINTER_ERROR"
 	}

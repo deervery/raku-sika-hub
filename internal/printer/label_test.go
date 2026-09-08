@@ -37,6 +37,27 @@ func TestBuildTableEntriesTraceable(t *testing.T) {
 	}
 }
 
+func TestBuildTableEntriesTraceable_UsesDeadlineLabel(t *testing.T) {
+	data := LabelData{
+		Template:           "traceable",
+		ProductName:        "脂付きロース",
+		ProductQuantity:    "0.37kg",
+		DeadlineDate:       "2026年12月23日",
+		DeadlineLabel:      "賞味期限",
+		StorageTemperature: "-18℃以下で保存する",
+		IndividualNumber:   "2025-12-24-04",
+		CaptureLocation:    "函館市",
+	}
+
+	entries := buildTableEntries(data)
+	if entry, ok := findEntry(entries, "賞味期限"); !ok || entry.value != "2026年12月23日" {
+		t.Fatalf("deadline row missing or wrong: %+v", entry)
+	}
+	if _, ok := findEntry(entries, "消費期限"); ok {
+		t.Fatalf("deadline row should not use 消費期限 when deadlineLabel is set")
+	}
+}
+
 func TestBuildTableEntriesProcessed(t *testing.T) {
 	data := LabelData{
 		Template:           "processed",
@@ -256,4 +277,35 @@ func TestRender_CarcassDeer(t *testing.T) {
 
 	bounds := img.Bounds()
 	t.Logf("carcass label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), outPath)
+}
+
+// #271 のエゾシカ認証ロゴ対応で、警告文の行数と QR サイズを詰めた。
+// この妥協はロゴを描く施設だけに必要なので、認証なしのラベルが
+// 従来どおりであることを固定する。
+func TestWarningLinesOnlyCompactWithCertLogo(t *testing.T) {
+	plain := warningLines("ja", false)
+	if len(plain) != 2 || plain[1] != "お召し上がりください" {
+		t.Fatalf("認証なしの警告文が変わっている: %#v", plain)
+	}
+
+	withLogo := warningLines("ja", true)
+	if len(withLogo) != 3 {
+		t.Fatalf("認証ありでは 3 行を期待, got %#v", withLogo)
+	}
+
+	if en := warningLines("en", true); len(en) != 2 {
+		t.Fatalf("EN は 2 行のまま: %#v", en)
+	}
+}
+
+func TestQRSizeShrinksOnlyWithCertLogo(t *testing.T) {
+	plain := textQRRow{qrURL: "https://example.test/t/1"}.qrSizePx()
+	withLogo := textQRRow{qrURL: "https://example.test/t/1", certPath: "ninsyo_logo.jpg"}.qrSizePx()
+
+	if want := contentWidth * 40 / 100; plain != want {
+		t.Fatalf("認証なしの QR サイズが変わっている: got %d, want %d", plain, want)
+	}
+	if withLogo >= plain {
+		t.Fatalf("認証ありでは QR を縮める想定: got %d, plain %d", withLogo, plain)
+	}
 }

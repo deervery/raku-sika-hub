@@ -36,7 +36,11 @@ Base URL: `http://<host>:19800`
   },
   "printer": {
     "connected": true,
-    "name": "Brother_QL-820NWB"
+    "name": "Brother_QL-820NWB",
+    "model": "QL-820NWB",
+    "state": "idle",
+    "deviceUri": "ipp://localhost:60000/ipp/print",
+    "backendReady": true
   },
   "scanner": {
     "connected": true,
@@ -49,15 +53,20 @@ Base URL: `http://<host>:19800`
 |---|---|---|
 | `scale.connected` | bool | はかりが接続中か |
 | `scale.port` | string | シリアルポートパス（未接続時は空） |
-| `printer.connected` | bool | CUPSでプリンタが使用可能か |
+| `printer.connected` | bool | CUPS上の選択プリンタと送信先バックエンドが使用可能か |
 | `printer.name` | string | 選択されたプリンタ名 |
+| `printer.model` | string | 検出された Brother QL 型番（`QL-800` / `QL-820NWB`）。型番を判別できない場合は省略 |
+| `printer.state` | string | CUPSのプリンタ状態 |
+| `printer.deviceUri` | string | CUPSの送信先URI |
+| `printer.backendReady` | bool | `ipp-usb` 等の送信先バックエンドへ接続可能か |
+| `printer.backendError` | string | 送信先バックエンド異常時の詳細 |
 | `scanner.connected` | bool | バーコードリーダーが接続中か |
 | `scanner.device` | string | evdevデバイスパス（未接続時は空） |
 
 補足:
 
-- `printer.connected=true` は CUPS 上でプリンタ名を解決できることを表す
-- プリンタ本体が sleep 中でも `true` のままのことがある
+- `printer.connected=true` は CUPS 上でプリンタ名を解決でき、かつ `ipp-usb` 等の送信先バックエンドへ接続できることを表す
+- CUPS 登録だけが残り `ipp://localhost:60000/ipp/print` が死んでいる場合は `connected=false` / `backendReady=false` になる
 - 実際に印字が進行しているかは `/printer/queue` と `print_progress` を参照する
 
 ---
@@ -253,6 +262,7 @@ Base URL: `http://<host>:19800`
 | `PRINTER_PERMISSION_DENIED` | プリンタのアクセス権限なし |
 | `PRINTER_DISABLED` | プリンタが無効化されている |
 | `PRINTER_PAPER_ERROR` | 用紙切れ / ジャム |
+| `PRINTER_UNAVAILABLE` | CUPS送信先（例: `ipp-usb`）またはプリンタ本体へ接続できない |
 | `PRINTER_ERROR` | その他の印刷エラー / レンダラ未初期化 |
 
 ---
@@ -305,6 +315,9 @@ Content-Type: image/png
   "status": "ok",
   "printer": "Brother_QL_820NWB_USB",
   "printerState": "idle",
+  "deviceUri": "ipp://localhost:60000/ipp/print",
+  "backendReady": false,
+  "backendError": "connect: connection refused",
   "queueState": "stalled",
   "jobCount": 1,
   "clearable": true,
@@ -328,6 +341,7 @@ Content-Type: image/png
   - `printing` — 印字進行中
   - `stalled` — キューは残っているが進行が見えず、復帰待ちまたは停滞
 - `printerState` は raw な CUPS 状態文字列
+- `backendReady=false` かつ `jobCount>0` は、キューを削除してからプリンタ/Hubを復旧する対象
 - `jobs[].state` は UI 向け正規化状態
 
 ## DELETE /printer/queue

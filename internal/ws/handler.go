@@ -26,6 +26,8 @@ type HealthSnapshot struct {
 	PrinterConnected  bool     `json:"printerConnected"`
 	ConfiguredPrinter string   `json:"configuredPrinter"`
 	SelectedPrinter   string   `json:"selectedPrinter"`
+	SelectedModel     string   `json:"selectedModel,omitempty"`
+	PrinterSource     string   `json:"printerSource,omitempty"`
 	AvailablePrinters []string `json:"availablePrinters"`
 }
 
@@ -239,6 +241,8 @@ func (h *Handler) SnapshotHealth() HealthSnapshot {
 		PrinterConnected:  err == nil && printerReady(status),
 		ConfiguredPrinter: status.ConfiguredName,
 		SelectedPrinter:   status.SelectedName,
+		SelectedModel:     status.Model,
+		PrinterSource:     status.Source,
 		AvailablePrinters: status.Available,
 	}
 }
@@ -259,22 +263,12 @@ func (h *Handler) PrinterStatusEvent() PrinterStatusEvent {
 		Type:             "printer_status",
 		PrinterConnected: err == nil && printerReady(status),
 		PrinterName:      printerName,
+		PrinterModel:     status.Model,
 	}
 }
 
 func printerReady(status printer.PrinterStatus) bool {
-	if status.SelectedName == "" {
-		return false
-	}
-	if status.Source != "configured" {
-		return true
-	}
-	for _, name := range status.Available {
-		if name == status.SelectedName {
-			return true
-		}
-	}
-	return false
+	return status.Ready()
 }
 
 func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Request) {
@@ -291,6 +285,8 @@ func (h *Handler) handlePrintTest(ctx context.Context, client *WSClient, req Req
 			code = "PRINTER_DISABLED"
 		} else if strings.HasPrefix(errMsg, "PRINTER_PAPER_ERROR:") {
 			code = "PRINTER_PAPER_ERROR"
+		} else if strings.HasPrefix(errMsg, "PRINTER_UNAVAILABLE:") {
+			code = "PRINTER_UNAVAILABLE"
 		} else if strings.HasPrefix(errMsg, "PRINTER_ERROR:") {
 			code = "PRINTER_ERROR"
 		}
@@ -392,6 +388,8 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 			code = "PRINTER_DISABLED"
 		} else if strings.HasPrefix(errMsg, "PRINTER_PAPER_ERROR:") {
 			code = "PRINTER_PAPER_ERROR"
+		} else if strings.HasPrefix(errMsg, "PRINTER_UNAVAILABLE:") {
+			code = "PRINTER_UNAVAILABLE"
 		}
 		client.Send(PrintErrorResponse{
 			Type:      "print_error",

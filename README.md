@@ -179,6 +179,39 @@ curl http://localhost:19800/health
 PRINTER_NAME=Brother_QL_820NWB_USB
 ```
 
+QL-800 / QL-820NWB のどちらでも動かす運用では、カンマ区切りで候補を指定できる。
+Hub は CUPS に登録済みの候補から左に書いた順で最初に見つかったプリンタを使う。
+
+```bash
+PRINTER_NAME=Brother_QL_800_USB,Brother_QL_820NWB_USB
+```
+
+### プリンタの自動認識
+
+`PRINTER_NAME` に書いた名前が CUPS に 1 つも存在しない場合、Hub は登録済みキューの中から
+Brother QL ラベルプリンタを自動検出して使用する。CUPS 登録名が
+`Brother_QL-800` / `Brother QL-800 (USB)` のように設定と綴りが違っていても、
+キュー名に含まれる型番（QL-800 / QL-820NWB）で照合するため印刷できる。
+
+選択の優先順位:
+
+1. `PRINTER_NAME` の候補のうち CUPS に実在するもの（`source=configured`）
+2. CUPS の既定プリンタ（ただし Brother QL の場合のみ／`source=cups-default`）
+3. 登録済みキューから自動検出した Brother QL（`source=auto-detected`）
+4. 上記すべてが該当しない場合は `PRINTER_NAME` の先頭をそのまま使い、
+   `PRINTER_NOT_CONFIGURED` エラーで実際のキュー名を提示する
+
+Brother QL 以外のプリンタ（オフィス用レーザー等）が既定になっていても、
+ラベル印刷先として自動選択されることはない。
+
+検出結果は起動時ログと `GET /health` の `printer.model`、`GET /ws/status` の
+`selectedModel` / `printerSource` で確認できる。
+
+```bash
+curl -s http://localhost:19800/health | jq .printer
+# { "connected": true, "name": "Brother_QL-800", "model": "QL-800", ... }
+```
+
 印刷サイズに関する注意（重要）:
 
 - Hub から CUPS に渡すカスタム用紙は `Custom.WxHmm` 形式を使うこと（例: `Custom.62x43mm`）
@@ -217,7 +250,7 @@ PRINTER_NAME=Brother_QL_820NWB_USB
 | `dataBits` | `7` | `DATA_BITS` | データビット |
 | `parity` | `"even"` | `PARITY` | パリティ |
 | `stopBits` | `1` | `STOP_BITS` | ストップビット |
-| `printerName` | `""` | `PRINTER_NAME` | CUPS プリンタ名（空 = 自動選択） |
+| `printerName` | `""` | `PRINTER_NAME` | CUPS プリンタ名（空 = 自動選択、`,` / `;` 区切りで複数候補可） |
 | `fontPath` | `""` (自動検出) | `FONT_PATH` | 日本語フォントパス |
 | `scannerDeviceName` | `""` | `SCANNER_DEVICE_NAME` | バーコードリーダーのデバイス名パターン |
 | `scannerVid` | `""` | `SCANNER_VID` | バーコードリーダーの USB VID |

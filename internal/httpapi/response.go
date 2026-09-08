@@ -57,6 +57,13 @@ type ScaleHealth struct {
 type PrinterHealth struct {
 	Connected bool   `json:"connected"`
 	Name      string `json:"name,omitempty"`
+	// Model is the detected Brother QL model ("QL-800", "QL-820NWB"); empty
+	// when the CUPS queue name carries no recognizable model.
+	Model        string `json:"model,omitempty"`
+	State        string `json:"state,omitempty"`
+	DeviceURI    string `json:"deviceUri,omitempty"`
+	BackendReady bool   `json:"backendReady"`
+	BackendError string `json:"backendError,omitempty"`
 }
 
 // ScannerHealth is the scanner section of the health response.
@@ -72,6 +79,8 @@ type WSStatusResponse struct {
 	PrinterConnected  bool     `json:"printerConnected"`
 	ConfiguredPrinter string   `json:"configuredPrinter"`
 	SelectedPrinter   string   `json:"selectedPrinter"`
+	SelectedModel     string   `json:"selectedModel,omitempty"`
+	PrinterSource     string   `json:"printerSource,omitempty"`
 	AvailablePrinters []string `json:"availablePrinters"`
 }
 
@@ -104,6 +113,9 @@ type QueueResponse struct {
 	Status       string     `json:"status"`
 	Printer      string     `json:"printer,omitempty"`
 	PrinterState string     `json:"printerState,omitempty"`
+	DeviceURI    string     `json:"deviceUri,omitempty"`
+	BackendReady bool       `json:"backendReady"`
+	BackendError string     `json:"backendError,omitempty"`
 	QueueState   string     `json:"queueState,omitempty"`
 	JobCount     int        `json:"jobCount"`
 	Clearable    bool       `json:"clearable"`

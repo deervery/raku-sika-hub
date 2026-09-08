@@ -278,3 +278,34 @@ func TestRender_CarcassDeer(t *testing.T) {
 	bounds := img.Bounds()
 	t.Logf("carcass label: %dx%d px → %s", bounds.Dx(), bounds.Dy(), outPath)
 }
+
+// #271 のエゾシカ認証ロゴ対応で、警告文の行数と QR サイズを詰めた。
+// この妥協はロゴを描く施設だけに必要なので、認証なしのラベルが
+// 従来どおりであることを固定する。
+func TestWarningLinesOnlyCompactWithCertLogo(t *testing.T) {
+	plain := warningLines("ja", false)
+	if len(plain) != 2 || plain[1] != "お召し上がりください" {
+		t.Fatalf("認証なしの警告文が変わっている: %#v", plain)
+	}
+
+	withLogo := warningLines("ja", true)
+	if len(withLogo) != 3 {
+		t.Fatalf("認証ありでは 3 行を期待, got %#v", withLogo)
+	}
+
+	if en := warningLines("en", true); len(en) != 2 {
+		t.Fatalf("EN は 2 行のまま: %#v", en)
+	}
+}
+
+func TestQRSizeShrinksOnlyWithCertLogo(t *testing.T) {
+	plain := textQRRow{qrURL: "https://example.test/t/1"}.qrSizePx()
+	withLogo := textQRRow{qrURL: "https://example.test/t/1", certPath: "ninsyo_logo.jpg"}.qrSizePx()
+
+	if want := contentWidth * 40 / 100; plain != want {
+		t.Fatalf("認証なしの QR サイズが変わっている: got %d, want %d", plain, want)
+	}
+	if withLogo >= plain {
+		t.Fatalf("認証ありでは QR を縮める想定: got %d, plain %d", withLogo, plain)
+	}
+}

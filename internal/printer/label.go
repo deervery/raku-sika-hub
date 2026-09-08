@@ -183,7 +183,7 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			}
 		}
 		rows = append(rows, textQRRow{
-			lines:    warningLines(data.Locale),
+			lines:    warningLines(data.Locale, certPath != ""),
 			qrURL:    data.QRCode,
 			certPath: certPath,
 		})
@@ -774,12 +774,20 @@ func warningText(locale string) string {
 	return localizedCaption(locale, "加熱してお召し上がりください", "Cook thoroughly before eating")
 }
 
-func warningLines(locale string) []string {
+// warningLines returns the "cook thoroughly" warning shown next to the QR.
+//
+// withCertLogo=true splits the JA text into 3 shorter lines so that the
+// warning, the ezoshika certification logo and the QR all fit on one row
+// (#271). Facilities without the certification keep the original 2-line
+// wording, so their labels are unchanged.
+func warningLines(locale string, withCertLogo bool) []string {
 	if strings.EqualFold(strings.TrimSpace(locale), "en") {
 		return []string{"Cook thoroughly", "before eating"}
 	}
-	// JA: 3 行構成。textQRRow の右側にエゾシカ認証ロゴを並べるため高さを確保 (#271)。
-	return []string{"加熱して", "お召し上がり", "ください"}
+	if withCertLogo {
+		return []string{"加熱して", "お召し上がり", "ください"}
+	}
+	return []string{"加熱して", "お召し上がりください"}
 }
 
 func labelWidthRatioForTemplate(template string) float64 {
@@ -1099,8 +1107,13 @@ func (t textQRRow) effectiveFontSize() float64 {
 }
 
 func (t textQRRow) qrSizePx() int {
-	// 警告文(3 行)+認証ロゴ+QR を 1 行に納めるため QR は控えめに (#271)。
-	return contentWidth * 33 / 100
+	// 認証ロゴを併置する行では、警告文(3 行)+ロゴ+QR を 1 行に納めるため
+	// QR を控えめにする (#271)。ロゴを描かないラベルでは従来の大きさ
+	// (62mm 幅で約 23mm 角) を維持し、読み取り性を落とさない。
+	if strings.TrimSpace(t.certPath) != "" {
+		return contentWidth * 33 / 100
+	}
+	return contentWidth * 40 / 100
 }
 
 func (t textQRRow) height() int {

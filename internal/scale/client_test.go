@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,62 @@ func (m *mockPort) Close() error {
 	return nil
 }
 
+// keepalivePort answers every command with the same canned line, so a client
+// can be probed repeatedly (mockPort's buffer is consumed after one response,
+// which the watchdog keepalive would read as a dead scale).
+type keepalivePort struct {
+	mu        sync.Mutex
+	response  string
+	pending   []byte
+	silent    bool
+	closed    bool
+	writtenCh chan string
+}
+
+func newKeepalivePort(response string) *keepalivePort {
+	return &keepalivePort{response: response, writtenCh: make(chan string, 32)}
+}
+
+func (p *keepalivePort) Read(b []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.pending) == 0 {
+		// Scale stopped answering; surface it the way a closed port does.
+		return 0, io.EOF
+	}
+	n := copy(b, p.pending)
+	p.pending = p.pending[n:]
+	return n, nil
+}
+
+func (p *keepalivePort) Write(b []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	select {
+	case p.writtenCh <- string(b):
+	default:
+	}
+	if !p.silent {
+		p.pending = append(p.pending, p.response...)
+	}
+	return len(b), nil
+}
+
+func (p *keepalivePort) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	return nil
+}
+
+// goSilent makes the port accept writes but never answer again.
+func (p *keepalivePort) goSilent() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.silent = true
+	p.pending = nil
+}
+
 func testLogger(t *testing.T) *logging.Logger {
 	t.Helper()
 	dir := t.TempDir()
@@ -63,20 +120,25 @@ func testLogger(t *testing.T) *logging.Logger {
 
 func newTestClient(t *testing.T, mock *mockPort) (*Client, chan bool) {
 	t.Helper()
+	return newTestClientWithPort(t, mock)
+}
+
+func newTestClientWithPort(t *testing.T, port Port) (*Client, chan bool) {
+	t.Helper()
 	statusCh := make(chan bool, 10)
 	cfg := config.Default()
 	cfg.Port = "/dev/ttyTEST"
 
-	client := NewClient(cfg, testLogger(t), func(connected bool, port string) {
+	client := NewClient(cfg, testLogger(t), func(connected bool, portName string) {
 		statusCh <- connected
 	})
 	client.openPort = func(name string, cfg config.Config) (Port, error) {
-		return mock, nil
+		return port, nil
 	}
 
 	// Manually connect
 	client.mu.Lock()
-	client.port = mock
+	client.port = port
 	client.mu.Unlock()
 	client.portName.Store("/dev/ttyTEST")
 	client.connected.Store(true)
@@ -260,16 +322,55 @@ func TestHealthCheck_DoesNotTouchSerialWhenConnected(t *testing.T) {
 	}
 }
 
-func TestWatchdogCheck_DoesNotTouchSerial(t *testing.T) {
-	mock := newMockPort()
-	client, _ := newTestClient(t, mock)
+// The watchdog deliberately sends a keepalive so a stale USB-serial link is
+// detected before the operator presses "weigh" (cd622ad). HealthCheck is the
+// one that must stay off the wire — see
+// TestHealthCheck_DoesNotTouchSerialWhenConnected.
+func TestWatchdogCheck_SendsKeepalive(t *testing.T) {
+	port := newKeepalivePort("ST,+00000.00  kg\r\n")
+	client, statusCh := newTestClientWithPort(t, port)
 
 	client.watchdogCheck()
 
 	select {
-	case written := <-mock.writtenCh:
-		t.Fatalf("expected no serial write during watchdog check, got %q", written)
+	case written := <-port.writtenCh:
+		if written != CmdWeigh {
+			t.Fatalf("expected keepalive %q, got %q", CmdWeigh, written)
+		}
 	default:
+		t.Fatal("expected the watchdog to send a keepalive command")
+	}
+
+	if !client.Connected() {
+		t.Fatal("expected the client to stay connected while the scale answers")
+	}
+	select {
+	case connected := <-statusCh:
+		t.Fatalf("expected no status change, got connected=%v", connected)
+	default:
+	}
+}
+
+func TestWatchdogCheck_MarksDisconnectedWhenScaleStopsAnswering(t *testing.T) {
+	port := newKeepalivePort("ST,+00000.00  kg\r\n")
+	port.goSilent()
+	client, statusCh := newTestClientWithPort(t, port)
+
+	client.watchdogCheck()
+
+	if client.Connected() {
+		t.Fatal("expected the client to drop the connection when the keepalive fails")
+	}
+	select {
+	case connected := <-statusCh:
+		if connected {
+			t.Fatal("expected a connected=false status callback")
+		}
+	default:
+		t.Fatal("expected a status callback after the keepalive failed")
+	}
+	if !port.closed {
+		t.Fatal("expected the stale port to be closed")
 	}
 }
 
@@ -303,17 +404,18 @@ func TestStart_ConnectsImmediately(t *testing.T) {
 	}
 }
 
-func TestWatchdog_DoesNotProbeScaleDuringIdle(t *testing.T) {
-	mock := newMockPort("ST,+00000.00  kg\r\n")
+// Repeated keepalives must not flap the connection while the scale answers.
+func TestWatchdog_KeepsConnectionWhileScaleAnswers(t *testing.T) {
+	port := newKeepalivePort("ST,+00000.00  kg\r\n")
 	statusCh := make(chan bool, 10)
 	cfg := config.Default()
 	cfg.Port = "/dev/ttyTEST"
 
-	client := NewClient(cfg, testLogger(t), func(connected bool, port string) {
+	client := NewClient(cfg, testLogger(t), func(connected bool, portName string) {
 		statusCh <- connected
 	})
 	client.openPort = func(name string, cfg config.Config) (Port, error) {
-		return mock, nil
+		return port, nil
 	}
 	client.reconnect = 10 * time.Second
 	client.watchdog = 30 * time.Millisecond
@@ -336,5 +438,9 @@ func TestWatchdog_DoesNotProbeScaleDuringIdle(t *testing.T) {
 	case connected := <-statusCh:
 		t.Fatalf("expected no watchdog status change, got connected=%v", connected)
 	case <-time.After(200 * time.Millisecond):
+	}
+
+	if !client.Connected() {
+		t.Fatal("expected the client to still be connected after several keepalives")
 	}
 }

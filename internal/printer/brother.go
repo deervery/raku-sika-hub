@@ -114,7 +114,14 @@ func (b *Brother) IsAvailable() bool {
 // Status returns the current CUPS printer resolution.
 func (b *Brother) Status() (PrinterStatus, error) {
 	availableOut, err := exec.Command("lpstat", "-p").CombinedOutput()
-	if err != nil {
+	// `lpstat -p` exits 1 with "No destinations added." when CUPS holds no queue
+	// at all. That is a printer *configuration* state, not a failure to query
+	// CUPS, so it must fall through to validateStatus() → PRINTER_NOT_CONFIGURED
+	// ("PRINTER_NAME を実在する CUPS 名に…") instead of the opaque
+	// "CUPS の状態確認に失敗しました". Observed at raku-sika-hub-office on
+	// 2026-09-08, where the queue had been deleted and the operator was told the
+	// status check had failed rather than that no printer was registered.
+	if err != nil && !isNoDestinationsOutput(string(availableOut)) {
 		return PrinterStatus{}, fmt.Errorf("lpstat -p failed: %w: %s", err, strings.TrimSpace(string(availableOut)))
 	}
 
@@ -669,6 +676,19 @@ func (b *Brother) resolveLabelMedia(printerName string) (string, []string, error
 		)
 	}
 	return selected, options, nil
+}
+
+// isNoDestinationsOutput reports whether `lpstat -p` failed only because CUPS
+// has no printer queue registered. Both the C locale message and the Japanese
+// translation are matched, since the Hub runs under LANG=C on some stations and
+// under a ja locale on others.
+func isNoDestinationsOutput(output string) bool {
+	out := strings.TrimSpace(output)
+	if out == "" {
+		return false
+	}
+	return strings.Contains(out, "No destinations added") ||
+		strings.Contains(out, "宛先が追加されていません")
 }
 
 func parseAvailablePrinters(output string) []string {

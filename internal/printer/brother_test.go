@@ -286,3 +286,63 @@ func TestValidateStatus_NoDestinations(t *testing.T) {
 		t.Fatalf("expected PRINTER_NOT_CONFIGURED, got %q", err.Error())
 	}
 }
+
+// 実機から採取した lpoptions -l の出力。
+// office (2026-09-23) の ipp-usb キューと ptouch キューの実物。
+const lpoptionsIPPUSB = `PageSize/Media Size: 12x12mm 17x54mm 17x87mm 23x23mm 24x24mm 29x42mm 29x52mm 29x54mm 29x62mm *29x90mm 38x90mm 39x48mm 58x58mm 60x86mm 62x100mm Custom.WIDTHxHEIGHT
+CutMedia/CutMedia: *None Auto EndOfPage EndOfJob
+Resolution/Resolution: *300dpi`
+
+const lpoptionsPtouch = `PageSize/Page Size: Custom.WIDTHxHEIGHT 12mm 12mm-circular 17x54mm 29mm 29x90mm 38mm *62mm 62x29mm 62x100mm
+Resolution/Resolution: *300dpi 300x600dpi
+PrintQuality/Print Quality: *High Fast
+MirrorPrint/Mirror Print: True *False
+PrintDensity/Print Density: *0PrinterDefault 1VeryLight 2Light 3Medium 4Dark 5VeryDark
+AutoCut/Auto Cut: *True False
+AutoEject/Auto Eject: *True False
+CutLabel/Cut every: *0 1 2 3 4 5 6 7 8 9 10
+ExtraMargin/Extra Margin (ignored for die-cut tape): *0mm 1mm 2mm
+MediaType/Media Type: Labels *Tape`
+
+func TestParseOptionNames(t *testing.T) {
+	ipp := parseOptionNames(lpoptionsIPPUSB)
+	for _, want := range []string{"PageSize", "CutMedia", "Resolution"} {
+		if _, ok := ipp[want]; !ok {
+			t.Errorf("ipp-usb: %q missing from %v", want, ipp)
+		}
+	}
+	if _, ok := ipp["AutoCut"]; ok {
+		t.Error("ipp-usb: AutoCut should not be reported")
+	}
+
+	pt := parseOptionNames(lpoptionsPtouch)
+	for _, want := range []string{"PageSize", "AutoCut", "CutLabel", "MediaType", "ExtraMargin"} {
+		if _, ok := pt[want]; !ok {
+			t.Errorf("ptouch: %q missing from %v", want, pt)
+		}
+	}
+	// ptouch の PPD には CutMedia が無い。ここが移行で効く差分。
+	if _, ok := pt["CutMedia"]; ok {
+		t.Error("ptouch: CutMedia should not be reported; the PPD has no such option")
+	}
+}
+
+func TestCutArgsFor(t *testing.T) {
+	join := func(args []string) string { return strings.Join(args, " ") }
+
+	if got := join(cutArgsFor(parseOptionNames(lpoptionsIPPUSB))); got != "-o CutMedia=EndOfPage" {
+		t.Errorf("ipp-usb queue: got %q", got)
+	}
+	if got := join(cutArgsFor(parseOptionNames(lpoptionsPtouch))); got != "-o AutoCut=True -o CutLabel=1" {
+		t.Errorf("ptouch queue: got %q", got)
+	}
+	// 照会できなかったときは従来どおりの挙動を保つ（カットを黙って落とさない）。
+	if got := join(cutArgsFor(nil)); got != "-o CutMedia=EndOfPage" {
+		t.Errorf("unknown queue: got %q", got)
+	}
+	// どちらの綴りも無いキューには何も送らない。未知のオプションは
+	// CUPS がジョブごと弾くため。
+	if got := cutArgsFor(parseOptionNames("PageSize/Page Size: A4\n")); got != nil {
+		t.Errorf("queue without any cut option: got %v", got)
+	}
+}

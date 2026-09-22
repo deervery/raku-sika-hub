@@ -3,6 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/deervery/raku-sika-hub/internal/printer"
 )
 
 // SuccessResponse is a generic success JSON response.
@@ -12,6 +14,10 @@ type SuccessResponse struct {
 	JobID      string `json:"jobId,omitempty"`
 	Message    string `json:"message,omitempty"`
 	Copies     int    `json:"copies,omitempty"`
+	// Diagnosis is attached when a print did not complete, so the tablet can
+	// tell a wedged USB link from a backed-up queue instead of showing the
+	// same "送信しました" for both.
+	Diagnosis *printer.Diagnosis `json:"diagnosis,omitempty"`
 }
 
 // ErrorBody is the standard error response format.
@@ -121,6 +127,8 @@ type QueueResponse struct {
 	Clearable    bool       `json:"clearable"`
 	Message      string     `json:"message,omitempty"`
 	Jobs         []QueueJob `json:"jobs"`
+	// Diagnosis classifies the queue state for the tablet and the admin GUI.
+	Diagnosis *printer.Diagnosis `json:"diagnosis,omitempty"`
 }
 
 // QueueJob represents a single CUPS print job.
@@ -131,6 +139,8 @@ type QueueJob struct {
 	Size        string `json:"size"`
 	SubmittedAt string `json:"submittedAt"`
 	State       string `json:"state,omitempty"`
+	// AgeSec is how long the hub has seen this job waiting.
+	AgeSec int `json:"ageSec"`
 }
 
 func writeError(w http.ResponseWriter, httpStatus int, code, message string) {

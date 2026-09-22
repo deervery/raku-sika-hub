@@ -47,6 +47,10 @@ type QueueSnapshot struct {
 	BackendError  string
 	BackendDevice string
 	Jobs          []QueueJobStatus
+	// OldestJobAgeSec is how long the longest-waiting job has been in the
+	// queue, measured from when this hub first saw it. It drives the
+	// backlog/stalled distinction in DiagnoseQueue.
+	OldestJobAgeSec int
 }
 
 type QueueJobStatus struct {
@@ -55,6 +59,10 @@ type QueueJobStatus struct {
 	Size        string
 	SubmittedAt string
 	State       string
+	// AgeSec is seconds since this hub first observed the job. We track it
+	// ourselves instead of parsing SubmittedAt, whose format follows the
+	// CUPS locale and differs between the Pi and dev machines.
+	AgeSec int
 }
 
 // Brother manages printing to a Brother label printer via CUPS lp command.
@@ -68,6 +76,12 @@ type Brother struct {
 	name     string
 	renderer *LabelRenderer
 	logger   *logging.Logger
+
+	// jobSeenMu guards jobSeen, which maps a CUPS job id to the moment this
+	// hub first saw it queued. Entries are dropped once the job leaves the
+	// queue, so the map stays the size of the backlog.
+	jobSeenMu sync.Mutex
+	jobSeen   map[string]time.Time
 }
 
 var labelMediaCandidates = []string{
@@ -195,7 +209,71 @@ func (b *Brother) QueueSnapshot() (QueueSnapshot, error) {
 			snapshot.Jobs[i].State = "stalled"
 		}
 	}
+	b.annotateJobAges(&snapshot)
 	return snapshot, nil
+}
+
+// annotateJobAges fills AgeSec / OldestJobAgeSec from the first-seen ledger and
+// forgets jobs that have left the queue.
+func (b *Brother) annotateJobAges(snapshot *QueueSnapshot) {
+	now := time.Now()
+
+	b.jobSeenMu.Lock()
+	defer b.jobSeenMu.Unlock()
+	if b.jobSeen == nil {
+		b.jobSeen = make(map[string]time.Time)
+	}
+
+	live := make(map[string]struct{}, len(snapshot.Jobs))
+	oldest := 0
+	for i, job := range snapshot.Jobs {
+		live[job.ID] = struct{}{}
+		seen, ok := b.jobSeen[job.ID]
+		if !ok {
+			seen = now
+			b.jobSeen[job.ID] = seen
+		}
+		age := int(now.Sub(seen).Seconds())
+		snapshot.Jobs[i].AgeSec = age
+		if age > oldest {
+			oldest = age
+		}
+	}
+	for id := range b.jobSeen {
+		if _, ok := live[id]; !ok {
+			delete(b.jobSeen, id)
+		}
+	}
+	snapshot.OldestJobAgeSec = oldest
+}
+
+// CancelJob removes a single job from the queue.
+//
+// jobID must be a job id currently in this printer's queue ("QUEUE-1136").
+// We look it up in the live snapshot rather than trusting the caller, so a
+// crafted id cannot be handed to the cancel binary.
+func (b *Brother) CancelJob(jobID string) error {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return fmt.Errorf("PRINTER_ERROR: ジョブ ID が指定されていません")
+	}
+
+	snapshot, err := b.QueueSnapshot()
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: 印刷キューの確認に失敗しました: %s", err)
+	}
+	if _, ok := snapshot.findJob(jobID); !ok {
+		return fmt.Errorf("PRINTER_NOT_FOUND: 印刷ジョブ %s はキューにありません", jobID)
+	}
+
+	// -x also discards the spooled document, which is the point: a job we
+	// cancel here is one CUPS could not print.
+	out, err := exec.Command("cancel", "-x", jobID).CombinedOutput()
+	b.logger.Info("cancel output (job=%s): %s", jobID, strings.TrimSpace(string(out)))
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: 印刷ジョブの削除に失敗しました: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // LogStatus logs the configured and discovered printers.
@@ -289,6 +367,11 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
 	}
 	defer os.Remove(result.Path)
+
+	if err := verifyRenderedLabel(result.Path); err != nil {
+		b.logger.Warn("refusing to submit label: %v", err)
+		return PrintResult{}, err
+	}
 
 	// Print via CUPS lp command with dynamic media size for auto-cut.
 	copies := data.Copies
@@ -550,6 +633,32 @@ func (b *Brother) verifySubmittedJob(printerName, jobID string, timeout time.Dur
 		PrinterState: snapshot.PrinterState,
 		JobState:     lastState,
 	}, nil
+}
+
+// minRenderedLabelBytes is the floor a rendered label PNG must clear before we
+// hand it to lp. Real labels are ~125-130 KB; anything this small is a failed
+// render, not a printable label.
+const minRenderedLabelBytes = 1024
+
+// verifyRenderedLabel rejects an empty or truncated render before it reaches
+// CUPS.
+//
+// On 2026-09-22 a zero-byte spool file (job 1136) sat at the head of the
+// シクヌ queue and CUPS retried "The print file could not be opened" forever,
+// blocking the five healthy jobs behind it. CUPS accepts such a job happily,
+// so the check has to happen here, before submission.
+func verifyRenderedLabel(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: ラベル画像を確認できませんでした: %s", err)
+	}
+	if info.Size() < minRenderedLabelBytes {
+		return fmt.Errorf(
+			"PRINTER_ERROR: ラベル画像の生成に失敗しました（%d バイト）。印刷は中止しました。もう一度印刷してください",
+			info.Size(),
+		)
+	}
+	return nil
 }
 
 func readQueueSnapshot(printerName string) (QueueSnapshot, error) {

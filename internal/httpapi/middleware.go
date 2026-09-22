@@ -52,7 +52,12 @@ func LANOnly(next http.Handler) http.Handler {
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		// DELETE belongs here because the tablet, served from rakusika.com,
+		// clears a stuck queue with DELETE /printer/queue and cancels one job
+		// with DELETE /printer/jobs/{id}. Leaving it out does not fail loudly:
+		// the browser blocks the request at the preflight and the button does
+		// nothing, while curl — which sends no preflight — works fine.
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		if r.Method == http.MethodOptions {

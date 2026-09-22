@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
+	"github.com/deervery/raku-sika-hub/internal/netadmin"
 	"github.com/deervery/raku-sika-hub/internal/printer"
 	"github.com/deervery/raku-sika-hub/internal/scale"
 )
@@ -43,6 +44,7 @@ type Handler struct {
 	commit      string
 	buildDate   string
 	assetsDir   string
+	network     *netadmin.Manager
 }
 
 // NewHandler creates a Handler.
@@ -64,6 +66,7 @@ func NewHandler(
 		commit:      commit,
 		buildDate:   buildDate,
 		assetsDir:   assetsDir,
+		network:     netadmin.NewManager(),
 	}
 }
 
@@ -286,13 +289,24 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, SuccessResponse{
+	resp := SuccessResponse{
 		Status:     "ok",
 		PrintState: printResult.State,
 		JobID:      printResult.JobID,
 		Copies:     labelData.Copies,
 		Message:    printResult.Message,
-	})
+	}
+	// "pending" means the job was accepted but never left the queue. Say why,
+	// so the operator is not left watching a spinner with no cause named.
+	if printResult.State == "pending" {
+		if snapshot, err := h.printer.QueueSnapshot(); err == nil {
+			diagnosis := printer.DiagnoseQueue(snapshot)
+			resp.Diagnosis = &diagnosis
+		} else {
+			h.logger.Warn("diagnosis unavailable after pending print: %v", err)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 	if h.broadcaster != nil {
 		h.broadcaster.Broadcast(map[string]any{
 			"type":     "print_progress",
@@ -370,8 +384,10 @@ func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
 	if snapshot.BackendError != "" && len(jobs) > 0 {
 		message = "印刷キューが残っていますが、プリンタ送信先に接続できません。キュー削除とプリンタ再起動を確認してください。"
 	}
+	diagnosis := printer.DiagnoseQueue(snapshot)
 	writeJSON(w, http.StatusOK, QueueResponse{
 		Status:       "ok",
+		Diagnosis:    &diagnosis,
 		Printer:      snapshot.PrinterName,
 		PrinterState: snapshot.PrinterState,
 		DeviceURI:    snapshot.BackendDevice,
@@ -432,6 +448,7 @@ func queueJobsFromSnapshot(snapshot printer.QueueSnapshot) []QueueJob {
 			Size:        job.Size,
 			SubmittedAt: job.SubmittedAt,
 			State:       job.State,
+			AgeSec:      job.AgeSec,
 		})
 	}
 	return jobs

@@ -2,12 +2,21 @@ package httpapi
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
 )
+
+// adminAssets is the maintenance GUI, compiled into the binary so that
+// deploying it is exactly the existing hub deploy (ops/scripts/deploy-hub.sh)
+// with no extra service, port or asset directory to keep in sync.
+//
+//go:embed webadmin
+var adminAssets embed.FS
 
 // Server is the HTTP REST API server.
 type Server struct {
@@ -33,6 +42,19 @@ func NewServer(handler *Handler, wsRoutes RouteRegistrar, logger *logging.Logger
 	}
 }
 
+// mountAdmin serves the embedded maintenance GUI at /admin/.
+func (s *Server) mountAdmin(mux *http.ServeMux) error {
+	sub, err := fs.Sub(adminAssets, "webadmin")
+	if err != nil {
+		return err
+	}
+	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServerFS(sub)))
+	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+	})
+	return nil
+}
+
 // Start begins listening. It blocks until the server is shut down.
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -47,7 +69,15 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/printer/preview", s.handler.HandlePrinterPreview)
 	mux.HandleFunc("/printer/test", s.handler.HandlePrinterTest)
 	mux.HandleFunc("/printer/queue", s.handler.HandlePrinterQueue)
+	mux.HandleFunc("/printer/jobs/{id}", s.handler.HandlePrinterJob)
 	mux.HandleFunc("/scanner/scan", s.handler.HandleScannerScan)
+	mux.HandleFunc("/system/network", s.handler.HandleNetwork)
+	mux.HandleFunc("/system/network/connect", s.handler.HandleNetworkConnect)
+	if err := s.mountAdmin(mux); err != nil {
+		// The GUI is a maintenance aid; losing it must not stop the hub from
+		// printing, so we log and carry on.
+		s.logger.Warn("admin GUI unavailable: %v", err)
+	}
 	if s.wsRoutes != nil {
 		s.wsRoutes.RegisterRoutes(mux)
 	}

@@ -401,8 +401,8 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 		"-o", "media=" + media,
 		"-o", "PageSize=" + media,
 		"-o", "fit-to-page",
-		"-o", "CutMedia=EndOfPage",
 	}
+	args = append(args, b.cutArgs(status.SelectedName)...)
 	b.logger.Info("lp args: %s", strings.Join(args, " "))
 	args = append(args, result.Path)
 	out, err := exec.Command("lp", args...).CombinedOutput()
@@ -764,6 +764,72 @@ func printerConfigError(status PrinterStatus) error {
 		status.DefaultName,
 		formatPrinters(status.Available),
 	)
+}
+
+// cutArgs returns the lp options that make the printer cut after each label,
+// chosen by asking the queue what it accepts.
+//
+// The two print paths spell this differently:
+//
+//	ipp-usb + IPP Everywhere PPD : CutMedia=EndOfPage
+//	printer-driver-ptouch PPD    : AutoCut=True + CutLabel=1
+//
+// The ptouch PPD has no CutMedia option at all, so sending it there is a no-op
+// and the roll never gets cut. Stations migrate one at a time, so a single hub
+// binary has to work with both; we ask the queue rather than guessing from the
+// device URI.
+//
+// If the queue cannot be queried we keep the historical behaviour
+// (CutMedia=EndOfPage) rather than silently dropping the cut.
+func (b *Brother) cutArgs(printerName string) []string {
+	out, err := exec.Command("lpoptions", "-p", printerName, "-l").CombinedOutput()
+	if err != nil {
+		b.logger.Warn("lpoptions -l failed for %q, assuming CutMedia: %s", printerName, strings.TrimSpace(string(out)))
+		return []string{"-o", "CutMedia=EndOfPage"}
+	}
+	args := cutArgsFor(parseOptionNames(string(out)))
+	b.logger.Info("cut options resolved: printer=%q args=%s", printerName, strings.Join(args, " "))
+	return args
+}
+
+// parseOptionNames returns the option keywords a queue accepts. Each line of
+// `lpoptions -p <queue> -l` looks like
+//
+//	PageSize/Page Size: Custom.WIDTHxHEIGHT 29mm *62mm 62x100mm
+//
+// so the keyword is everything before the first '/'.
+func parseOptionNames(output string) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		slash := strings.Index(line, "/")
+		colon := strings.Index(line, ":")
+		if slash <= 0 || colon < slash {
+			continue
+		}
+		names[line[:slash]] = struct{}{}
+	}
+	return names
+}
+
+func cutArgsFor(names map[string]struct{}) []string {
+	if names == nil {
+		return []string{"-o", "CutMedia=EndOfPage"}
+	}
+	if _, ok := names["CutMedia"]; ok {
+		return []string{"-o", "CutMedia=EndOfPage"}
+	}
+	if _, ok := names["AutoCut"]; ok {
+		args := []string{"-o", "AutoCut=True"}
+		if _, ok := names["CutLabel"]; ok {
+			// "Cut every N labels"; 1 cuts each label, matching EndOfPage.
+			args = append(args, "-o", "CutLabel=1")
+		}
+		return args
+	}
+	// Neither spelling is offered. Sending an unknown option makes CUPS reject
+	// the job, so send nothing and let the roll run on.
+	return nil
 }
 
 func (b *Brother) resolveLabelMedia(printerName string) (string, []string, error) {

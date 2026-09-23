@@ -70,6 +70,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/printer/test", s.handler.HandlePrinterTest)
 	mux.HandleFunc("/printer/queue", s.handler.HandlePrinterQueue)
 	mux.HandleFunc("/printer/jobs/{id}", s.handler.HandlePrinterJob)
+	mux.HandleFunc("/printer/jobs/{id}/restart", s.handler.HandlePrinterJobRestart)
 	mux.HandleFunc("/scanner/scan", s.handler.HandleScannerScan)
 	mux.HandleFunc("/system/network", s.handler.HandleNetwork)
 	mux.HandleFunc("/system/network/connect", s.handler.HandleNetworkConnect)

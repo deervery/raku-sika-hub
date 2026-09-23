@@ -127,6 +127,10 @@ type QueueResponse struct {
 	Clearable    bool       `json:"clearable"`
 	Message      string     `json:"message,omitempty"`
 	Jobs         []QueueJob `json:"jobs"`
+	// RecentJobs are the printer's most recent finished jobs, newest first.
+	// A label that printed wrong is already "completed" for CUPS, so it never
+	// appears in Jobs — the tablet needs these to offer 再送信.
+	RecentJobs []QueueJob `json:"recentJobs,omitempty"`
 	// Diagnosis classifies the queue state for the tablet and the admin GUI.
 	Diagnosis *printer.Diagnosis `json:"diagnosis,omitempty"`
 }

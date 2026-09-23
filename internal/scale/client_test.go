@@ -60,6 +60,8 @@ type keepalivePort struct {
 	pending   []byte
 	silent    bool
 	closed    bool
+	writes    int
+	silentFor int
 	writtenCh chan string
 }
 
@@ -86,10 +88,26 @@ func (p *keepalivePort) Write(b []byte) (int, error) {
 	case p.writtenCh <- string(b):
 	default:
 	}
-	if !p.silent {
+	p.writes++
+	quiet := p.silent || p.writes <= p.silentFor
+	if !quiet {
 		p.pending = append(p.pending, p.response...)
 	}
 	return len(b), nil
+}
+
+// answerAfterSilentWrites makes the port ignore the first n commands and answer
+// everything after that — a scale that misses one poll and then recovers.
+func (p *keepalivePort) answerAfterSilentWrites(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.silentFor = n
+}
+
+func (p *keepalivePort) writeCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.writes
 }
 
 func (p *keepalivePort) Close() error {
@@ -371,6 +389,53 @@ func TestWatchdogCheck_MarksDisconnectedWhenScaleStopsAnswering(t *testing.T) {
 	}
 	if !port.closed {
 		t.Fatal("expected the stale port to be closed")
+	}
+}
+
+// A single missed keepalive must not flap the connection.
+//
+// 函館の 2026-09-16..23 の hub ログでは keepalive の失敗 5032 件のうち 5027 件が
+// "read timeout (3s) after 0 bytes" で、いずれも同じ秒のうちに再接続できていた。
+// 一度きりの取りこぼしで connected=false を配信すると、タブレットは /health を
+// 30 秒間隔でしか見ないため、最大 30 秒「はかり未接続」のままになる。
+func TestWatchdogCheck_SurvivesOneMissedKeepalive(t *testing.T) {
+	port := newKeepalivePort("ST,+00000.00  kg\r\n")
+	client, statusCh := newTestClientWithPort(t, port)
+
+	// 1回目だけ黙って、リトライには答える。
+	port.answerAfterSilentWrites(1)
+
+	client.watchdogCheck()
+
+	if !client.Connected() {
+		t.Fatal("expected the client to stay connected after a single missed keepalive")
+	}
+	if port.closed {
+		t.Fatal("expected the port to stay open after a single missed keepalive")
+	}
+	select {
+	case connected := <-statusCh:
+		t.Fatalf("expected no status change, got connected=%v", connected)
+	default:
+	}
+	if got := port.writeCount(); got != 2 {
+		t.Fatalf("expected the keepalive to be retried exactly once (2 writes), got %d", got)
+	}
+}
+
+// 本当に居なくなった場合は、これまでどおり切断扱いにする（リトライ1回ぶん遅れるだけ）。
+func TestWatchdogCheck_StillDropsWhenBothAttemptsFail(t *testing.T) {
+	port := newKeepalivePort("ST,+00000.00  kg\r\n")
+	port.goSilent()
+	client, _ := newTestClientWithPort(t, port)
+
+	client.watchdogCheck()
+
+	if client.Connected() {
+		t.Fatal("expected the client to drop the connection when both keepalives fail")
+	}
+	if got := port.writeCount(); got != 2 {
+		t.Fatalf("expected exactly 2 keepalive attempts, got %d", got)
 	}
 }
 

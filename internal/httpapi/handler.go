@@ -218,6 +218,12 @@ func (h *Handler) HandleScaleTare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Weigh already does this (handler.go の HandleScaleWeigh)。風袋・ゼロだけ
+	// 自己回復しないと、watchdog が一瞬切断扱いにした直後に押されたときだけ
+	// 503 になる。同じ扱いに揃える。
+	if !h.scaleClient.Connected() {
+		h.scaleClient.TryConnect()
+	}
 	if !h.scaleClient.Connected() {
 		writeError(w, http.StatusServiceUnavailable, "SCALE_NOT_CONNECTED",
 			"スケールが接続されていません。USBケーブルを確認してください。")
@@ -239,6 +245,9 @@ func (h *Handler) HandleScaleZero(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.scaleClient.Connected() {
+		h.scaleClient.TryConnect()
+	}
 	if !h.scaleClient.Connected() {
 		writeError(w, http.StatusServiceUnavailable, "SCALE_NOT_CONNECTED",
 			"スケールが接続されていません。USBケーブルを確認してください。")

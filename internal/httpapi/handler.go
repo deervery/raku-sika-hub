@@ -385,6 +385,12 @@ func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
 		message = "印刷キューが残っていますが、プリンタ送信先に接続できません。キュー削除とプリンタ再起動を確認してください。"
 	}
 	diagnosis := printer.DiagnoseQueue(snapshot)
+	// Best effort: the pending queue is what callers depend on, so a failure to
+	// read the completed list must not turn a healthy queue into a 500.
+	recent, recentErr := h.printer.RecentJobs(5)
+	if recentErr != nil {
+		h.logger.Warn("recent print jobs unavailable: %v", recentErr)
+	}
 	writeJSON(w, http.StatusOK, QueueResponse{
 		Status:       "ok",
 		Diagnosis:    &diagnosis,
@@ -398,6 +404,7 @@ func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
 		Clearable:    len(jobs) > 0,
 		Message:      message,
 		Jobs:         jobs,
+		RecentJobs:   queueJobsFrom(snapshot.PrinterName, recent),
 	})
 }
 
@@ -432,9 +439,13 @@ func (h *Handler) handlePrinterQueueDelete(w http.ResponseWriter) {
 }
 
 func queueJobsFromSnapshot(snapshot printer.QueueSnapshot) []QueueJob {
-	jobs := make([]QueueJob, 0, len(snapshot.Jobs))
-	for _, job := range snapshot.Jobs {
-		printerName := snapshot.PrinterName
+	return queueJobsFrom(snapshot.PrinterName, snapshot.Jobs)
+}
+
+func queueJobsFrom(snapshotPrinter string, source []printer.QueueJobStatus) []QueueJob {
+	jobs := make([]QueueJob, 0, len(source))
+	for _, job := range source {
+		printerName := snapshotPrinter
 		if printerName == "" {
 			printerName = job.ID
 			if idx := strings.LastIndex(job.ID, "-"); idx > 0 {

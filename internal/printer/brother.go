@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -274,6 +275,106 @@ func (b *Brother) CancelJob(jobID string) error {
 		return fmt.Errorf("PRINTER_ERROR: 印刷ジョブの削除に失敗しました: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// jobIDPattern is the shape CUPS gives job ids ("Brother_QL_820NWB_USB-763").
+// RestartJob hands the id to lp, so it is checked against this before anything
+// else, on top of the membership check against the printer's own job list.
+var jobIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+func isSafeJobID(jobID string) bool {
+	return jobID != "" && len(jobID) <= 128 && jobIDPattern.MatchString(jobID)
+}
+
+// RecentJobs lists jobs CUPS has already finished for the selected printer,
+// newest first, at most limit entries.
+//
+// The tablet needs these to offer 再送信: a label that printed badly (wrong roll,
+// half-cut, blank) is finished as far as CUPS is concerned, so it never shows up
+// in the pending queue the operator can act on.
+func (b *Brother) RecentJobs(limit int) ([]QueueJobStatus, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	status, err := b.Status()
+	if err != nil {
+		return nil, err
+	}
+	if status.SelectedName == "" {
+		return nil, nil
+	}
+	out, err := exec.Command("lpstat", "-W", "completed", "-o", status.SelectedName).CombinedOutput()
+	if err != nil && strings.TrimSpace(string(out)) != "" {
+		return nil, fmt.Errorf("lpstat completed failed: %s", strings.TrimSpace(string(out)))
+	}
+	return newestCompletedJobs(string(out), limit), nil
+}
+
+// newestCompletedJobs parses `lpstat -W completed -o` output, which is oldest
+// first, and returns at most limit jobs newest first.
+func newestCompletedJobs(output string, limit int) []QueueJobStatus {
+	jobs := parseQueueJobs(output)
+	for i := range jobs {
+		jobs[i].State = "completed"
+	}
+	// Reverse: CUPS prints oldest first, the operator wants the last label.
+	for i, j := 0, len(jobs)-1; i < j; i, j = i+1, j-1 {
+		jobs[i], jobs[j] = jobs[j], jobs[i]
+	}
+	if limit > 0 && len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs
+}
+
+// RestartJob re-submits a job CUPS still holds the document for.
+//
+// This is 再送信 on the tablet. CUPS keeps the spool file for a while after a
+// job finishes (PreserveJobFiles), so a label that came out wrong can be sent
+// again without the operator re-entering anything. Once CUPS has dropped the
+// file, lp refuses and we pass its message through rather than pretending.
+func (b *Brother) RestartJob(jobID string) error {
+	jobID = strings.TrimSpace(jobID)
+	if !isSafeJobID(jobID) {
+		return fmt.Errorf("PRINTER_ERROR: ジョブ ID の形式が不正です")
+	}
+
+	known, err := b.jobBelongsToPrinter(jobID)
+	if err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf("PRINTER_NOT_FOUND: 印刷ジョブ %s が見つかりません", jobID)
+	}
+
+	out, err := exec.Command("lp", "-i", jobID, "-H", "restart").CombinedOutput()
+	b.logger.Info("restart output (job=%s): %s", jobID, strings.TrimSpace(string(out)))
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: 印刷ジョブの再送信に失敗しました: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// jobBelongsToPrinter reports whether jobID is one of the selected printer's
+// own jobs, pending or completed. Restarting is only ever offered for those.
+func (b *Brother) jobBelongsToPrinter(jobID string) (bool, error) {
+	snapshot, err := b.QueueSnapshot()
+	if err != nil {
+		return false, fmt.Errorf("PRINTER_ERROR: 印刷キューの確認に失敗しました: %s", err)
+	}
+	if _, ok := snapshot.findJob(jobID); ok {
+		return true, nil
+	}
+	recent, err := b.RecentJobs(0)
+	if err != nil {
+		return false, fmt.Errorf("PRINTER_ERROR: 印刷履歴の確認に失敗しました: %s", err)
+	}
+	for _, job := range recent {
+		if job.ID == jobID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // LogStatus logs the configured and discovered printers.

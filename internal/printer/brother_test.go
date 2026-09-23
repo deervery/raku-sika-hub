@@ -346,3 +346,60 @@ func TestCutArgsFor(t *testing.T) {
 		t.Errorf("queue without any cut option: got %v", got)
 	}
 }
+
+func TestIsSafeJobID(t *testing.T) {
+	ok := []string{"Brother_QL_820NWB_USB-763", "q-1", "A.b_c-9"}
+	for _, id := range ok {
+		if !isSafeJobID(id) {
+			t.Errorf("expected %q to be accepted", id)
+		}
+	}
+	bad := []string{"", " ", "a b", "job;rm -rf /", "job$(id)", "job/../x", strings.Repeat("a", 129)}
+	for _, id := range bad {
+		if isSafeJobID(id) {
+			t.Errorf("expected %q to be rejected", id)
+		}
+	}
+}
+
+// lpstat prints completed jobs oldest first; the operator reprinting a bad
+// label wants the most recent one, so the list is reversed and capped.
+func TestNewestCompletedJobs(t *testing.T) {
+	output := `Brother_QL_820NWB_ptouch-49 rakusika 61440 Wed Sep 23 07:12:01 2026
+Brother_QL_820NWB_ptouch-50 rakusika 61440 Wed Sep 23 07:12:57 2026
+Brother_QL_820NWB_ptouch-51 rakusika 61440 Wed Sep 23 07:27:59 2026
+`
+	jobs := newestCompletedJobs(output, 2)
+	if len(jobs) != 2 {
+		t.Fatalf("expected 2 jobs, got %d", len(jobs))
+	}
+	if jobs[0].ID != "Brother_QL_820NWB_ptouch-51" {
+		t.Errorf("expected newest job first, got %q", jobs[0].ID)
+	}
+	if jobs[1].ID != "Brother_QL_820NWB_ptouch-50" {
+		t.Errorf("expected second newest job, got %q", jobs[1].ID)
+	}
+	for _, job := range jobs {
+		if job.State != "completed" {
+			t.Errorf("expected state completed, got %q", job.State)
+		}
+	}
+}
+
+func TestNewestCompletedJobs_EmptyOutput(t *testing.T) {
+	if jobs := newestCompletedJobs("", 5); len(jobs) != 0 {
+		t.Fatalf("expected no jobs, got %d", len(jobs))
+	}
+}
+
+// A limit of 0 means "everything", which jobBelongsToPrinter relies on to
+// validate a restart against the full history rather than the newest few.
+func TestNewestCompletedJobs_ZeroLimitKeepsAll(t *testing.T) {
+	output := `p-1 u 1 Wed Sep 23 07:00:00 2026
+p-2 u 1 Wed Sep 23 07:01:00 2026
+p-3 u 1 Wed Sep 23 07:02:00 2026
+`
+	if jobs := newestCompletedJobs(output, 0); len(jobs) != 3 {
+		t.Fatalf("expected all 3 jobs, got %d", len(jobs))
+	}
+}

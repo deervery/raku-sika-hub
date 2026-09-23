@@ -36,6 +36,35 @@ func (h *Handler) HandlePrinterJob(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, "印刷ジョブを削除しました。")
 }
 
+// HandlePrinterJobRestart handles POST /printer/jobs/{id}/restart.
+//
+// 再送信: CUPS keeps the spooled document for a while after a job finishes, so
+// a label that came out wrong (wrong roll, half-cut, blank) can be sent again
+// without the operator re-entering anything on the tablet.
+func (h *Handler) HandlePrinterJobRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	jobID := strings.TrimSpace(r.PathValue("id"))
+	if jobID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ジョブ ID が指定されていません。")
+		return
+	}
+	if err := h.printer.RestartJob(jobID); err != nil {
+		status := http.StatusInternalServerError
+		code := "PRINTER_ERROR"
+		if strings.HasPrefix(err.Error(), "PRINTER_NOT_FOUND") {
+			status = http.StatusNotFound
+			code = "PRINTER_NOT_FOUND"
+		}
+		writeError(w, status, code, err.Error())
+		return
+	}
+	h.logger.Info("print job restarted via API: %s", jobID)
+	writeSuccess(w, "印刷ジョブを再送信しました。")
+}
+
 // NetworkConnectRequest is the body of POST /system/network/connect.
 type NetworkConnectRequest struct {
 	Profile string `json:"profile"`

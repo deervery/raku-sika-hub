@@ -60,6 +60,33 @@ func TestEncode_MatchesBrotherQL(t *testing.T) {
 	}
 }
 
+// Copies: brother_ql initializes once and repeats information, raster and
+// print per page. Re-initializing between pages could drop a label that is
+// still in the printer's buffer.
+func TestEncodePages_MatchesBrotherQLForCopies(t *testing.T) {
+	want, err := os.ReadFile(filepath.Join("testdata", "edges_696_x2.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := loadPNG(t, "edges_696.png")
+	got, err := EncodePages([]image.Image{img, img}, Continuous62, Options{Cut: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("differs from brother_ql (got %d bytes, want %d)", len(got), len(want))
+	}
+	if n := bytes.Count(got, []byte{0x1B, 0x40}); n != 1 {
+		t.Fatalf("printer initialized %d times, want once", n)
+	}
+}
+
+func TestEncodePages_RejectsNoPages(t *testing.T) {
+	if _, err := EncodePages(nil, Continuous62, Options{}); err == nil {
+		t.Fatal("expected an error for an empty job")
+	}
+}
+
 // The office failure: ptouch declared 58 mm for a 62 mm roll and the printer
 // stopped with 「ロール種類の不一致」. Whatever the label height, the declared
 // width must be the roll's.

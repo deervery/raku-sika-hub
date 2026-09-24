@@ -48,14 +48,14 @@ def make_synthetic():
     Image.new('L', (PRINTABLE, 150), 255).save(os.path.join(HERE, 'blank_696.png'))
 
 
-def encode(path, cut=True):
+def encode(path, cut=True, pages=1, model='QL-820NWB'):
     im = Image.open(path)
     if im.size[0] == 732:
         left = (732 - PRINTABLE) // 2
         im = im.crop((left, 0, left + PRINTABLE, im.size[1]))
-    qlr = BrotherQLRaster('QL-820NWB')
+    qlr = BrotherQLRaster(model)
     qlr.exception_on_warning = True
-    return convert(qlr=qlr, images=[im], label='62', rotate=0, threshold=50.0,
+    return convert(qlr=qlr, images=[im] * pages, label='62', rotate=0, threshold=50.0,
                    dither=False, compress=False, red=False, dpi_600=False,
                    hq=True, cut=cut)
 
@@ -74,3 +74,14 @@ if __name__ == '__main__':
         with open(os.path.join(HERE, dst), 'wb') as f:
             f.write(data)
         print(f'{dst}: {len(data)} bytes')
+
+    # 部数指定: brother_ql は初期化を1回だけ行い、ページごとに情報・ラスタ・印字を繰り返す
+    data = encode(os.path.join(HERE, 'edges_696.png'), pages=2)
+    with open(os.path.join(HERE, 'edges_696_x2.bin'), 'wb') as f:
+        f.write(data)
+    print(f'edges_696_x2.bin: {len(data)} bytes')
+
+    # hub が対応する QL-800 も、非圧縮なら QL-820NWB と同じバイト列になることを確かめる
+    assert encode(os.path.join(HERE, 'edges_696.png'), model='QL-800') == \
+        encode(os.path.join(HERE, 'edges_696.png'), model='QL-820NWB')
+    print('QL-800 == QL-820NWB: ok')

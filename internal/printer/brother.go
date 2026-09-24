@@ -30,6 +30,9 @@ type PrinterStatus struct {
 	CUPSState    string
 	BackendReady bool
 	BackendError string
+	// Raw is true when the selected queue is a CUPS raw queue. Labels are then
+	// encoded by the hub (qlraster) instead of going through a driver.
+	Raw bool
 }
 
 type PrintResult struct {
@@ -159,6 +162,7 @@ func (b *Brother) Status() (PrinterStatus, error) {
 
 	if status.SelectedName != "" {
 		status.DeviceURI = readPrinterDeviceURI(status.SelectedName)
+		status.Raw = readQueueIsRaw(status.SelectedName)
 		status.CUPSState, status.BackendError = readPrinterState(status.SelectedName)
 		status.BackendReady = status.BackendError == ""
 		if status.BackendReady {
@@ -421,6 +425,14 @@ func (b *Brother) TestPrint() error {
 		return err
 	}
 
+	if status.Raw {
+		if err := b.testPrintRaw(status); err != nil {
+			return err
+		}
+		b.logger.Info("test print sent as raw label (printer=%q)", status.SelectedName)
+		return nil
+	}
+
 	cmd := exec.Command("bash", "-c",
 		fmt.Sprintf(`echo "RakuSika Hub Test Print\n$(date)" | lp -d "%s" -`, status.SelectedName))
 	out, err := cmd.CombinedOutput()
@@ -478,6 +490,10 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 	copies := data.Copies
 	if copies < 1 {
 		copies = 1
+	}
+
+	if status.Raw {
+		return b.printRaw(status, result.Path, copies)
 	}
 
 	// Keep width fixed to 62mm and adjust only height per rendered label.

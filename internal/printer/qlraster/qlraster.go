@@ -81,6 +81,33 @@ const inkThreshold = 127
 // is rejected rather than resized: resizing is exactly the silent distortion
 // this package exists to avoid.
 func Encode(img image.Image, m Media, opts Options) ([]byte, error) {
+	return EncodePages([]image.Image{img}, m, opts)
+}
+
+// EncodePages encodes several labels into one job — how copies are printed.
+//
+// The printer is set up once; each page then carries its own print
+// information, raster and print command. The printer is deliberately not
+// re-initialized between pages: that could clear a label still in its buffer.
+// This mirrors brother_ql's multi-image output byte for byte.
+func EncodePages(imgs []image.Image, m Media, opts Options) ([]byte, error) {
+	if len(imgs) == 0 {
+		return nil, fmt.Errorf("qlraster: no pages")
+	}
+	var out bytes.Buffer
+	out.Write([]byte{0x1B, 0x69, 0x61, 0x01}) // ESC i a: raster mode
+	out.Write(make([]byte, 200))              // invalidate
+	out.Write([]byte{0x1B, 0x40})             // ESC @: initialize
+	out.Write([]byte{0x1B, 0x69, 0x61, 0x01}) // ESC i a: raster mode
+	for i, img := range imgs {
+		if err := writePage(&out, img, m, opts); err != nil {
+			return nil, fmt.Errorf("page %d: %w", i+1, err)
+		}
+	}
+	return out.Bytes(), nil
+}
+
+func writePage(out *bytes.Buffer, img image.Image, m Media, opts Options) error {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 
@@ -91,32 +118,26 @@ func Encode(img image.Image, m Media, opts Options) ([]byte, error) {
 	case m.DotsPrintable:
 		left = 0
 	default:
-		return nil, fmt.Errorf("qlraster: %s needs an image %d or %d dots wide, got %d",
+		return fmt.Errorf("qlraster: %s needs an image %d or %d dots wide, got %d",
 			m.Name, m.DotsTotal, m.DotsPrintable, w)
 	}
 	if h < MinRows || h > MaxRows {
-		return nil, fmt.Errorf("qlraster: label must be %d-%d rows long, got %d", MinRows, MaxRows, h)
+		return fmt.Errorf("qlraster: label must be %d-%d rows long, got %d", MinRows, MaxRows, h)
 	}
 
 	// Where column 0 of the printable area lands on the head, before the
 	// left-right mirror the head needs.
 	pad := headDots - m.DotsPrintable - m.OffsetRight
 
-	var out bytes.Buffer
-	out.Grow(260 + h*(3+rowBytes))
-
-	out.Write([]byte{0x1B, 0x69, 0x61, 0x01}) // ESC i a: raster mode
-	out.Write(make([]byte, 200))              // invalidate
-	out.Write([]byte{0x1B, 0x40})             // ESC @: initialize
-	out.Write([]byte{0x1B, 0x69, 0x61, 0x01}) // ESC i a: raster mode
-	out.Write([]byte{0x1B, 0x69, 0x53})       // ESC i S: status request
+	out.Grow(60 + h*(3+rowBytes))
+	out.Write([]byte{0x1B, 0x69, 0x53}) // ESC i S: status request
 
 	// ESC i z: print information. Valid: recover | quality | length | width | type.
 	out.Write([]byte{0x1B, 0x69, 0x7A, 0xCE, 0x0A, m.WidthMM, 0x00})
 	var n [4]byte
 	binary.LittleEndian.PutUint32(n[:], uint32(h))
 	out.Write(n[:])
-	out.Write([]byte{0x00, 0x00}) // first page, fixed 0
+	out.Write([]byte{0x00, 0x00}) // page flag (brother_ql always sends 0), fixed 0
 
 	if opts.Cut {
 		out.Write([]byte{0x1B, 0x69, 0x4D, 0x40}) // ESC i M: auto cut
@@ -148,8 +169,8 @@ func Encode(img image.Image, m Media, opts Options) ([]byte, error) {
 		out.Write(row)
 	}
 
-	out.WriteByte(0x1A) // print, last page
-	return out.Bytes(), nil
+	out.WriteByte(0x1A) // print with feed
+	return nil
 }
 
 // isInk applies Pillow's RGB→L conversion and brother_ql's threshold, so the

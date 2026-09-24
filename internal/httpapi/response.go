@@ -70,6 +70,9 @@ type PrinterHealth struct {
 	DeviceURI    string `json:"deviceUri,omitempty"`
 	BackendReady bool   `json:"backendReady"`
 	BackendError string `json:"backendError,omitempty"`
+	// Transport is "raw" when the hub encodes the raster itself for a CUPS
+	// raw queue, "driver" when a CUPS driver renders the label.
+	Transport string `json:"transport,omitempty"`
 }
 
 // ScannerHealth is the scanner section of the health response.

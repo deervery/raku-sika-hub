@@ -107,6 +107,7 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			DeviceURI:    status.DeviceURI,
 			BackendReady: status.BackendReady,
 			BackendError: status.BackendError,
+			Transport:    printerTransport(status),
 		},
 		Scanner: ScannerHealth{
 			Connected: scannerConnected,
@@ -716,4 +717,15 @@ func classifyPrinterError(err error) string {
 	default:
 		return "PRINTER_ERROR"
 	}
+}
+
+// printerTransport names how labels reach the printer, for /health.
+func printerTransport(status printer.PrinterStatus) string {
+	if status.SelectedName == "" {
+		return ""
+	}
+	if status.Raw {
+		return "raw"
+	}
+	return "driver"
 }

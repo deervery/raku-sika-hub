@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
+	"github.com/deervery/raku-sika-hub/internal/printer/qlbackend"
 	"github.com/deervery/raku-sika-hub/internal/printer/qlraster"
 )
 
@@ -147,5 +148,66 @@ func writeStub(t *testing.T, dir, name, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// On a rakuql queue the job leaving CUPS is not the end of the story: what the
+// printer reported decides what the tablet is told.
+func TestPrintRaw_ReportsWhatThePrinterSaid(t *testing.T) {
+	cases := []struct {
+		name    string
+		result  *qlbackend.Result
+		wantErr string
+		wantMsg string
+	}{
+		{"printed", &qlbackend.Result{Outcome: qlbackend.OutcomePrinted, Pages: 1, Completed: 1}, "", "印刷しました。"},
+		{"cover open", &qlbackend.Result{Outcome: qlbackend.OutcomeFailed, Message: "カバーが開いています。カバーを閉じてください。", Reasons: []string{"cover-open-error"}}, "PRINTER_PAPER_ERROR: カバーが開いています", ""},
+		{"no completion", &qlbackend.Result{Outcome: qlbackend.OutcomeFailed, Message: "プリンタから印刷完了の知らせが届きませんでした（1 枚中 0 枚）。", Reasons: []string{"other-error"}}, "PRINTER_ERROR: プリンタから印刷完了の知らせが届きませんでした", ""},
+		{"mute printer", &qlbackend.Result{Outcome: qlbackend.OutcomeUnconfirmed, Message: "印刷データは送りましたが、プリンタが応答しないため印刷できたか確認できません。"}, "", "印刷できたか確認できません"},
+		{"no result file", nil, "", "印刷ジョブを送信しました。"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeStub(t, dir, "lp", `#!/bin/sh
+echo "request id is Brother_QL_820NWB_raw-7 (1 file(s))"
+`)
+			writeStub(t, dir, "lpstat", `#!/bin/sh
+exit 0
+`)
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			results := t.TempDir()
+			qlResultDir = results
+			defer func() { qlResultDir = qlbackend.ResultDir }()
+			if tc.result != nil {
+				r := *tc.result
+				r.JobID = "7"
+				if err := qlbackend.WriteResult(results, r); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			logger, err := logging.New(t.TempDir(), logging.LevelInfo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := &Brother{logger: logger}
+			status := PrinterStatus{
+				SelectedName: "Brother_QL_820NWB_raw",
+				Model:        "QL-820NWB",
+				Raw:          true,
+				DeviceURI:    qlbackend.DeviceURI("000M5G736596"),
+			}
+			res, err := b.printRaw(status, filepath.Join("qlraster", "testdata", "traceable_732.png"), 1)
+			if tc.wantErr != "" {
+				if err == nil || !strings.HasPrefix(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want prefix %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || res.State != "done" || !strings.Contains(res.Message, tc.wantMsg) {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+		})
 	}
 }

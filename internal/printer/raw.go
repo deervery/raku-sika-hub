@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/deervery/raku-sika-hub/internal/printer/qlbackend"
 	"github.com/deervery/raku-sika-hub/internal/printer/qlraster"
 )
 
@@ -122,7 +124,69 @@ func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (Pr
 		return PrintResult{}, err
 	}
 	b.logger.Info("raw print state: job=%s state=%s printer_state=%s", result.JobID, result.State, result.PrinterState)
+	if result.State == "done" && usesQLBackend(status.DeviceURI) {
+		return b.confirmWithPrinter(result)
+	}
 	return result, nil
+}
+
+// qlResultDir is where the rakuql backend leaves its per-job results.
+var qlResultDir = qlbackend.ResultDir
+
+// usesQLBackend reports whether the queue sends through raku-sika-hub's own
+// CUPS backend, which follows each job until the printer confirms it.
+func usesQLBackend(deviceURI string) bool {
+	u, err := url.Parse(deviceURI)
+	return err == nil && u.Scheme == qlbackend.Scheme
+}
+
+// confirmWithPrinter replaces "the job left the CUPS queue" — which is all a
+// CUPS job state can say — with what the printer itself reported.
+func (b *Brother) confirmWithPrinter(result PrintResult) (PrintResult, error) {
+	number := result.JobID[strings.LastIndex(result.JobID, "-")+1:]
+	var (
+		res qlbackend.Result
+		ok  bool
+		err error
+	)
+	// The backend writes its result before it exits and CUPS only then drops
+	// the job, so the file is normally already there.
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		res, ok, err = qlbackend.ReadResult(qlResultDir, number)
+		if ok || err != nil || time.Now().After(deadline) {
+			break
+		}
+	}
+	if err != nil || !ok {
+		b.logger.Warn("no printer result for job %s (err=%v); reporting the CUPS state only", result.JobID, err)
+		return result, nil
+	}
+	b.logger.Info("printer result: job=%s outcome=%s completed=%d/%d message=%s", result.JobID, res.Outcome, res.Completed, res.Pages, res.Message)
+	switch res.Outcome {
+	case qlbackend.OutcomePrinted:
+		result.Message = "印刷しました。"
+		return result, nil
+	case qlbackend.OutcomeUnconfirmed:
+		result.Message = res.Message
+		return result, nil
+	case qlbackend.OutcomeCanceled:
+		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: 印刷が取り消されました。")
+	default:
+		if isPaperReason(res.Reasons) {
+			return PrintResult{}, fmt.Errorf("PRINTER_PAPER_ERROR: %s", res.Message)
+		}
+		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: %s", res.Message)
+	}
+}
+
+func isPaperReason(reasons []string) bool {
+	for _, r := range reasons {
+		switch r {
+		case "media-empty-error", "media-needed-error", "media-jam-error", "cover-open-error":
+			return true
+		}
+	}
+	return false
 }
 
 // testPrintRaw prints a small real label: plain text would reach a raw queue

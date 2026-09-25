@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
+	"github.com/deervery/raku-sika-hub/internal/printer/qlbackend"
 )
 
 type PrinterStatus struct {
@@ -167,6 +168,13 @@ func (b *Brother) Status() (PrinterStatus, error) {
 		status.BackendReady = status.BackendError == ""
 		if status.BackendReady {
 			status.BackendReady, status.BackendError = checkPrinterBackend(status.DeviceURI)
+		}
+		// A rakuql queue names its printer by serial; if that printer is not
+		// on USB, no job can reach it.
+		if status.BackendReady && usesQLBackend(status.DeviceURI) {
+			if _, err := qlbackend.ResolveDevice(status.DeviceURI, "/"); err != nil {
+				status.BackendReady, status.BackendError = false, err.Error()
+			}
 		}
 	}
 

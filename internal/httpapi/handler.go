@@ -153,6 +153,7 @@ func (h *Handler) HandleVersion(w http.ResponseWriter, r *http.Request) {
 		Version:   h.version,
 		Commit:    h.commit,
 		BuildDate: h.buildDate,
+		Features:  hubFeatures,
 	})
 }
 
@@ -308,7 +309,9 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 	}
 	// "pending" means the job was accepted but never left the queue. Say why,
 	// so the operator is not left watching a spinner with no cause named.
-	if printResult.State == "pending" {
+	if printResult.Diagnosis != nil {
+		resp.Diagnosis = printResult.Diagnosis
+	} else if printResult.State == "pending" {
 		if snapshot, err := h.printer.QueueSnapshot(); err == nil {
 			diagnosis := printer.DiagnoseQueue(snapshot)
 			resp.Diagnosis = &diagnosis

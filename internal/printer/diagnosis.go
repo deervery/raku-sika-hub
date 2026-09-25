@@ -20,6 +20,9 @@ const (
 	// DiagQueueBacklog means jobs are waiting and the printer is actively
 	// printing — the operator only has to wait.
 	DiagQueueBacklog = "queue_backlog"
+	// DiagPrintUnconfirmed means the job was sent but the printer answered
+	// nothing, so whether a label came out is unknown (rakuql queues only).
+	DiagPrintUnconfirmed = "print_unconfirmed"
 )
 
 // stalledAfterSec is how long the head job may sit in the queue before we stop

@@ -42,6 +42,9 @@ type PrintResult struct {
 	Message      string
 	PrinterState string
 	JobState     string
+	// Diagnosis, when set, is what the printer itself reported and takes
+	// precedence over a diagnosis derived from the CUPS queue.
+	Diagnosis *Diagnosis
 }
 
 type QueueSnapshot struct {
@@ -170,9 +173,13 @@ func (b *Brother) Status() (PrinterStatus, error) {
 			status.BackendReady, status.BackendError = checkPrinterBackend(status.DeviceURI)
 		}
 		// A rakuql queue names its printer by serial; if that printer is not
-		// on USB, no job can reach it.
+		// on USB, no job can reach it. Without the backend wrapper CUPS
+		// cannot run the job at all and stops the queue.
 		if status.BackendReady && usesQLBackend(status.DeviceURI) {
-			if _, err := qlbackend.ResolveDevice(status.DeviceURI, "/"); err != nil {
+			if _, err := os.Stat(qlBackendWrapper); err != nil {
+				status.BackendReady, status.BackendError = false,
+					"CUPS に rakuql バックエンドがありません。raku-sika-ops の switch-printer-backend.sh --to raw をやり直してください"
+			} else if _, err := qlbackend.ResolveDevice(status.DeviceURI, "/"); err != nil {
 				status.BackendReady, status.BackendError = false, err.Error()
 			}
 		}

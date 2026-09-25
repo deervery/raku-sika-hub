@@ -3,6 +3,7 @@ package qlbackend
 import (
 	"errors"
 	"sync"
+	"time"
 )
 
 // fakePrinter behaves like the QL-820NWB on office: it answers ESC i S with a
@@ -23,6 +24,7 @@ type fakePrinter struct {
 	failOnPrint  *[2]byte
 	noCompletion bool
 	dropOnPrint  bool // disconnect when the first label is printed
+	coolFor      time.Duration // pause to cool the head before completing
 
 	statusRequests int
 	printed        int
@@ -98,6 +100,13 @@ func (p *fakePrinter) interpret() {
 				continue
 			}
 			p.out = append(p.out, p.frame(TypePhaseChange, 0x01, 0, 0)...)
+			if p.coolFor > 0 {
+				cool := p.frame(TypeNotification, 0x01, 0, 0)
+				cool[22] = NotifyCoolingStarted
+				p.out = append(p.out, cool...)
+				go p.finishAfterCooling()
+				continue
+			}
 			if !p.noCompletion {
 				p.out = append(p.out, p.frame(TypePrintingCompleted, 0x01, 0, 0)...)
 			}
@@ -171,4 +180,27 @@ func (p *fakePrinter) requests() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.statusRequests
+}
+
+func (p *fakePrinter) finishAfterCooling() {
+	time.Sleep(p.coolFor)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	done := p.frame(TypeNotification, 0x01, 0, 0)
+	done[22] = NotifyCoolingFinished
+	p.out = append(p.out, done...)
+	p.out = append(p.out, p.frame(TypePrintingCompleted, 0x01, 0, 0)...)
+	p.out = append(p.out, p.frame(TypePhaseChange, 0x00, 0, 0)...)
+	p.cond.Broadcast()
+}
+
+// queue puts frames in front of anything the printer says next, as if an
+// earlier job had left them unread.
+func (p *fakePrinter) queue(frames ...[]byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, f := range frames {
+		p.out = append(p.out, f...)
+	}
+	p.cond.Broadcast()
 }

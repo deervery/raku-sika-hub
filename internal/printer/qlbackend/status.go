@@ -41,6 +41,8 @@ type Status struct {
 	MediaLength byte // mm; 0 for continuous tape
 	Type        byte
 	Phase       byte
+	// Notification (byte 22) accompanies status type 0x05.
+	Notification byte
 }
 
 // ParseStatus decodes a status frame. It reports false for anything that is
@@ -50,13 +52,14 @@ func ParseStatus(b []byte) (Status, bool) {
 		return Status{}, false
 	}
 	return Status{
-		Err1:        b[8],
-		Err2:        b[9],
-		MediaWidth:  b[10],
-		MediaType:   b[11],
-		MediaLength: b[17],
-		Type:        b[18],
-		Phase:       b[19],
+		Err1:         b[8],
+		Err2:         b[9],
+		MediaWidth:   b[10],
+		MediaType:    b[11],
+		MediaLength:  b[17],
+		Type:         b[18],
+		Phase:        b[19],
+		Notification: b[22],
 	}, true
 }
 
@@ -77,14 +80,16 @@ type flag struct {
 
 // The printer reports these in error information 1 and 2 (Brother QL-800
 // series raster command reference; the same bit names as brother_ql's reader).
-// "Printer in use" (err1 0x10) is not a problem, and the high-voltage-adapter
-// and fan bits never stop a job on the QL-800 series, so they are left out.
+// "Printer in use" (err1 0x10) is not a problem and the high-voltage-adapter
+// bit is unused on the QL-800 series, so they are left out. A fan failure is
+// reported: the printer cannot cool its head without it.
 // Cover open is err2 0x10: confirmed on office's QL-820NWB with the roll
 // cover open (2026-09-25).
 var err1Flags = []flag{
 	{0x01, "ロールが入っていません。ロールを入れてください。", "media-empty-error"},
 	{0x02, "ロールがなくなりました。新しいロールに交換してください。", "media-empty-error"},
 	{0x04, "カッターが詰まっています。詰まったラベルを取り除いてください。", "media-jam-error"},
+	{0x80, "プリンタのファンが動いていません。電源を入れ直し、直らなければ修理を依頼してください。", "other-error"},
 }
 
 var err2Flags = []flag{
@@ -120,6 +125,13 @@ func (s Status) Problems() []Problem {
 	}
 	return out
 }
+
+// Notification numbers (byte 22) sent with status type 0x05. Long runs make
+// the QL-800 series stop to cool its head; the job resumes on its own.
+const (
+	NotifyCoolingStarted  byte = 0x03
+	NotifyCoolingFinished byte = 0x04
+)
 
 // Busy reports the printer saying it is still busy with something else.
 func (s Status) Busy() bool {

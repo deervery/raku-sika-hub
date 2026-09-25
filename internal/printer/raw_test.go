@@ -205,8 +205,17 @@ exit 0
 				}
 				return
 			}
-			if err != nil || res.State != "done" || !strings.Contains(res.Message, tc.wantMsg) {
+			if err != nil || !strings.Contains(res.Message, tc.wantMsg) {
 				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			// An unconfirmed print must not reach the tablet as "done", which
+			// it shows as 印刷しました.
+			if tc.name == "mute printer" {
+				if res.State != "pending" || res.Diagnosis == nil || !res.Diagnosis.Blocking || res.Diagnosis.Code != DiagPrintUnconfirmed {
+					t.Fatalf("unconfirmed print reported as %+v", res)
+				}
+			} else if res.State != "done" {
+				t.Fatalf("res = %+v", res)
 			}
 		})
 	}

@@ -64,6 +64,7 @@ func TestSend_RefusesBeforeSendingWhenThePrinterReportsAProblem(t *testing.T) {
 	}{
 		{"cover open", 0, 0x10, "cover-open-error", "カバーが開いています"}, // office, 2026-09-25
 		{"cannot feed", 0, 0x40, "media-jam-error", "ラベルを送れません"},
+		{"fan failure", 0x80, 0, "other-error", "ファンが動いていません"},
 		{"no roll", 0x01, 0, "media-empty-error", "ロールが入っていません"},
 		{"roll used up", 0x02, 0, "media-empty-error", "ロールがなくなりました"},
 		{"cutter jam", 0x04, 0, "media-jam-error", "カッターが詰まっています"},
@@ -187,5 +188,36 @@ func TestSend_CancelResetsThePrinter(t *testing.T) {
 	}
 	if !bytes.HasSuffix(p.written(), cmdReset) {
 		t.Fatal("a canceled job must leave the printer reset")
+	}
+}
+
+// Long runs make the printer stop to cool its head. That pause is not a lost
+// job: the wait is extended while it cools.
+func TestSend_WaitsWhileThePrinterCools(t *testing.T) {
+	p := newFakePrinter()
+	p.coolFor = 700 * time.Millisecond // longer than the per-page timeout
+	data := golden(t, "traceable_732.bin")
+	job, _ := ParseJob(data)
+	var log bytes.Buffer
+	s := testSender(&log)
+	s.CoolingTimeout = 3 * time.Second
+	res := s.Send(context.Background(), p, job, data)
+	if res.Outcome != OutcomePrinted {
+		t.Fatalf("result = %+v\n%s", res, log.String())
+	}
+	if !strings.Contains(log.String(), "ヘッドを冷やしています") {
+		t.Fatalf("the operator should be told the printer is cooling:\n%s", log.String())
+	}
+}
+
+// An error notification an earlier job left unread must not be taken for the
+// answer to this job's status request.
+func TestSend_IgnoresAStaleErrorFromAnEarlierJob(t *testing.T) {
+	p := newFakePrinter()
+	stale := p.frame(TypeErrorOccurred, 0x00, 0, 0x10) // cover was open back then
+	p.queue(stale)
+	res, log := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomePrinted {
+		t.Fatalf("result = %+v\n%s", res, log)
 	}
 }

@@ -52,6 +52,9 @@ type Sender struct {
 	BusyRetries int
 	// PerPageTimeout is how long each label may take to be reported printed.
 	PerPageTimeout time.Duration
+	// CoolingTimeout is how much longer to wait when the printer stops to
+	// cool its head.
+	CoolingTimeout time.Duration
 	// WriteTimeout bounds each write; a printer that takes no data at all
 	// must not hang the queue.
 	WriteTimeout time.Duration
@@ -69,6 +72,7 @@ func NewSender(log io.Writer) *Sender {
 		PreflightTimeout: 2 * time.Second,
 		BusyRetries:      5,
 		PerPageTimeout:   20 * time.Second,
+		CoolingTimeout:   3 * time.Minute,
 		WriteTimeout:     15 * time.Second,
 		SettleTimeout:    1500 * time.Millisecond,
 		Sleep:            time.Sleep,
@@ -97,7 +101,10 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 
 	res := Result{Pages: job.Pages}
 
-	// 1. Ask before sending.
+	// 1. Ask before sending. Anything the printer still had queued from an
+	// earlier job is read off first, so that an old error notification is not
+	// taken for the answer to this request.
+	s.drainFor(frames, 150*time.Millisecond, time.Second)
 	s.info("プリンタの状態を確認しています")
 	reply, answered, err := s.preflight(dev, frames)
 	if err != nil {
@@ -155,6 +162,17 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 					ps = []Problem{{Message: fmt.Sprintf("プリンタがエラーを報告しました（コード %02x%02x）。", st.Err1, st.Err2), Reason: "other-error"}}
 				}
 				return abort(s.failProblems(res, ps))
+			case TypeNotification:
+				switch st.Notification {
+				case NotifyCoolingStarted:
+					// The printer pauses by itself; give it time instead of
+					// calling the job lost.
+					timeout.Reset(s.CoolingTimeout)
+					s.info("プリンタがヘッドを冷やしています。しばらくすると印刷を続けます")
+				case NotifyCoolingFinished:
+					timeout.Reset(time.Duration(job.Pages-res.Completed) * s.PerPageTimeout)
+					s.info("印刷を続けています")
+				}
 			case TypeTurnedOff:
 				return abort(s.fail(res, "印刷中にプリンタの電源が切れました。ラベルを確かめてから再送信してください。", "other-error", nil))
 			default:
@@ -205,8 +223,12 @@ drain:
 // what put the printer into the state where it answers nothing (office,
 // 2026-09-25: a job that failed with the cover open and was not drained).
 func (s *Sender) drain(frames <-chan Status) {
-	quiet := s.SettleTimeout / 3
-	deadline := time.NewTimer(s.SettleTimeout * 2)
+	s.drainFor(frames, s.SettleTimeout/3, s.SettleTimeout*2)
+}
+
+// drainFor reads until the printer has been quiet for quiet, or max passed.
+func (s *Sender) drainFor(frames <-chan Status, quiet, max time.Duration) {
+	deadline := time.NewTimer(max)
 	defer deadline.Stop()
 	for {
 		idle := time.NewTimer(quiet)

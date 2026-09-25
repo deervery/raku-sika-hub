@@ -2,6 +2,7 @@ package qlbackend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,9 @@ const (
 const defaultOpenWait = 5 * time.Second
 
 var openWait = defaultOpenWait
+
+// busyWait is how long to wait for another opener of the printer to finish.
+var busyWait = 90 * time.Second
 
 // maxJobBytes guards against reading an unbounded stream into memory. A
 // 30-copy 62x100mm job is under 1.5 MB.
@@ -90,22 +94,38 @@ func run(args []string, stdin io.Reader, stderr io.Writer, uri, sysRoot, resultD
 	}
 	res.Pages = job.Pages
 
-	dev, err := openWithRetry(uri, sysRoot, openWait)
+	dev, err := openWithRetry(uri, sysRoot, openWait, stderr)
 	if err != nil {
 		return finish(sender.fail(res, err.Error(), "other-error", nil))
 	}
 	return finish(sender.Send(ctx, dev, job, data))
 }
 
-// openWithRetry tolerates the printer re-enumerating on USB for a moment.
-func openWithRetry(uri, sysRoot string, wait time.Duration) (*os.File, error) {
+// openWithRetry tolerates the printer re-enumerating on USB for a moment,
+// and waits longer while another process has it open: usblp allows one
+// opener at a time, so a second queue pointed at the same printer (or a
+// maintenance script) makes the open fail with EBUSY until it is done.
+func openWithRetry(uri, sysRoot string, wait time.Duration, log io.Writer) (*os.File, error) {
 	deadline := time.Now().Add(wait)
+	busyDeadline := time.Now().Add(busyWait)
+	toldBusy := false
 	for {
 		path, err := ResolveDevice(uri, sysRoot)
 		if err == nil {
 			var f *os.File
 			if f, err = OpenDevice(path); err == nil {
 				return f, nil
+			}
+			if errors.Is(err, syscall.EBUSY) {
+				if !toldBusy {
+					fmt.Fprintln(log, "INFO: ほかの印刷が終わるのを待っています")
+					toldBusy = true
+				}
+				if time.Now().Before(busyDeadline) {
+					time.Sleep(500 * time.Millisecond)
+					continue
+				}
+				return nil, fmt.Errorf("プリンタがほかの処理に使われたままです（%v）。しばらく待ってから再送信してください。", err)
 			}
 			err = fmt.Errorf("プリンタを開けません（%v）。電源と USB ケーブルを確認してください。", err)
 		}

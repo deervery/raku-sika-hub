@@ -133,6 +133,9 @@ func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (Pr
 // qlResultDir is where the rakuql backend leaves its per-job results.
 var qlResultDir = qlbackend.ResultDir
 
+// qlBackendWrapper is the CUPS backend raku-sika-ops installs for rakuql://.
+var qlBackendWrapper = "/usr/lib/cups/backend/" + qlbackend.Scheme
+
 // usesQLBackend reports whether the queue sends through raku-sika-hub's own
 // CUPS backend, which follows each job until the printer confirms it.
 func usesQLBackend(deviceURI string) bool {
@@ -167,7 +170,17 @@ func (b *Brother) confirmWithPrinter(result PrintResult) (PrintResult, error) {
 		result.Message = "印刷しました。"
 		return result, nil
 	case qlbackend.OutcomeUnconfirmed:
+		// Not "done": the tablet shows "done" as 印刷しました. Report it as a
+		// blocking state so the operator checks the tray.
+		result.State = "pending"
 		result.Message = res.Message
+		result.Diagnosis = &Diagnosis{
+			Code:     DiagPrintUnconfirmed,
+			Blocking: true,
+			Title:    "印刷できたか確認できません",
+			Detail:   res.Message,
+			Action:   "ラベルが出ていなければ、プリンタの電源を入れ直してから再送信してください。",
+		}
 		return result, nil
 	case qlbackend.OutcomeCanceled:
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: 印刷が取り消されました。")

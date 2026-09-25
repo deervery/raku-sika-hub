@@ -23,6 +23,7 @@ func testSender(log *bytes.Buffer) *Sender {
 	s := NewSender(log)
 	s.PreflightTimeout = 100 * time.Millisecond
 	s.PerPageTimeout = 300 * time.Millisecond
+	s.SettleTimeout = 150 * time.Millisecond
 	s.Sleep = func(time.Duration) {}
 	return s
 }
@@ -61,7 +62,8 @@ func TestSend_RefusesBeforeSendingWhenThePrinterReportsAProblem(t *testing.T) {
 		reason     string
 		message    string
 	}{
-		{"cover open", 0, 0x20, "cover-open-error", "カバーが開いています"},
+		{"cover open", 0, 0x10, "cover-open-error", "カバーが開いています"}, // office, 2026-09-25
+		{"cannot feed", 0, 0x40, "media-jam-error", "ラベルを送れません"},
 		{"no roll", 0x01, 0, "media-empty-error", "ロールが入っていません"},
 		{"roll used up", 0x02, 0, "media-empty-error", "ロールがなくなりました"},
 		{"cutter jam", 0x04, 0, "media-jam-error", "カッターが詰まっています"},
@@ -125,6 +127,10 @@ func TestSend_ReportsAnErrorRaisedWhilePrinting(t *testing.T) {
 	}
 	if !strings.Contains(log, "STATE: +media-empty-error") {
 		t.Fatalf("CUPS messages:\n%s", log)
+	}
+	// The rest of the job must not print once the roll is replaced.
+	if !bytes.HasSuffix(p.written(), cmdReset) {
+		t.Fatal("a failed job must leave the printer's buffer cleared")
 	}
 }
 

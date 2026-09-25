@@ -77,7 +77,13 @@ func (p *fakePrinter) interpret() {
 				p.busyReplies--
 				e1 |= 0x10
 			}
-			p.out = append(p.out, p.frame(TypeReply, 0x00, e1, p.err2)...)
+			// Like the QL-820NWB: with an error pending, the answer to a
+			// status request is typed "error occurred", not "reply".
+			typ := TypeReply
+			if p.err1&^0x10 != 0 || p.err2 != 0 {
+				typ = TypeErrorOccurred
+			}
+			p.out = append(p.out, p.frame(typ, 0x00, e1, p.err2)...)
 		case cmd[0] == 0x0C || cmd[0] == 0x1A:
 			p.printed++
 			if p.muted {

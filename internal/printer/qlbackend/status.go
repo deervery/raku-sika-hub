@@ -75,9 +75,12 @@ type flag struct {
 	reason  string
 }
 
-// The printer reports these in error information 1 and 2. "Printer in use"
-// (err1 0x10) is not a problem, and the high-resolution and fan bits never
-// stop a job on the QL-800 series, so they are left out.
+// The printer reports these in error information 1 and 2 (Brother QL-800
+// series raster command reference; the same bit names as brother_ql's reader).
+// "Printer in use" (err1 0x10) is not a problem, and the high-voltage-adapter
+// and fan bits never stop a job on the QL-800 series, so they are left out.
+// Cover open is err2 0x10: confirmed on office's QL-820NWB with the roll
+// cover open (2026-09-25).
 var err1Flags = []flag{
 	{0x01, "ロールが入っていません。ロールを入れてください。", "media-empty-error"},
 	{0x02, "ロールがなくなりました。新しいロールに交換してください。", "media-empty-error"},
@@ -86,11 +89,12 @@ var err1Flags = []flag{
 
 var err2Flags = []flag{
 	{0x01, "装着されているロールと印刷データが一致しません。ロールを確認してください。", "media-needed-error"},
-	{0x04, "プリンタの受信バッファがいっぱいです。", "other-error"},
-	{0x08, "プリンタとの通信でエラーが起きました。", "other-error"},
-	{0x10, "プリンタの受信バッファがいっぱいです。", "other-error"},
-	{0x20, "カバーが開いています。カバーを閉じてください。", "cover-open-error"},
-	{0x80, "ラベルを送れません。ロールの詰まりを確認してください。", "media-jam-error"},
+	{0x02, "プリンタの受信バッファがいっぱいです。", "other-error"},
+	{0x04, "プリンタとの通信でエラーが起きました。", "other-error"},
+	{0x08, "プリンタの受信バッファがいっぱいです。", "other-error"},
+	{0x10, "カバーが開いています。カバーを閉じてください。", "cover-open-error"},
+	{0x40, "ラベルを送れません。ロールの詰まりを確認してください。", "media-jam-error"},
+	{0x80, "プリンタ本体でエラーが起きました。電源を入れ直してください。", "other-error"},
 }
 
 // Problems lists what the error bits say is wrong.

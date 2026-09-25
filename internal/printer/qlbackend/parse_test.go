@@ -232,3 +232,24 @@ func (r *eofThenData) Read(b []byte) (int, error) {
 	r.data = r.data[n:]
 	return n, nil
 }
+
+// Error information 2, bit by bit, as the Brother raster reference (and
+// brother_ql) define it. The first version had every bit one place off and
+// reported an open cover as a full buffer.
+func TestProblems_Err2Bits(t *testing.T) {
+	want := map[byte]string{
+		0x01: "印刷データが一致しません",
+		0x10: "カバーが開いています",
+		0x40: "ラベルを送れません",
+		0x80: "プリンタ本体でエラー",
+	}
+	for bit, msg := range want {
+		ps := Status{Err2: bit}.Problems()
+		if len(ps) != 1 || !strings.Contains(ps[0].Message, msg) {
+			t.Errorf("err2 0x%02x: %+v, want %q", bit, ps, msg)
+		}
+	}
+	if ps := (Status{Err2: 0x20}).Problems(); len(ps) != 0 {
+		t.Errorf("err2 0x20 (cancel key, unused) should not stop a job: %+v", ps)
+	}
+}

@@ -118,13 +118,21 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 		s.info("プリンタが状態の問い合わせに応答しません。印刷は続けます")
 	}
 
-	// 2. Send, collecting notifications as they come.
+	// 2. Send, collecting notifications as they come. From here on, a
+	// failure also clears whatever of the job the printer has buffered:
+	// otherwise it could print once the cause is fixed (cover closed),
+	// after the tablet was already told the job failed.
+	abort := func(r Result) Result {
+		_ = s.writeAll(dev, cmdReset)
+		s.drain(frames)
+		return r
+	}
 	s.info("印刷データを送っています")
 	if err := s.write(ctx, dev, data); err != nil {
 		if ctx.Err() != nil {
 			return s.cancel(dev, res)
 		}
-		return s.fail(res, "プリンタが印刷データを受け取りません。電源を入れ直してから再送信してください。", "other-error", err)
+		return abort(s.fail(res, "プリンタが印刷データを受け取りません。電源を入れ直してから再送信してください。", "other-error", err))
 	}
 
 	// 3. Wait for the printer to report every label.
@@ -135,7 +143,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 		select {
 		case st, ok := <-frames:
 			if !ok {
-				return s.fail(res, "印刷中にプリンタとの接続が切れました。電源と USB ケーブルを確認し、ラベルを確かめてから再送信してください。", "other-error", nil)
+				return abort(s.fail(res, "印刷中にプリンタとの接続が切れました。電源と USB ケーブルを確認し、ラベルを確かめてから再送信してください。", "other-error", nil))
 			}
 			heard = true
 			switch st.Type {
@@ -146,12 +154,12 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 				if len(ps) == 0 {
 					ps = []Problem{{Message: fmt.Sprintf("プリンタがエラーを報告しました（コード %02x%02x）。", st.Err1, st.Err2), Reason: "other-error"}}
 				}
-				return s.failProblems(res, ps)
+				return abort(s.failProblems(res, ps))
 			case TypeTurnedOff:
-				return s.fail(res, "印刷中にプリンタの電源が切れました。ラベルを確かめてから再送信してください。", "other-error", nil)
+				return abort(s.fail(res, "印刷中にプリンタの電源が切れました。ラベルを確かめてから再送信してください。", "other-error", nil))
 			default:
 				if ps := st.Problems(); len(ps) > 0 {
-					return s.failProblems(res, ps)
+					return abort(s.failProblems(res, ps))
 				}
 			}
 		case <-timeout.C:
@@ -161,7 +169,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 				s.info(res.Message)
 				return res
 			}
-			return s.fail(res, fmt.Sprintf("プリンタから印刷完了の知らせが届きませんでした（%d 枚中 %d 枚）。ラベルを確かめ、足りなければ再送信してください。", job.Pages, res.Completed), "other-error", nil)
+			return abort(s.fail(res, fmt.Sprintf("プリンタから印刷完了の知らせが届きませんでした（%d 枚中 %d 枚）。ラベルを確かめ、足りなければ再送信してください。", job.Pages, res.Completed), "other-error", nil))
 		case <-ctx.Done():
 			return s.cancel(dev, res)
 		}
@@ -190,6 +198,31 @@ drain:
 	fmt.Fprintf(s.Log, "STATE: -%s\n", strings.Join(problemReasons, ","))
 	s.info(res.Message)
 	return res
+}
+
+// drain reads until the printer has been quiet for a moment, so that a job
+// that ends early leaves no notification unread — unread notifications are
+// what put the printer into the state where it answers nothing (office,
+// 2026-09-25: a job that failed with the cover open and was not drained).
+func (s *Sender) drain(frames <-chan Status) {
+	quiet := s.SettleTimeout / 3
+	deadline := time.NewTimer(s.SettleTimeout * 2)
+	defer deadline.Stop()
+	for {
+		idle := time.NewTimer(quiet)
+		select {
+		case _, ok := <-frames:
+			idle.Stop()
+			if !ok {
+				return
+			}
+		case <-idle.C:
+			return
+		case <-deadline.C:
+			idle.Stop()
+			return
+		}
+	}
 }
 
 // preflight resets the printer's input and asks for its status. answered is
@@ -222,7 +255,9 @@ func (s *Sender) awaitReply(frames <-chan Status) (Status, bool) {
 			if !ok {
 				return Status{}, false
 			}
-			if st.Type == TypeReply {
+			// A printer in an error state answers the status request with
+			// "error occurred" instead of "reply" (office, cover open).
+			if st.Type == TypeReply || st.Type == TypeErrorOccurred {
 				return st, true
 			}
 		case <-t.C:

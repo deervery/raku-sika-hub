@@ -34,6 +34,10 @@ func TestHandleVersion(t *testing.T) {
 	if resp.Commit != "abc1234" {
 		t.Errorf("commit = %q, want %q", resp.Commit, "abc1234")
 	}
+	// raku-sika-ops reads this before pointing a queue at the rakuql backend.
+	if len(resp.Features) != 1 || resp.Features[0] != "rakuql" {
+		t.Errorf("features = %v, want [rakuql]", resp.Features)
+	}
 }
 
 func TestHandleVersion_MethodNotAllowed(t *testing.T) {

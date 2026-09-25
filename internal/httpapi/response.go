@@ -98,7 +98,13 @@ type VersionResponse struct {
 	Version   string `json:"version"`
 	Commit    string `json:"commit"`
 	BuildDate string `json:"buildDate"`
+	// Features lets raku-sika-ops check what this binary can do without
+	// running it. "rakuql": it serves as the CUPS backend for rakuql:// queues.
+	Features []string `json:"features"`
 }
+
+// hubFeatures is what VersionResponse.Features reports.
+var hubFeatures = []string{"rakuql"}
 
 // ScanResponse is returned by GET /scanner/scan.
 type ScanResponse struct {

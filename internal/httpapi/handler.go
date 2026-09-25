@@ -153,6 +153,7 @@ func (h *Handler) HandleVersion(w http.ResponseWriter, r *http.Request) {
 		Version:   h.version,
 		Commit:    h.commit,
 		BuildDate: h.buildDate,
+		Features:  hubFeatures,
 	})
 }
 

@@ -25,20 +25,19 @@ const (
 	// - Width is fixed to 62mm (horizontal is the priority).
 	// - Height is driven by table height + image section height.
 	// - Overall layout is intentionally horizontal (wide) rather than tall.
-	labelWidthMM                = 62.0
-	labelHeightMM               = 60.0
-	labelDPI                    = 300
-	marginXPx                   = 24
-	marginYPx                   = 0
-	imageSlotGap                = 6
-	fontSizeBody                = 9.5
-	minFontSize                 = 8.0
-	lineSpacingRatio            = 1.1
-	tableLabelWidthRatio        = 0.3
-	tableLabelWidthTraceable    = 0.317
-	tableLabelWidthNonTraceable = 0.295
-	tableLabelWidthPet          = 0.295
-	tableCellPadding            = 3
+	labelWidthMM             = 62.0
+	labelHeightMM            = 60.0
+	labelDPI                 = 300
+	marginXPx                = 24
+	marginYPx                = 0
+	imageSlotGap             = 6
+	fontSizeBody             = 9.5
+	minFontSize              = 8.0
+	lineSpacingRatio         = 1.1
+	tableLabelWidthRatio     = 0.3
+	tableLabelWidthTraceable = 0.317
+	tableLabelWidthPet       = 0.295
+	tableCellPadding         = 3
 	// Table rules are 2 dots (≈0.17mm), as the P-touch templates' 0.5pt pen.
 	// A 1-dot rule vanished when the image was shown scaled down, and
 	// thinned out when ipp-usb shrank the label to fit.
@@ -102,6 +101,9 @@ func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	}
 	if isProcessedLandscape(data) {
 		return r.renderProcessed(data)
+	}
+	if isNonTraceableLandscape(data) {
+		return r.renderNonTraceable(data)
 	}
 	rows := r.buildRows(data)
 
@@ -462,7 +464,7 @@ func (row imageSectionRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 
 func (row imageSectionRow) showLogoOnly() bool {
 	switch row.data.Template {
-	case "processed", "pet", "non_traceable", "non_traceable_deer":
+	case "pet":
 		return true
 	default:
 		return false
@@ -671,21 +673,6 @@ func buildTableEntries(data LabelData) []tableEntry {
 			tableEntry{label: localizedCaption(data.Locale, "個体識別番号", "Individual ID"), value: trim(data.IndividualNumber)},
 		)
 		return entries
-	case "non_traceable", "non_traceable_deer":
-		entries := []tableEntry{
-			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
-			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
-			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
-		}
-		if entry, ok := companyEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		if entry, ok := facilityEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
-		return entries
 	case "pet":
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
@@ -748,8 +735,6 @@ func labelWidthRatioForTemplate(template string) float64 {
 	switch template {
 	case "traceable", "traceable_deer", "traceable_bear", "traceable_boar", "traceable_raccoon":
 		return tableLabelWidthTraceable
-	case "non_traceable", "non_traceable_deer":
-		return tableLabelWidthNonTraceable
 	case "pet":
 		return tableLabelWidthPet
 	default:

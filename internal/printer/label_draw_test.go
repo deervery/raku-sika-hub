@@ -161,7 +161,7 @@ func TestProcessedLabel_IngredientsFitWithoutCutting(t *testing.T) {
 	inset := pt(procCellInsetPt)
 	w := pt(161.3) - pt(33.6) - 2*inset
 	h := pt(75.9) - pt(19.5) - 2*inset
-	size, lines := r.fitWrapped([]string{text}, w, h)
+	size, lines := r.fitWrapped([]string{text}, w, h, procFontSize)
 	if strings.Join(lines, "") != text {
 		t.Fatalf("printed %q", strings.Join(lines, ""))
 	}
@@ -239,6 +239,50 @@ func TestRender_EveryTemplateFitsThePrintHead(t *testing.T) {
 					break
 				}
 			}
+		}
+	}
+}
+
+func TestNonTraceableLabel_IsTheLbxLandscapeLayout(t *testing.T) {
+	r := testRenderer(t)
+	for _, tpl := range []string{"non_traceable", "non_traceable_deer"} {
+		res, err := r.Render(BuildLabelDataFromMap(tpl, 1, map[string]string{
+			"productName": "エゾシカ 切り落とし", "productQuantity": "0.30 kg",
+			"deadlineDate": "2026年10月10日", "storageTemperature": "-18℃以下",
+			"facilityBlock": "サンプル処理施設\n北海道訓子府町大町113",
+		}, ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, err := decodePNG(res.Path)
+		os.Remove(res.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// non_traceable.lbx: 175.7pt × 145.4pt, sent rotated.
+		if b := img.Bounds(); b.Dx() != labelWidthPx || b.Dy() != pt(nonTrWidthPt) {
+			t.Fatalf("%s: size = %dx%d", tpl, b.Dx(), b.Dy())
+		}
+		if res.WidthMM != 62 || res.HeightMM != 51 {
+			t.Fatalf("%s: media = %dx%dmm, want 62x51mm", tpl, res.WidthMM, res.HeightMM)
+		}
+	}
+}
+
+// 加工者名 / 加工施設所在地 are the facility's, as the lbx prints them.
+func TestProcessorOf(t *testing.T) {
+	cases := []struct {
+		data          LabelData
+		name, address string
+	}{
+		{LabelData{FacilityBlock: "(株)サンプル(シクヌ)\n北海道訓子府町大町113", CompanyBlock: "株式会社サンプル\n札幌市\nTEL 011"},
+			"(株)サンプル(シクヌ)", "北海道訓子府町大町113"},
+		{LabelData{ProcessorName: "工場Z", ProcessorLocation: "札幌市"}, "工場Z", "札幌市"},
+		{LabelData{CompanyBlock: "株式会社サンプル\n札幌市西区\nTEL 011"}, "株式会社サンプル", "札幌市西区\nTEL 011"},
+	}
+	for _, c := range cases {
+		if n, a := processorOf(c.data); n != c.name || a != c.address {
+			t.Errorf("processorOf(%+v) = %q, %q; want %q, %q", c.data, n, a, c.name, c.address)
 		}
 	}
 }

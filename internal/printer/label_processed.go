@@ -51,6 +51,7 @@ type procTable struct {
 type procCell struct {
 	text       string
 	alignRight bool
+	maxPt      float64 // largest size; 0 means procFontSize (8pt)
 }
 
 func isProcessedLandscape(data LabelData) bool {
@@ -65,7 +66,7 @@ func (r *LabelRenderer) renderProcessed(data LabelData) (RenderResult, error) {
 
 	// 区分（加熱食肉製品）: 表の上の 1 行。
 	if v := trim(data.IsHeatedMeatProducts); v != "" && v != "false" {
-		r.drawInFrame(img, v, pt(8.4), pt(8.4), pt(160), pt(9), false, false)
+		r.drawInFrame(img, v, pt(8.4), pt(8.4), pt(160), pt(9), false, false, 0)
 	}
 
 	main := procTable{xPt: 8.4, yPt: 18.4,
@@ -80,10 +81,11 @@ func (r *LabelRenderer) renderProcessed(data LabelData) (RenderResult, error) {
 	})
 
 	if v := trim(data.AttentionText); v != "" {
-		r.drawInFrame(img, v, pt(10.4), pt(148.4), pt(168), pt(20), false, false)
+		r.drawInFrame(img, v, pt(10.4), pt(148.4), pt(168), pt(20), false, false, 0)
 	}
 
-	r.drawInFrame(img, nutritionTitle(data), pt(182.4), pt(4.9), pt(131.5), pt(13.5), false, true)
+	// 見出しは表の左の罫線に揃える（区分の行と同じ）。
+	r.drawInFrame(img, nutritionTitle(data), pt(174.4), pt(4.9), pt(138), pt(13.5), false, true, 0)
 	nutrition := procTable{xPt: 174.4, yPt: 18.4,
 		colsPt: []float64{0, 62.7, 135.3},
 		rowsPt: []float64{0, 16.1, 31.6, 47.3, 63.2, 79.3}}
@@ -107,7 +109,12 @@ func (r *LabelRenderer) renderProcessed(data LabelData) (RenderResult, error) {
 		{{text: localizedCaption(loc, "製造所", "Plant")}, {text: trim(data.FacilityBlock)}},
 	})
 
-	// 横長で組んだものを 90° 回して、62mm 幅のテープに送る（EN トレサと同じ）。
+	return saveLandscape(img)
+}
+
+// saveLandscape turns a label laid out landscape (as the lbx templates are)
+// by 90° and writes it for the 62mm tape, as the EN traceable label is sent.
+func saveLandscape(img *image.RGBA) (RenderResult, error) {
 	rotated := rotate90(img)
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
@@ -168,7 +175,7 @@ func (r *LabelRenderer) drawProcTable(img *image.RGBA, t procTable, rows [][2]pr
 			}
 			r.drawInFrame(img, cell.text,
 				xs[j]+inset, ys[i]+inset,
-				xs[j+1]-xs[j]-2*inset, ys[i+1]-ys[i]-2*inset, cell.alignRight, j == 0)
+				xs[j+1]-xs[j]-2*inset, ys[i+1]-ys[i]-2*inset, cell.alignRight, j == 0, cell.maxPt)
 		}
 	}
 	drawGrid(img, xs, ys, ruleDots)
@@ -209,7 +216,7 @@ func drawGrid(img *image.RGBA, xs, ys []int, thick int) {
 // centred vertically. Captions stay on one line and shrink (原材料名 goes to
 // 7.5pt, as the lbx's 期限 and 保存方法 do); values also may wrap at the
 // frame width, whichever prints larger.
-func (r *LabelRenderer) drawInFrame(img *image.RGBA, text string, x, y, w, h int, alignRight, caption bool) {
+func (r *LabelRenderer) drawInFrame(img *image.RGBA, text string, x, y, w, h int, alignRight, caption bool, maxPt float64) {
 	text = strings.TrimSpace(text)
 	if text == "" || w <= 0 || h <= 0 {
 		return
@@ -218,9 +225,17 @@ func (r *LabelRenderer) drawInFrame(img *image.RGBA, text string, x, y, w, h int
 	for i, p := range paragraphs {
 		paragraphs[i] = strings.TrimRight(p, " \t\r")
 	}
-	size, lines := r.fitUnwrapped(paragraphs, w, h)
+	if maxPt <= 0 {
+		maxPt = procFontSize
+	}
+	size, lines := r.fitUnwrapped(paragraphs, w, h, maxPt)
 	if !caption || size == 0 {
-		if ws, wl := r.fitWrapped(paragraphs, w, h); ws > size {
+		ws, wl := r.fitWrapped(paragraphs, w, h, maxPt)
+		// In a cell one or two lines tall (a name, an address) a slightly
+		// smaller single line reads better than a name broken in two.
+		short := h < 3*lineHeightWithRatio(maxPt, procLineGap)
+		keep := size > 0 && short && size >= 0.85*ws
+		if ws > size && !keep {
 			size, lines = ws, wl
 		}
 	}
@@ -239,8 +254,8 @@ func (r *LabelRenderer) drawInFrame(img *image.RGBA, text string, x, y, w, h int
 
 // fitUnwrapped returns the largest size, down to procNoWrapMin, at which
 // every paragraph fits on one line; 0 if none does.
-func (r *LabelRenderer) fitUnwrapped(paragraphs []string, w, h int) (float64, []string) {
-	for size := procFontSize; size >= procNoWrapMin; size -= 0.25 {
+func (r *LabelRenderer) fitUnwrapped(paragraphs []string, w, h int, maxPt float64) (float64, []string) {
+	for size := maxPt; size >= procNoWrapMin; size -= 0.25 {
 		face := r.makeFace(size)
 		fits := lineHeightWithRatio(size, procLineGap)*len(paragraphs) <= h
 		for _, p := range paragraphs {
@@ -258,8 +273,8 @@ func (r *LabelRenderer) fitUnwrapped(paragraphs []string, w, h int) (float64, []
 
 // fitWrapped returns the largest size at which the wrapped text fits. Below
 // the legal minimum only when it would not fit at all, and never cut.
-func (r *LabelRenderer) fitWrapped(paragraphs []string, w, h int) (float64, []string) {
-	for size := procFontSize; ; size -= 0.25 {
+func (r *LabelRenderer) fitWrapped(paragraphs []string, w, h int, maxPt float64) (float64, []string) {
+	for size := maxPt; ; size -= 0.25 {
 		face := r.makeFace(size)
 		var lines []string
 		for _, p := range paragraphs {

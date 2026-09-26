@@ -55,15 +55,24 @@ var plaMarkMask = sync.OnceValue(func() *image.Alpha {
 	return mask.SubImage(ink).(*image.Alpha)
 })
 
-// drawPlaMark draws the mark scaled into an s×s square at (x, y).
+// drawPlaMark draws the mark in an s×s square at (x, y), keeping its
+// proportions (it is not quite square) and centred in the square.
 func drawPlaMark(img *image.RGBA, x, y, s int) {
 	m := plaMarkMask()
 	if m == nil || s <= 0 {
 		return
 	}
-	scaled := image.NewAlpha(image.Rect(0, 0, s, s))
-	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), m, m.Bounds(), xdraw.Src, nil)
-	draw.DrawMask(img, image.Rect(x, y, x+s, y+s), image.Black, image.Point{}, scaled, image.Point{}, draw.Over)
+	mb := m.Bounds()
+	w, h := s, s
+	if mb.Dx() >= mb.Dy() {
+		h = s * mb.Dy() / mb.Dx()
+	} else {
+		w = s * mb.Dx() / mb.Dy()
+	}
+	scaled := image.NewAlpha(image.Rect(0, 0, w, h))
+	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), m, mb, xdraw.Src, nil)
+	x, y = x+(s-w)/2, y+(s-h)/2
+	draw.DrawMask(img, image.Rect(x, y, x+w, y+h), image.Black, image.Point{}, scaled, image.Point{}, draw.Over)
 }
 
 // plaBadgeSize is the size of the mark with 「外装」 beside it.

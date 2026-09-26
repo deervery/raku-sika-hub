@@ -349,3 +349,28 @@ func TestPlaMark_OnlyWhenTheFacilityEnablesIt(t *testing.T) {
 		t.Fatal("plaMark defaults to on")
 	}
 }
+
+// The mark keeps its proportions: it is drawn no taller or wider than its
+// source, only scaled.
+func TestPlaMark_KeepsItsProportions(t *testing.T) {
+	m := plaMarkMask()
+	if m == nil {
+		t.Fatal("the embedded mark does not decode")
+	}
+	const s = 200
+	img := whiteImage(s, s)
+	drawPlaMark(img, 0, 0, s)
+	ink := image.Rectangle{}
+	for y := 0; y < s; y++ {
+		for x := 0; x < s; x++ {
+			if isDark(img, x, y) {
+				ink = ink.Union(image.Rect(x, y, x+1, y+1))
+			}
+		}
+	}
+	want := float64(m.Bounds().Dx()) / float64(m.Bounds().Dy())
+	got := float64(ink.Dx()) / float64(ink.Dy())
+	if got < want*0.97 || got > want*1.03 {
+		t.Fatalf("drawn %v (%.3f), source %v (%.3f)", ink, got, m.Bounds(), want)
+	}
+}

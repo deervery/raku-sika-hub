@@ -56,6 +56,12 @@ type LabelData struct {
 	// 精肉（トレサ・非トレサ）・加工品・ペットのラベルに載る。
 	PlaMark bool `json:"plaMark"`
 
+	// ShrunkToFit: the label goes to an ipp-usb queue, where CUPS shrinks the
+	// whole label to fit the printable area (fit-to-page). Set by the printer,
+	// not by the request. Labels whose text must print at an exact size (pet:
+	// 8pt) draw it larger by the same ratio.
+	ShrunkToFit bool `json:"-"`
+
 	// EN bilingual traceable label (issue #271): JA companion values for "EN / JA" display.
 	// Used only when Locale == "en" and template is traceable_*.
 	ProductNameJa        string `json:"productNameJa"`        // 商品名の JA 値 (例: "ウデ")

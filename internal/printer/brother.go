@@ -489,7 +489,8 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 			"日本語フォントをインストールしてください: sudo apt-get install fonts-noto-cjk")
 	}
 
-	// Render the label image.
+	// Render the label image. An ipp-usb queue prints it shrunk to fit.
+	data.ShrunkToFit = !status.Raw
 	result, err := b.renderer.Render(data)
 	if err != nil {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)

@@ -114,20 +114,3 @@ func (r *LabelRenderer) drawPlaStack(img *image.RGBA, x, y, w int) {
 	tw := font.MeasureString(face, plaMarkText).Ceil()
 	drawString(img, face, plaMarkText, x+(w-tw)/2, baselineInSlot(face, y+s, lineHeight(plaMarkTextPt)))
 }
-
-// plaBadgeRow puts the badge at the right end of its own row, below the
-// table (as the pet template does).
-type plaBadgeRow struct {
-	r *LabelRenderer
-}
-
-func (p plaBadgeRow) height() int {
-	_, h := p.r.plaBadgeSize()
-	return h + pt(3)
-}
-
-func (p plaBadgeRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
-	w, _ := r.plaBadgeSize()
-	r.drawPlaBadge(img, contentLeft+contentWidth-w, y+pt(3))
-	return y + p.height()
-}

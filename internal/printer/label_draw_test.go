@@ -374,3 +374,68 @@ func TestPlaMark_KeepsItsProportions(t *testing.T) {
 		t.Fatalf("drawn %v (%.3f), source %v (%.3f)", ink, got, m.Bounds(), want)
 	}
 }
+
+// ippFitScale reproduces what CUPS did on office's ipp-usb queue.
+func TestIppFitScale_MatchesTheCapturedPrints(t *testing.T) {
+	for _, c := range []struct {
+		heightPx int
+		want     float64
+	}{
+		{528, 0.849}, // pet, 44mm
+		{609, 0.870}, // individual QR, 51mm
+		{716, 0.890}, // non-traceable, 60mm
+		{904, 0.901}, // traceable, 76mm (width-limited)
+	} {
+		if got := ippFitScale(c.heightPx); got < c.want-0.006 || got > c.want+0.006 {
+			t.Errorf("ippFitScale(%d) = %.3f, want %.3f", c.heightPx, got, c.want)
+		}
+	}
+}
+
+// Pet text prints at 8pt: drawn at 8pt for a raw queue, and larger by the
+// ratio CUPS shrinks the label by on an ipp-usb queue.
+func TestPetLabel_PrintsItsTextAt8pt(t *testing.T) {
+	r := testRenderer(t)
+	data := BuildLabelDataFromMap("pet", 1, map[string]string{
+		"productName": "ペット用 鹿肉ジャーキー", "productQuantity": "50 g",
+		"deadlineDate": "2027年3月1日", "storageTemperature": "直射日光・高温多湿を避けて保存",
+		"companyBlock": "株式会社サンプル\n北海道川上郡標茶町1-2-3\nTEL 015-000-0000",
+	}, "")
+	if f := r.petFont(data); f != 8 {
+		t.Fatalf("raw: drawn at %.2fpt", f)
+	}
+	data.ShrunkToFit = true
+	drawn := r.petFont(data)
+	printed := drawn * ippFitScale(rowsHeight(r.petRows(data, drawn)))
+	// Never below 8pt. It can land a little above: the media length rounds
+	// to whole mm, so the ratio jumps by a few percent from one size to the
+	// next.
+	if printed < petFontPt*ippModelMargin-0.001 || printed > 8.5 {
+		t.Fatalf("ipp-usb: drawn at %.2fpt, printed at %.2fpt", drawn, printed)
+	}
+}
+
+// Every pet template has 金属探知機 検査済み; long text wraps and is kept whole.
+func TestPetLabel_Rows(t *testing.T) {
+	r := testRenderer(t)
+	name := "ペット用 エゾシカ肉ジャーキー（小型犬用・無添加）スライスタイプ"
+	data := BuildLabelDataFromMap("pet", 1, map[string]string{
+		"productName": name, "productQuantity": "50 g",
+		"deadlineDate": "2027年3月1日", "storageTemperature": "常温",
+	}, "")
+	rows := r.petRows(data, petFontPt)
+	tbl := rows[0].(petTableRow)
+	last := tbl.cells[len(tbl.cells)-1]
+	if last[0] != "金属探知機" || last[1] != "検査済み" {
+		t.Fatalf("last row = %q", last)
+	}
+	face := r.makeFace(petFontPt)
+	defer face.Close()
+	l := tbl.layout(face)
+	if got := strings.Join(l.rows[0][1], ""); got != name {
+		t.Fatalf("product name printed as %q", got)
+	}
+	if len(l.rows[0][1]) < 2 {
+		t.Fatal("a long product name should wrap, not shrink")
+	}
+}

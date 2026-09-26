@@ -105,21 +105,14 @@ func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	if isNonTraceableLandscape(data) {
 		return r.renderNonTraceable(data)
 	}
-	rows := r.buildRows(data)
-
-	height := 0
-	for _, row := range rows {
-		height += row.height()
+	if isPetLabel(data) {
+		return r.renderPet(data)
 	}
+	return r.renderRows(r.buildRows(data))
+}
 
-	img := image.NewRGBA(image.Rect(0, 0, labelWidthPx, height))
-	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
-
-	y := 0
-	for _, row := range rows {
-		y = row.draw(img, r, y)
-	}
-
+// saveLabelPNG writes a label laid out on the 62mm width.
+func saveLabelPNG(img *image.RGBA) (RenderResult, error) {
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
 		return RenderResult{}, fmt.Errorf("create temp file: %w", err)
@@ -196,11 +189,6 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			certPath: certPath,
 			plaMark:  data.PlaMark,
 		})
-	} else if data.Template == "pet" {
-		// Pet: no warning text, no image section
-		if data.PlaMark {
-			rows = append(rows, plaBadgeRow{r: r})
-		}
 	} else {
 		rows = append(rows,
 			textRow{value: warningText(data.Locale), fontSize: fontSize},
@@ -690,6 +678,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 		if entry, ok := facilityEntry(data); ok {
 			entries = append(entries, entry)
 		}
+		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 		return entries
 	}
 	entries := []tableEntry{

@@ -80,8 +80,16 @@ func (r *LabelRenderer) renderProcessed(data LabelData) (RenderResult, error) {
 		{{text: localizedCaption(loc, "保存方法", "Storage")}, {text: trim(data.StorageTemperature)}},
 	})
 
+	// 注意事項（表の下）。プラマークはその右端、表の右の罫線に揃える。
+	attentionW := pt(168)
+	if data.PlaMark {
+		w, h := r.plaBadgeSize()
+		right := pt(main.xPt + main.colsPt[len(main.colsPt)-1])
+		r.drawPlaBadge(img, right-w, pt(148.4)+(pt(20)-h)/2)
+		attentionW = right - w - pt(4) - pt(10.4)
+	}
 	if v := trim(data.AttentionText); v != "" {
-		r.drawInFrame(img, v, pt(10.4), pt(148.4), pt(168), pt(20), false, false, 0)
+		r.drawInFrame(img, v, pt(10.4), pt(148.4), attentionW, pt(20), false, false, 0)
 	}
 
 	// 見出しは表の左の罫線に揃える（区分の行と同じ）。

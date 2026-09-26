@@ -219,9 +219,16 @@ func TestRender_EveryTemplateFitsThePrintHead(t *testing.T) {
 		}
 	}
 	cases["traceable (en)"] = en
+	withPla := map[string]string{"plaMark": "true"}
+	for k, v := range common {
+		withPla[k] = v
+	}
+	for _, tpl := range []string{"traceable", "traceable_bear", "non_traceable", "processed", "pet"} {
+		cases[tpl+" (pla)"] = withPla
+	}
 
 	for name, fields := range cases {
-		tpl := strings.TrimSuffix(name, " (en)")
+		tpl, _, _ := strings.Cut(name, " (")
 		res, err := r.Render(BuildLabelDataFromMap(tpl, 1, fields, ""))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -284,5 +291,61 @@ func TestProcessorOf(t *testing.T) {
 		if n, a := processorOf(c.data); n != c.name || a != c.address {
 			t.Errorf("processorOf(%+v) = %q, %q; want %q, %q", c.data, n, a, c.name, c.address)
 		}
+	}
+}
+
+// The プラ mark is printed only for a facility that enables it, on the meat,
+// processed and pet labels.
+func TestPlaMark_OnlyWhenTheFacilityEnablesIt(t *testing.T) {
+	r := testRenderer(t)
+	fields := map[string]string{
+		"productName": "エゾシカ ロース", "productQuantity": "0.52 kg",
+		"deadlineDate": "2026年10月10日", "storageTemperature": "-18℃以下",
+		"individualNumber": "0123-45-67-89", "captureLocation": "北海道 標茶町",
+		"qrCode": "https://rakusika.com/t/0123456789",
+	}
+	render := func(tpl string, pla bool) image.Image {
+		f := map[string]string{}
+		for k, v := range fields {
+			f[k] = v
+		}
+		if pla {
+			f["plaMark"] = "true"
+		}
+		res, err := r.Render(BuildLabelDataFromMap(tpl, 1, f, ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(res.Path)
+		img, err := decodePNG(res.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return img
+	}
+	dark := func(img image.Image) int {
+		n := 0
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if color.GrayModel.Convert(img.At(x, y)).(color.Gray).Y <= 128 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	// The mark with 「外装」 is several hundred dots of ink.
+	for _, tpl := range []string{"traceable", "traceable_bear", "non_traceable", "processed", "pet"} {
+		without, with := dark(render(tpl, false)), dark(render(tpl, true))
+		if with-without < 500 {
+			t.Errorf("%s: plaMark added %d dots of ink", tpl, with-without)
+		}
+	}
+	if !BuildLabelDataFromMap("pet", 1, map[string]string{"plaMark": "true"}, "").PlaMark {
+		t.Fatal("plaMark=true is not read")
+	}
+	if BuildLabelDataFromMap("pet", 1, map[string]string{}, "").PlaMark {
+		t.Fatal("plaMark defaults to on")
 	}
 }

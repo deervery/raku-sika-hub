@@ -194,9 +194,13 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			lines:    warningLines(data.Locale, certPath != ""),
 			qrURL:    data.QRCode,
 			certPath: certPath,
+			plaMark:  data.PlaMark,
 		})
 	} else if data.Template == "pet" {
 		// Pet: no warning text, no image section
+		if data.PlaMark {
+			rows = append(rows, plaBadgeRow{r: r})
+		}
 	} else {
 		rows = append(rows,
 			textRow{value: warningText(data.Locale), fontSize: fontSize},
@@ -1059,6 +1063,8 @@ type textQRRow struct {
 	fontSize float64
 	// certPath: 空でなければ警告文と QR の間にエゾシカ認証ロゴを描画する (#271)。
 	certPath string
+	// plaMark: 警告文の下にプラマーク＋「外装」を置く。
+	plaMark bool
 }
 
 func (t textQRRow) effectiveFontSize() float64 {
@@ -1078,10 +1084,20 @@ func (t textQRRow) qrSizePx() int {
 	return contentWidth * 40 / 100
 }
 
+// plaMarkAbovePt is the space between the warning and the プラ badge.
+const plaMarkAbovePt = 2.0
+
+func (t textQRRow) plaMarkHeight() int {
+	if !t.plaMark {
+		return 0
+	}
+	return pt(plaMarkAbovePt) + pt(plaMarkPt)
+}
+
 func (t textQRRow) height() int {
 	fs := t.effectiveFontSize()
 	lh := lineHeight(fs)
-	textH := lh * len(t.lines)
+	textH := lh*len(t.lines) + t.plaMarkHeight()
 	qrH := t.qrSizePx() + 4
 	if qrH > textH {
 		return qrH
@@ -1112,11 +1128,14 @@ func (t textQRRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		textWidth = 1
 	}
 
-	textTotalH := lh * len(t.lines)
+	textTotalH := lh*len(t.lines) + t.plaMarkHeight()
 	ty := y + (rowHeight-textTotalH)/2
 	for _, line := range t.lines {
 		drawStringFitWidth(img, face, line, contentLeft, baselineInSlot(face, ty, lh), textWidth)
 		ty += lh
+	}
+	if t.plaMark {
+		r.drawPlaBadge(img, contentLeft, ty+pt(plaMarkAbovePt))
 	}
 
 	if showCert {

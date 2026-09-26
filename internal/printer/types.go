@@ -52,6 +52,10 @@ type LabelData struct {
 	// JA traceable / EN bilingual traceable 両方で参照される。
 	EzoshikaCertified bool `json:"ezoshikaCertified"`
 
+	// PlaMark: プラマーク＋「外装」を印刷する施設（lite の施設マスタ plaMark）。
+	// 精肉（トレサ・非トレサ）・加工品・ペットのラベルに載る。
+	PlaMark bool `json:"plaMark"`
+
 	// EN bilingual traceable label (issue #271): JA companion values for "EN / JA" display.
 	// Used only when Locale == "en" and template is traceable_*.
 	ProductNameJa        string `json:"productNameJa"`        // 商品名の JA 値 (例: "ウデ")

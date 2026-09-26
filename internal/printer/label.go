@@ -242,8 +242,7 @@ func (t textRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		text = t.label + ": " + t.value
 	}
 
-	baseline := y + int(t.fontSize*float64(labelDPI)/72)
-	drawString(img, face, text, contentLeft, baseline)
+	drawString(img, face, text, contentLeft, baselineInSlot(face, y, t.height()))
 	return y + t.height()
 }
 
@@ -297,7 +296,7 @@ func (t tableBlockRow) layout() tableLayout {
 	rows := make([]tableRowLayout, 0, len(t.entries))
 	totalHeight := 0
 	for _, entry := range t.entries {
-		labelLines, labelSize := fitLines(entry.label, t.fontSize, minFontSize, t.maxLines, labelWidth-2*tableCellPadding)
+		labelLines, labelSize := fitAllLines(entry.label, t.fontSize, minFontSize, t.maxLines, labelWidth-2*tableCellPadding)
 		valueMaxLines := t.maxLines
 		if entry.maxValueLines > 0 {
 			valueMaxLines = entry.maxValueLines
@@ -305,11 +304,12 @@ func (t tableBlockRow) layout() tableLayout {
 		var valueLines []string
 		var valueSize float64
 		if entry.keepValueFont {
+			// A block's lines are printed in full: a long address used to
+			// push the TEL line out behind "...".
 			valueLines = wrapText(entry.value, t.fontSize, valueWidth-2*tableCellPadding)
-			valueLines = clampLines(valueLines, valueMaxLines, t.fontSize, valueWidth-2*tableCellPadding)
 			valueSize = t.fontSize
 		} else {
-			valueLines, valueSize = fitLines(entry.value, t.fontSize, minFontSize, valueMaxLines, valueWidth-2*tableCellPadding)
+			valueLines, valueSize = fitAllLines(entry.value, t.fontSize, minFontSize, valueMaxLines, valueWidth-2*tableCellPadding)
 		}
 		valueLineHeight := lineHeight(valueSize)
 		if entry.valueLineGap > 0 {
@@ -398,19 +398,19 @@ func (t tableBlockRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		labelFace := r.makeFace(row.labelFontSize)
 		valueFace := r.makeFace(row.valueFontSize)
 
-		labelBaseline := currY + tableCellPadding + lineHeight(row.labelFontSize)
-		valueBaseline := currY + tableCellPadding + lineHeight(row.valueFontSize)
-
 		labelX := contentLeft + tableCellPadding
 		valueX := contentLeft + layout.labelWidth + tableCellPadding
 
+		labelLH := lineHeight(row.labelFontSize)
+		slotTop := currY + tableCellPadding
 		for _, line := range row.labelLines {
-			drawStringFitWidth(img, labelFace, line, labelX, labelBaseline, layout.labelWidth-2*tableCellPadding)
-			labelBaseline += lineHeight(row.labelFontSize)
+			drawStringFitWidth(img, labelFace, line, labelX, baselineInSlot(labelFace, slotTop, labelLH), layout.labelWidth-2*tableCellPadding)
+			slotTop += labelLH
 		}
+		slotTop = currY + tableCellPadding
 		for _, line := range row.valueLines {
-			drawStringFitWidth(img, valueFace, line, valueX, valueBaseline, layout.valueWidth-2*tableCellPadding)
-			valueBaseline += row.valueLineHeight
+			drawStringFitWidth(img, valueFace, line, valueX, baselineInSlot(valueFace, slotTop, row.valueLineHeight), layout.valueWidth-2*tableCellPadding)
+			slotTop += row.valueLineHeight
 		}
 
 		labelFace.Close()
@@ -716,7 +716,9 @@ func buildTableEntries(data LabelData) []tableEntry {
 				nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v)
 			}
 			if len(nutrition) > 0 {
-				entries = append(entries, tableEntry{label: "", value: strings.Join(nutrition, " / ")})
+				// 5 項目は 8pt でも 2 行に収まらない（以前は食塩相当量が「…」で
+				// 切れていた）。8pt まで縮めず 3 行で組む。
+				entries = append(entries, tableEntry{label: "", value: strings.Join(nutrition, " / "), maxValueLines: 3})
 			}
 		}
 		if v := trim(data.IsHeatedMeatProducts); v != "" && v != "false" {
@@ -833,6 +835,19 @@ func lineHeight(size float64) int {
 	return int(size * lineSpacingRatio * float64(labelDPI) / 72)
 }
 
+// baselineInSlot returns the baseline that centers a line of text in a slot
+// of the given height, measured on a full-width ideograph. A baseline one
+// line height (or one em) below the slot top, as before, left the bottom of
+// the glyphs on the table rule below and on the top of the next line.
+func baselineInSlot(face font.Face, slotTop, slotHeight int) int {
+	b, _ := font.BoundString(face, "国")
+	top, bottom := b.Min.Y.Floor(), b.Max.Y.Ceil()
+	if bottom <= top {
+		return slotTop + slotHeight
+	}
+	return slotTop + (slotHeight-(bottom-top))/2 - top
+}
+
 func lineHeightWithRatio(size, ratio float64) int {
 	if ratio <= 0 {
 		ratio = lineSpacingRatio
@@ -933,6 +948,18 @@ func fitLines(text string, baseSize, minSize float64, maxLines, maxWidth int) ([
 	lines := wrapText(text, minSize, maxWidth)
 	lines = clampLines(lines, maxLines, minSize, maxWidth)
 	return lines, minSize
+}
+
+// fitAllLines is fitLines without the "..." cut: text that does not fit in
+// maxLines even at minSize takes as many lines as it needs. What the table
+// shows (ingredients and allergens, nutrition, the processor's address) must
+// be printed in full; the label grows instead.
+func fitAllLines(text string, baseSize, minSize float64, maxLines, maxWidth int) ([]string, float64) {
+	lines, size := fitLines(text, baseSize, minSize, maxLines, maxWidth)
+	if all := wrapText(text, size, maxWidth); len(all) > len(lines) {
+		return all, size
+	}
+	return lines, size
 }
 
 func calcImageSizeForData(data LabelData, widthPx, availableHeight int) int {
@@ -1153,8 +1180,7 @@ func (t textQRRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 	textTotalH := lh * len(t.lines)
 	ty := y + (rowHeight-textTotalH)/2
 	for _, line := range t.lines {
-		baseline := ty + int(fs*float64(labelDPI)/72)
-		drawStringFitWidth(img, face, line, contentLeft, baseline, textWidth)
+		drawStringFitWidth(img, face, line, contentLeft, baselineInSlot(face, ty, lh), textWidth)
 		ty += lh
 	}
 
@@ -1214,8 +1240,7 @@ func (c carcassRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 	textTotalH := lh * len(c.texts)
 	ty := y + (rowHeight-textTotalH)/2
 	for _, text := range c.texts {
-		baseline := ty + int(c.fontSize*float64(labelDPI)/72)
-		drawStringFitWidth(img, face, text, left, baseline, textWidth)
+		drawStringFitWidth(img, face, text, left, baselineInSlot(face, ty, lh), textWidth)
 		ty += lh
 	}
 
@@ -1357,8 +1382,10 @@ func drawStringFitWidth(img *image.RGBA, face font.Face, text string, x, y, maxW
 		return
 	}
 
+	// tmp and scaled stay transparent so only the glyphs reach img. The box
+	// is taller than a line (ascent + descent); filled white, it erased the
+	// bottom of the line above and the table rule it overlapped.
 	tmp := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(tmp, tmp.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
 	d := &font.Drawer{
 		Dst:  tmp,
 		Src:  &image.Uniform{color.Black},

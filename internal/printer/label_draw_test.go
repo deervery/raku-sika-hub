@@ -76,14 +76,16 @@ func TestTableBlock_TextClearOfRules(t *testing.T) {
 	const top = 10
 	tbl.draw(img, r, top)
 
-	vertical := map[int]bool{
-		contentLeft:                     true,
-		contentLeft + layout.labelWidth: true,
-		contentLeft + contentWidth:      true,
+	vertical := map[int]bool{}
+	for _, x := range []int{contentLeft, contentLeft + 1,
+		contentLeft + layout.labelWidth - 1, contentLeft + layout.labelWidth,
+		contentLeft + contentWidth - 1, contentLeft + contentWidth} {
+		vertical[x] = true
 	}
+	// Rules are ruleDots wide: the top one below its line, the others above.
 	rule := top
 	for i, row := range layout.rows {
-		for _, y := range []int{rule + 1, rule + row.height - 1} {
+		for _, y := range []int{rule + ruleDots, rule + row.height - ruleDots} {
 			for x := contentLeft; x <= contentLeft+contentWidth; x++ {
 				if !vertical[x] && isDark(img, x, y) {
 					t.Fatalf("row %d: text touches the rule at (%d,%d)", i, x, y)
@@ -103,25 +105,19 @@ func TestTableBlock_TextClearOfRules(t *testing.T) {
 	}
 }
 
-// Nothing in the table is cut with "...": ingredients with their allergens,
-// nutrition and the processor's TEL used to be dropped when they ran long.
+// Nothing in the table is cut with "...": a long address used to push the
+// TEL line out, and long values were cut at 8pt.
 func TestTableLayout_PrintsEveryCharacter(t *testing.T) {
-	ingredients := "鹿肉（北海道産）、豚脂、食塩、砂糖、香辛料、ポークエキス／調味料（アミノ酸等）、リン酸塩（Na）、酸化防止剤（ビタミンC）、発色剤（亜硝酸Na）、（一部に豚肉を含む）"
 	company := "株式会社サンプルジビエファクトリー北海道\n北海道川上郡標茶町字虹別原野基線123番地の45\nTEL 015-000-0000"
 	data := LabelData{
-		Template:               "processed",
-		ProductName:            "鹿肉ソーセージ",
-		ProductIngredient:      ingredients,
-		ProductQuantity:        "200 g",
-		DeadlineDate:           "2026年11月1日",
-		StorageTemperature:     "10℃以下",
-		NutritionUnit:          "100gあたり",
-		CaloriesQuantity:       "210kcal",
-		ProteinQuantity:        "18.2g",
-		FatQuantity:            "14.1g",
-		CarbohydratesQuantity:  "2.3g",
-		SaltEquivalentQuantity: "1.8g",
-		CompanyBlock:           company,
+		Template:           "traceable",
+		ProductName:        "エゾシカ ロース ブロック（背ロース・ヒレ・内もも・外もも・肩ロース詰め合わせ）スライス用",
+		ProductQuantity:    "0.52 kg",
+		DeadlineDate:       "2026年10月10日",
+		StorageTemperature: "-18℃以下",
+		IndividualNumber:   "0123-45-67-89",
+		CaptureLocation:    "北海道 標茶町",
+		CompanyBlock:       company,
 	}
 	entries := buildTableEntries(data)
 	tbl := tableBlockRow{entries: entries, fontSize: fontSizeBody, maxLines: maxTableLines}
@@ -130,6 +126,67 @@ func TestTableLayout_PrintsEveryCharacter(t *testing.T) {
 		want := strings.ReplaceAll(entries[i].value, "\n", "")
 		if got != want {
 			t.Errorf("%s: printed %q, want %q", entries[i].label, got, want)
+		}
+	}
+}
+
+func TestProcessedLabel_IsTheLbxLandscapeLayout(t *testing.T) {
+	r := testRenderer(t)
+	res, err := r.Render(BuildLabelDataFromMap("processed", 1, map[string]string{
+		"productName": "鹿肉ソーセージ", "productQuantity": "200 g",
+		"deadlineDate": "2026年11月1日", "storageTemperature": "10℃以下",
+	}, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(res.Path)
+	img, err := decodePNG(res.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// processed.lbx: 175.7pt × 322.3pt, sent rotated like the EN label.
+	if b := img.Bounds(); b.Dx() != labelWidthPx || b.Dy() != pt(procWidthPt) {
+		t.Fatalf("size = %dx%d, want %dx%d", b.Dx(), b.Dy(), labelWidthPx, pt(procWidthPt))
+	}
+	if res.WidthMM != 62 || res.HeightMM != 114 {
+		t.Fatalf("media = %dx%dmm, want 62x114mm", res.WidthMM, res.HeightMM)
+	}
+}
+
+// A long ingredient list with its additives and allergens is printed in full
+// in the 原材料名 frame, shrinking no further than the legal minimum.
+func TestProcessedLabel_IngredientsFitWithoutCutting(t *testing.T) {
+	r := testRenderer(t)
+	text := "鹿肉（北海道産）、豚脂、食塩、砂糖、香辛料、ポークエキス／調味料（アミノ酸等）、リン酸塩（Na）、酸化防止剤（ビタミンC）、発色剤（亜硝酸Na）、（一部に豚肉を含む）"
+	inset := pt(procCellInsetPt)
+	w := pt(161.3) - pt(33.6) - 2*inset
+	h := pt(75.9) - pt(19.5) - 2*inset
+	size, lines := r.fitWrapped([]string{text}, w, h)
+	if strings.Join(lines, "") != text {
+		t.Fatalf("printed %q", strings.Join(lines, ""))
+	}
+	if size < 5.5 {
+		t.Fatalf("shrunk to %.2fpt, below the 5.5pt minimum", size)
+	}
+}
+
+func TestWrapJapanese_KeepsNumbersAndPunctuationTogether(t *testing.T) {
+	r := testRenderer(t)
+	face := r.makeFace(procFontSize)
+	defer face.Close()
+	text := "北海道小樽市銭函3丁目23-203、鹿肉（北海道産）、豚脂、食塩、香辛料"
+	for _, width := range []int{200, 260, 330, 400} {
+		lines := wrapJapanese(face, text, width)
+		if strings.Join(lines, "") != text {
+			t.Fatalf("width %d: lost text: %q", width, lines)
+		}
+		for i, line := range lines {
+			if strings.HasPrefix(line, "、") || strings.HasSuffix(line, "（") {
+				t.Errorf("width %d: line %d breaks at punctuation: %q", width, i, lines)
+			}
+			if i > 0 && strings.HasPrefix(line, "203") {
+				t.Errorf("width %d: 23-203 split: %q", width, lines)
+			}
 		}
 	}
 }

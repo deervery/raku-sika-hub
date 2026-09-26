@@ -37,14 +37,17 @@ const (
 	tableLabelWidthRatio        = 0.3
 	tableLabelWidthTraceable    = 0.317
 	tableLabelWidthNonTraceable = 0.295
-	tableLabelWidthProcessed    = 0.208
 	tableLabelWidthPet          = 0.295
 	tableCellPadding            = 3
-	maxTableLines               = 2
-	logoWidthRatio              = 1.5
-	imageSectionScale           = 0.89
-	contentWidthScale           = 1.0
-	minImageSizePx              = 90
+	// Table rules are 2 dots (≈0.17mm), as the P-touch templates' 0.5pt pen.
+	// A 1-dot rule vanished when the image was shown scaled down, and
+	// thinned out when ipp-usb shrank the label to fit.
+	ruleDots          = 2
+	maxTableLines     = 2
+	logoWidthRatio    = 1.5
+	imageSectionScale = 0.89
+	contentWidthScale = 1.0
+	minImageSizePx    = 90
 )
 
 var (
@@ -96,6 +99,9 @@ type RenderResult struct {
 func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	if isENBilingualTraceable(data) {
 		return r.renderENTraceable(data)
+	}
+	if isProcessedLandscape(data) {
+		return r.renderProcessed(data)
 	}
 	rows := r.buildRows(data)
 
@@ -189,9 +195,6 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 		})
 	} else if data.Template == "pet" {
 		// Pet: no warning text, no image section
-	} else if data.Template == "processed" {
-		// Processed: warning text only, no image section
-		rows = append(rows, textRow{value: warningText(data.Locale), fontSize: fontSize})
 	} else {
 		rows = append(rows,
 			textRow{value: warningText(data.Locale), fontSize: fontSize},
@@ -384,15 +387,7 @@ func (t tableBlockRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		return y
 	}
 
-	borderColor := color.RGBA{R: 0, G: 0, B: 0, A: 255}
-	topY := y
-	bottomY := y + layout.totalHeight
-	drawHLine(img, contentLeft, contentLeft+contentWidth, topY, borderColor)
-	drawHLine(img, contentLeft, contentLeft+contentWidth, bottomY, borderColor)
-	drawVLine(img, contentLeft, topY, bottomY, borderColor)
-	drawVLine(img, contentLeft+layout.labelWidth, topY, bottomY, borderColor)
-	drawVLine(img, contentLeft+contentWidth, topY, bottomY, borderColor)
-
+	ys := []int{y}
 	currY := y
 	for _, row := range layout.rows {
 		labelFace := r.makeFace(row.labelFontSize)
@@ -417,8 +412,10 @@ func (t tableBlockRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		valueFace.Close()
 
 		currY += row.height
-		drawHLine(img, contentLeft, contentLeft+contentWidth, currY, borderColor)
+		ys = append(ys, currY)
 	}
+	xs := []int{contentLeft, contentLeft + layout.labelWidth, contentLeft + contentWidth}
+	drawGrid(img, xs, ys, ruleDots)
 
 	return y + layout.totalHeight
 }
@@ -689,51 +686,6 @@ func buildTableEntries(data LabelData) []tableEntry {
 		}
 		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 		return entries
-	case "processed":
-		entries := []tableEntry{
-			{label: localizedCaption(data.Locale, "名称", "Name"), value: trim(data.ProductName)},
-			{label: localizedCaption(data.Locale, "原材料名", "Ingredients"), value: trim(data.ProductIngredient)},
-			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: deadlineCaption(data, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
-			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
-		}
-		if trim(data.NutritionUnit) != "" {
-			entries = append(entries, tableEntry{label: trim(data.NutritionUnit), value: ""})
-			nutrition := []string{}
-			if v := trim(data.CaloriesQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "熱量", "Energy")+" "+v)
-			}
-			if v := trim(data.ProteinQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "たんぱく質", "Protein")+" "+v)
-			}
-			if v := trim(data.FatQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "脂質", "Fat")+" "+v)
-			}
-			if v := trim(data.CarbohydratesQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "炭水化物", "Carbs")+" "+v)
-			}
-			if v := trim(data.SaltEquivalentQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v)
-			}
-			if len(nutrition) > 0 {
-				// 5 項目は 8pt でも 2 行に収まらない（以前は食塩相当量が「…」で
-				// 切れていた）。8pt まで縮めず 3 行で組む。
-				entries = append(entries, tableEntry{label: "", value: strings.Join(nutrition, " / "), maxValueLines: 3})
-			}
-		}
-		if v := trim(data.IsHeatedMeatProducts); v != "" && v != "false" {
-			entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "食肉製品区分", "Meat Product"), value: v})
-		}
-		if entry, ok := companyEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		if entry, ok := facilityEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		if v := trim(data.AttentionText); v != "" {
-			entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "注意事項", "Note"), value: v})
-		}
-		return entries
 	case "pet":
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
@@ -798,8 +750,6 @@ func labelWidthRatioForTemplate(template string) float64 {
 		return tableLabelWidthTraceable
 	case "non_traceable", "non_traceable_deer":
 		return tableLabelWidthNonTraceable
-	case "processed":
-		return tableLabelWidthProcessed
 	case "pet":
 		return tableLabelWidthPet
 	default:

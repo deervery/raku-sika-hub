@@ -58,29 +58,6 @@ func TestBuildTableEntriesTraceable_UsesDeadlineLabel(t *testing.T) {
 	}
 }
 
-func TestBuildTableEntriesProcessed(t *testing.T) {
-	data := LabelData{
-		Template:           "processed",
-		ProductName:        "鹿肉カレー",
-		ProductQuantity:    "200g",
-		DeadlineDate:       "2026年6月30日",
-		StorageTemperature: "常温",
-		ProductIngredient:  "鹿肉、玉ねぎ、にんじん",
-		NutritionUnit:      "100gあたり",
-		CaloriesQuantity:   "250 kcal",
-		ProcessorName:      "施設B",
-		ProcessorLocation:  "札幌市",
-	}
-
-	entries := buildTableEntries(data)
-	if entry, ok := findEntry(entries, "原材料名"); !ok || entry.value != "鹿肉、玉ねぎ、にんじん" {
-		t.Fatalf("原材料名 row missing or wrong: %+v", entry)
-	}
-	if _, ok := findEntry(entries, "栄養成分表示（100gあたり）"); ok {
-		t.Fatalf("nutrition heading should not be included for processed")
-	}
-}
-
 func TestBuildTableEntriesTraceable_PrefersBlocks(t *testing.T) {
 	data := LabelData{
 		Template:           "traceable",

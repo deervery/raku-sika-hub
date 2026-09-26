@@ -209,7 +209,7 @@ func (b *Brother) testPrintRaw(status PrinterStatus) error {
 		return fmt.Errorf("PRINTER_ERROR: ラベルレンダラが初期化されていません。" +
 			"日本語フォントをインストールしてください: sudo apt-get install fonts-noto-cjk")
 	}
-	data := BuildLabelDataFromMap("processed", 1, map[string]string{
+	data := BuildLabelDataFromMap("pet", 1, map[string]string{
 		"productName":        "テスト印刷",
 		"productQuantity":    "-",
 		"deadlineDate":       time.Now().Format("2006-01-02 15:04"),

@@ -253,3 +253,31 @@ func TestProblems_Err2Bits(t *testing.T) {
 		t.Errorf("err2 0x20 (cancel key, unused) should not stop a job: %+v", ps)
 	}
 }
+
+// The conversion changes nothing but the colour mode and the raster lines,
+// and the result is still a job the backend can follow.
+func TestToTwoColor(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "qlraster", "testdata", "traceable_732.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := ToTwoColor(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := ParseJob(two)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := ParseJob(data)
+	if !job.TwoColor || orig.TwoColor || job.Pages != orig.Pages || job.Media != orig.Media {
+		t.Fatalf("converted %+v, original %+v", job, orig)
+	}
+	i := bytes.Index(two, []byte{0x1B, 'i', 'K'})
+	if i < 0 || two[i+3] != 0x09 {
+		t.Fatalf("ESC i K = %x", two[i:i+4])
+	}
+	if _, err := ToTwoColor(append([]byte{'M', 0x02}, data...)); err == nil {
+		t.Fatal("compressed jobs must not be converted")
+	}
+}

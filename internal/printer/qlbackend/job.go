@@ -15,6 +15,9 @@ type Media struct {
 type Job struct {
 	Pages int
 	Media Media
+	// TwoColor: the job is already in two-colour mode (ESC i K bit 0, or
+	// two-colour raster lines).
+	TwoColor bool
 }
 
 // ParseJob walks the QL raster command stream command by command. Walking it,
@@ -55,6 +58,16 @@ func ParseJob(data []byte) (Job, error) {
 				return Job{}, err
 			}
 			i += 3 + n
+		case 'w': // two-colour raster line: w colour n + n bytes
+			if err := need(3); err != nil {
+				return Job{}, err
+			}
+			n := int(data[i+2])
+			if err := need(3 + n); err != nil {
+				return Job{}, err
+			}
+			job.TwoColor = true
+			i += 3 + n
 		case 'G': // compressed raster line: G n1 n2 + (n1 | n2<<8) bytes
 			if err := need(3); err != nil {
 				return Job{}, err
@@ -94,6 +107,9 @@ func ParseJob(data []byte) (Job, error) {
 			if err := need(size); err != nil {
 				return Job{}, err
 			}
+			if data[i+2] == 'K' && data[i+3]&expandedTwoColor != 0 {
+				job.TwoColor = true
+			}
 			if data[i+2] == 'z' && !job.Media.Known {
 				flags := data[i+3]
 				// Only trust the fields the job marks as valid.
@@ -110,4 +126,74 @@ func ParseJob(data []byte) (Job, error) {
 		return Job{}, fmt.Errorf("qlbackend: stream has no print command")
 	}
 	return job, nil
+}
+
+// expandedTwoColor is the two-colour printing bit of ESC i K.
+const expandedTwoColor = 0x01
+
+// ToTwoColor rewrites a black-only job for a red/black roll: two-colour
+// printing is switched on (ESC i K) and every raster line is sent as a black
+// line with an empty red line after it (w 0x01 / w 0x02, as brother_ql sends
+// for 62red). Nothing else changes. Only the uncompressed lines qlraster
+// writes are converted; anything else is an error, and the job is then sent
+// as it was.
+func ToTwoColor(data []byte) ([]byte, error) {
+	out := make([]byte, 0, len(data)*2)
+	for i := 0; i < len(data); {
+		switch c := data[i]; c {
+		case 'g':
+			if i+3 > len(data) || data[i+1] != 0x00 {
+				return nil, fmt.Errorf("qlbackend: raster line at byte %d cannot be converted", i)
+			}
+			n := int(data[i+2])
+			if i+3+n > len(data) {
+				return nil, fmt.Errorf("qlbackend: stream ends inside a raster line at byte %d", i)
+			}
+			out = append(out, 'w', 0x01, byte(n))
+			out = append(out, data[i+3:i+3+n]...)
+			out = append(out, 'w', 0x02, byte(n))
+			out = append(out, make([]byte, n)...)
+			i += 3 + n
+		case 'G', 'Z', 'M', 'w':
+			return nil, fmt.Errorf("qlbackend: command 0x%02x at byte %d cannot be converted", c, i)
+		case 0x1B:
+			if i+2 > len(data) {
+				return nil, fmt.Errorf("qlbackend: stream ends inside a command at byte %d", i)
+			}
+			if data[i+1] == '@' {
+				out = append(out, data[i:i+2]...)
+				i += 2
+				continue
+			}
+			if i+3 > len(data) || data[i+1] != 'i' {
+				return nil, fmt.Errorf("qlbackend: unknown command at byte %d", i)
+			}
+			size := 0
+			switch data[i+2] {
+			case 'S':
+				size = 3
+			case 'a', 'M', 'A', 'K':
+				size = 4
+			case 'd':
+				size = 5
+			case 'z':
+				size = 13
+			default:
+				return nil, fmt.Errorf("qlbackend: unknown command ESC i 0x%02x at byte %d", data[i+2], i)
+			}
+			if i+size > len(data) {
+				return nil, fmt.Errorf("qlbackend: stream ends inside a command at byte %d", i)
+			}
+			start := len(out)
+			out = append(out, data[i:i+size]...)
+			if data[i+2] == 'K' {
+				out[start+3] |= expandedTwoColor
+			}
+			i += size
+		default: // invalidate (0x00), print (0x0C, 0x1A)
+			out = append(out, c)
+			i++
+		}
+	}
+	return out, nil
 }

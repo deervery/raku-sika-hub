@@ -114,6 +114,35 @@ func TestEncode_DeclaresRollWidthForEveryHeight(t *testing.T) {
 	}
 }
 
+// With NoMediaCheck the printer must not be asked to compare the roll with
+// the job, and nothing else about the job may change.
+func TestEncode_NoMediaCheckOnlyClearsTheRollFlags(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 732, 300))
+	checked, err := Encode(img, Continuous62, Options{Cut: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchecked, err := Encode(img, Continuous62, Options{Cut: true, NoMediaCheck: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := bytes.Index(unchecked, []byte{0x1B, 0x69, 0x7A})
+	if i < 0 {
+		t.Fatal("no print information command")
+	}
+	if flags := unchecked[i+3]; flags&(piKind|piWidth|piLength) != 0 || flags&(piRecover|piQuality) != piRecover|piQuality {
+		t.Fatalf("flags 0x%02x: want recover|quality only", flags)
+	}
+	if len(checked) != len(unchecked) {
+		t.Fatalf("length %d vs %d", len(checked), len(unchecked))
+	}
+	for j := range checked {
+		if j != i+3 && checked[j] != unchecked[j] {
+			t.Fatalf("byte %d differs besides the valid flags", j)
+		}
+	}
+}
+
 // Independent of brother_ql: decoding the stream must give back the input,
 // dot for dot, at its original size. This is the property ptouch broke.
 func TestEncode_RoundTripsAtOriginalSize(t *testing.T) {

@@ -107,11 +107,21 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 	s.drainFor(frames, 150*time.Millisecond, time.Second)
 	s.info("プリンタの状態を確認しています")
 	reply, answered, err := s.preflight(dev, frames)
+	if answered {
+		s.debugFrame(reply)
+	}
 	if err != nil {
 		return s.fail(res, "プリンタにデータを送れません。電源と USB ケーブルを確認してください。", "other-error", err)
 	}
 	if answered {
-		if ps := reply.Problems(); len(ps) > 0 {
+		ps := reply.Problems()
+		if !job.Media.Known {
+			// The job does not ask for the roll to be checked (a station
+			// using rolls the printer does not recognise), so the printer
+			// saying the roll does not match is no reason to refuse it.
+			ps = dropReason(ps, "media-needed-error")
+		}
+		if len(ps) > 0 {
 			return s.failProblems(res, ps)
 		}
 		if p, bad := reply.MediaMismatch(job.Media); bad {
@@ -153,13 +163,17 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 				return abort(s.fail(res, "印刷中にプリンタとの接続が切れました。電源と USB ケーブルを確認し、ラベルを確かめてから再送信してください。", "other-error", nil))
 			}
 			heard = true
+			s.debugFrame(st)
 			switch st.Type {
 			case TypePrintingCompleted:
 				res.Completed++
 			case TypeErrorOccurred:
 				ps := st.Problems()
 				if len(ps) == 0 {
-					ps = []Problem{{Message: fmt.Sprintf("プリンタがエラーを報告しました（コード %02x%02x）。", st.Err1, st.Err2), Reason: "other-error"}}
+					// The printer stopped the job without saying why in the
+					// error bits (hakodate, 2026-09-27/28: its screen said
+					// 「ロール種類と印刷データが合わない」). Its screen says more.
+					ps = []Problem{{Message: fmt.Sprintf("プリンタがエラーを報告しました（コード %02x%02x）。プリンタの画面の表示とロールを確認してください。", st.Err1, st.Err2), Reason: "other-error"}}
 				}
 				return abort(s.failProblems(res, ps))
 			case TypeNotification:
@@ -341,6 +355,22 @@ func (s *Sender) fail(res Result, message, reason string, cause error) Result {
 		fmt.Fprintf(s.Log, "DEBUG: %v\n", cause)
 	}
 	return s.failProblems(res, []Problem{{Message: message, Reason: reason}})
+}
+
+func dropReason(ps []Problem, reason string) []Problem {
+	var out []Problem
+	for _, p := range ps {
+		if p.Reason != reason {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// debugFrame writes a status frame to the CUPS log as it came from the
+// printer, so that what the printer said can be read afterwards.
+func (s *Sender) debugFrame(st Status) {
+	fmt.Fprintf(s.Log, "DEBUG: printer status %x\n", st.Raw)
 }
 
 func (s *Sender) info(msg string) {

@@ -102,6 +102,76 @@ func TestSend_RefusesAJobForADifferentRoll(t *testing.T) {
 	}
 }
 
+// withoutRollCheck marks the job's roll fields as not valid, as qlraster does
+// with NoMediaCheck.
+func withoutRollCheck(t *testing.T, data []byte) []byte {
+	t.Helper()
+	out := append([]byte(nil), data...)
+	i := bytes.Index(out, []byte{0x1B, 0x69, 0x7A})
+	if i < 0 {
+		t.Fatal("no print information command")
+	}
+	out[i+3] = 0xC0
+	return out
+}
+
+// Stations using rolls the printer does not recognise turn the roll check
+// off; the backend must then send the job whatever roll the printer reports.
+func TestSend_JobWithoutRollCheckPrintsOnAnyRoll(t *testing.T) {
+	for _, loaded := range []struct{ width, media byte }{{29, 0x0A}, {62, 0x0B}, {0, 0x00}} {
+		p := newFakePrinter()
+		p.width, p.media = loaded.width, loaded.media
+		res, log := send(t, p, withoutRollCheck(t, golden(t, "traceable_732.bin")))
+		if res.Outcome != OutcomePrinted || p.printed != 1 {
+			t.Fatalf("loaded %+v: printed=%d result = %+v\n%s", loaded, p.printed, res, log)
+		}
+	}
+}
+
+// A printer that says the roll does not match (err2 0x01) must not stop a job
+// that does not ask for the roll to be checked; other problems still do.
+func TestSend_JobWithoutRollCheckIgnoresOnlyTheRollMismatch(t *testing.T) {
+	p := newFakePrinter()
+	p.err2 = 0x01
+	res, log := send(t, p, withoutRollCheck(t, golden(t, "traceable_732.bin")))
+	if p.printed != 1 {
+		t.Fatalf("the job was refused: %+v\n%s", res, log)
+	}
+
+	p = newFakePrinter()
+	p.err2 = 0x01 | 0x10 // and the cover is open
+	res, _ = send(t, p, withoutRollCheck(t, golden(t, "traceable_732.bin")))
+	if p.printed != 0 || res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "カバーが開いています") || strings.Contains(res.Message, "一致しません") {
+		t.Fatalf("printed=%d result = %+v", p.printed, res)
+	}
+
+	p = newFakePrinter()
+	p.err2 = 0x01
+	if _, _ = send(t, p, golden(t, "traceable_732.bin")); p.printed != 0 {
+		t.Fatal("a job that asks for the roll check must still be refused")
+	}
+}
+
+// Every frame the printer sends is logged as received, so that an error the
+// backend cannot interpret can still be read afterwards.
+func TestSend_LogsThePrintersFrames(t *testing.T) {
+	p := newFakePrinter()
+	_, log := send(t, p, golden(t, "traceable_732.bin"))
+	if n := strings.Count(log, "DEBUG: printer status 8020"); n < 2 {
+		t.Fatalf("want the reply and the completion logged, got %d:\n%s", n, log)
+	}
+}
+
+// An error with no bits set points the person at the printer's own screen.
+func TestSend_ErrorWithoutBitsPointsAtThePrinter(t *testing.T) {
+	p := newFakePrinter()
+	p.failOnPrint = &[2]byte{0x00, 0x00}
+	res, _ := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "コード 0000") || !strings.Contains(res.Message, "プリンタの画面") {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
 // A printer that answers nothing still prints (office, 2026-09-25). The job
 // goes out, but it must not be reported as printed.
 func TestSend_MutePrinterIsUnconfirmedNotPrinted(t *testing.T) {

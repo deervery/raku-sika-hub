@@ -251,6 +251,7 @@ curl -s http://localhost:19800/health | jq .printer
 | `parity` | `"even"` | `PARITY` | パリティ |
 | `stopBits` | `1` | `STOP_BITS` | ストップビット |
 | `printerName` | `""` | `PRINTER_NAME` | CUPS プリンタ名（空 = 自動選択、`,` / `;` 区切りで複数候補可） |
+| `printerRollCheck` | `true` | `PRINTER_ROLL_CHECK` | raw キューで、装着ロールと印刷データの照合をプリンタにさせるか。純正品でないロールをプリンタが認識できない施設では `off`（どのロールにも印刷されるため、ロールの入れ間違いは検出されない） |
 | `fontPath` | `""` (自動検出) | `FONT_PATH` | 日本語フォントパス |
 | `scannerDeviceName` | `""` | `SCANNER_DEVICE_NAME` | バーコードリーダーのデバイス名パターン |
 | `scannerVid` | `""` | `SCANNER_VID` | バーコードリーダーの USB VID |

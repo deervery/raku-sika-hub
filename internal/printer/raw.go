@@ -88,7 +88,7 @@ func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (Pr
 	for i := range pages {
 		pages[i] = img
 	}
-	data, err := qlraster.EncodePages(pages, qlraster.Continuous62, qlraster.Options{Cut: true})
+	data, err := qlraster.EncodePages(pages, qlraster.Continuous62, qlraster.Options{Cut: true, NoMediaCheck: b.noRollCheck})
 	if err != nil {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: ラスタの生成に失敗しました: %s", err)
 	}
@@ -106,8 +106,8 @@ func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (Pr
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: 一時ファイルに書けません: %s", err)
 	}
 
-	b.logger.Info("raw print: printer=%q model=%s copies=%d size=%dx%d bytes=%d",
-		status.SelectedName, status.Model, copies, img.Bounds().Dx(), img.Bounds().Dy(), len(data))
+	b.logger.Info("raw print: printer=%q model=%s copies=%d size=%dx%d bytes=%d roll_check=%t",
+		status.SelectedName, status.Model, copies, img.Bounds().Dx(), img.Bounds().Dy(), len(data), !b.noRollCheck)
 
 	// -o raw: no filters at all; the bytes reach the backend as written.
 	out, err := exec.Command("lp", "-d", status.SelectedName, "-o", "raw", f.Name()).CombinedOutput()

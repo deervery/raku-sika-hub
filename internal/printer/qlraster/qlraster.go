@@ -67,7 +67,24 @@ const (
 type Options struct {
 	// Cut cuts the tape after the label.
 	Cut bool
+	// NoMediaCheck leaves the roll's kind, width and length out of the
+	// fields the print information marks as valid, so the printer prints on
+	// whatever roll it has instead of comparing it with the job. Rolls that
+	// are not Brother's own are often not recognised (hakodate, 2026-09-28:
+	// the printer reported no roll loaded and refused every job with
+	// 「ロール種類と印刷データが合わない」), and the printer only checks the
+	// fields marked valid.
+	NoMediaCheck bool
 }
+
+// Print information valid flags (ESC i z, n1).
+const (
+	piKind    = 0x02
+	piWidth   = 0x04
+	piLength  = 0x08
+	piQuality = 0x40
+	piRecover = 0x80
+)
 
 // inkThreshold decides which gray levels become ink. It reproduces brother_ql
 // with threshold=50: a pixel prints when 255-L >= int(0.5*255) = 127, i.e.
@@ -132,8 +149,13 @@ func writePage(out *bytes.Buffer, img image.Image, m Media, opts Options) error 
 	out.Grow(60 + h*(3+rowBytes))
 	out.Write([]byte{0x1B, 0x69, 0x53}) // ESC i S: status request
 
-	// ESC i z: print information. Valid: recover | quality | length | width | type.
-	out.Write([]byte{0x1B, 0x69, 0x7A, 0xCE, 0x0A, m.WidthMM, 0x00})
+	// ESC i z: print information. Valid: recover | quality | length | width | type,
+	// or only recover | quality when the roll is not to be checked.
+	valid := byte(piRecover | piQuality | piLength | piWidth | piKind)
+	if opts.NoMediaCheck {
+		valid = piRecover | piQuality
+	}
+	out.Write([]byte{0x1B, 0x69, 0x7A, valid, 0x0A, m.WidthMM, 0x00})
 	var n [4]byte
 	binary.LittleEndian.PutUint32(n[:], uint32(h))
 	out.Write(n[:])

@@ -85,6 +85,10 @@ type Brother struct {
 	renderer *LabelRenderer
 	logger   *logging.Logger
 
+	// noRollCheck: raw jobs do not ask the printer to compare its roll with
+	// the job (see qlraster.Options.NoMediaCheck).
+	noRollCheck bool
+
 	// jobSeenMu guards jobSeen, which maps a CUPS job id to the moment this
 	// hub first saw it queued. Entries are dropped once the job leaves the
 	// queue, so the map stays the size of the backlog.
@@ -122,6 +126,16 @@ func NewBrother(name string, fontPath string, assetsDir string, logger *logging.
 
 	b.LogStatus("startup")
 	return b
+}
+
+// SetRollCheck sets whether raw jobs let the printer refuse a roll that does
+// not match the job. It is on unless the station uses rolls the printer does
+// not recognise.
+func (b *Brother) SetRollCheck(on bool) {
+	b.noRollCheck = !on
+	if !on {
+		b.logger.Info("raw printing: roll check off (the printer prints on whatever roll is loaded)")
+	}
 }
 
 // IsAvailable checks whether the printer is registered in CUPS.

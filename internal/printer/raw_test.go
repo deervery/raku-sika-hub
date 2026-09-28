@@ -2,6 +2,7 @@ package printer
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"os"
 	"path/filepath"
@@ -75,6 +76,14 @@ func TestRawSupportedModel(t *testing.T) {
 // filter can touch it. lp and lpstat are replaced by stubs on PATH, so this
 // runs anywhere without a printer.
 func TestPrintRaw_SubmitsQLRasterUntouched(t *testing.T) {
+	for _, rollCheck := range []bool{true, false} {
+		t.Run(fmt.Sprintf("rollCheck=%t", rollCheck), func(t *testing.T) {
+			testPrintRawSubmits(t, rollCheck)
+		})
+	}
+}
+
+func testPrintRawSubmits(t *testing.T, rollCheck bool) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "lp.args")
 	gotFile := filepath.Join(dir, "lp.data")
@@ -96,6 +105,7 @@ exit 0
 		t.Fatal(err)
 	}
 	b := &Brother{logger: logger}
+	b.SetRollCheck(rollCheck)
 	status := PrinterStatus{SelectedName: "Brother_QL_820NWB_raw", Model: "QL-820NWB", Raw: true}
 
 	png := filepath.Join("qlraster", "testdata", "traceable_732.png")
@@ -119,7 +129,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := qlraster.EncodePages([]image.Image{img, img}, qlraster.Continuous62, qlraster.Options{Cut: true})
+	want, err := qlraster.EncodePages([]image.Image{img, img}, qlraster.Continuous62, qlraster.Options{Cut: true, NoMediaCheck: !rollCheck})
 	if err != nil {
 		t.Fatal(err)
 	}

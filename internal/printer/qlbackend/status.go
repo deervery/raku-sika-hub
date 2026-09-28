@@ -43,6 +43,8 @@ type Status struct {
 	Phase       byte
 	// Notification (byte 22) accompanies status type 0x05.
 	Notification byte
+	// Raw is the frame as received, for the log.
+	Raw [StatusSize]byte
 }
 
 // ParseStatus decodes a status frame. It reports false for anything that is
@@ -51,7 +53,7 @@ func ParseStatus(b []byte) (Status, bool) {
 	if len(b) < StatusSize || b[0] != 0x80 || b[1] != 0x20 {
 		return Status{}, false
 	}
-	return Status{
+	st := Status{
 		Err1:         b[8],
 		Err2:         b[9],
 		MediaWidth:   b[10],
@@ -60,7 +62,9 @@ func ParseStatus(b []byte) (Status, bool) {
 		Type:         b[18],
 		Phase:        b[19],
 		Notification: b[22],
-	}, true
+	}
+	copy(st.Raw[:], b)
+	return st, true
 }
 
 // Problem is something that keeps the printer from printing, worded for the

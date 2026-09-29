@@ -19,6 +19,7 @@ type fakePrinter struct {
 
 	err1, err2   byte
 	width, media byte
+	textColor    byte // status byte 25; 0x81 for a red/black roll
 	muted        bool // answers nothing, as after a job through CUPS's usb backend
 	busyReplies  int  // replies to report as busy before a normal one
 	failOnPrint  *[2]byte
@@ -28,10 +29,15 @@ type fakePrinter struct {
 
 	statusRequests int
 	printed        int
+
+	twoColorMode  bool // ESC i K bit 0 seen
+	twoColorLines int  // w raster lines seen
+	blackLines    int  // w 0x01 lines with any ink
+	redLines      int  // w 0x02 lines with any ink
 }
 
 func newFakePrinter() *fakePrinter {
-	p := &fakePrinter{width: 62, media: 0x0A}
+	p := &fakePrinter{width: 62, media: 0x0A, textColor: 0x01}
 	p.cond = sync.NewCond(&p.mu)
 	return p
 }
@@ -43,6 +49,7 @@ func (p *fakePrinter) frame(typ, phase, err1, err2 byte) []byte {
 	b[8], b[9] = err1, err2
 	b[10], b[11] = p.width, p.media
 	b[18], b[19] = typ, phase
+	b[25] = p.textColor
 	return b
 }
 
@@ -69,6 +76,20 @@ func (p *fakePrinter) interpret() {
 		cmd := p.in[:n]
 		p.in = p.in[n:]
 		switch {
+		case len(cmd) == 4 && cmd[0] == 0x1B && cmd[1] == 'i' && cmd[2] == 'K':
+			p.twoColorMode = cmd[3]&0x01 != 0
+		case cmd[0] == 'w':
+			p.twoColorLines++
+			ink := false
+			for _, c := range cmd[3:] {
+				ink = ink || c != 0
+			}
+			if ink && cmd[1] == 0x01 {
+				p.blackLines++
+			}
+			if ink && cmd[1] == 0x02 {
+				p.redLines++
+			}
 		case len(cmd) == 3 && cmd[0] == 0x1B && cmd[1] == 'i' && cmd[2] == 'S':
 			p.statusRequests++
 			if p.muted {
@@ -99,6 +120,13 @@ func (p *fakePrinter) interpret() {
 				p.out = append(p.out, p.frame(TypeErrorOccurred, 0x00, p.failOnPrint[0], p.failOnPrint[1])...)
 				continue
 			}
+			// Like hakodate's QL-820NWB: a black-only job on a red/black
+			// roll starts, then stops with no error bits set.
+			if p.textColor&0x80 != 0 && !p.twoColorMode {
+				p.out = append(p.out, p.frame(TypePhaseChange, 0x01, 0, 0)...)
+				p.out = append(p.out, p.frame(TypeErrorOccurred, 0x01, 0, 0)...)
+				continue
+			}
 			p.out = append(p.out, p.frame(TypePhaseChange, 0x01, 0, 0)...)
 			if p.coolFor > 0 {
 				cool := p.frame(TypeNotification, 0x01, 0, 0)
@@ -122,7 +150,7 @@ func commandSize(b []byte) int {
 		return 1
 	case 'M':
 		return 2
-	case 'g':
+	case 'g', 'w':
 		if len(b) < 3 {
 			return 3
 		}

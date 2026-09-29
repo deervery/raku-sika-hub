@@ -43,6 +43,8 @@ type Status struct {
 	Phase       byte
 	// Notification (byte 22) accompanies status type 0x05.
 	Notification byte
+	// TextColor (byte 25) describes the loaded roll's print colours.
+	TextColor byte
 	// Raw is the frame as received, for the log.
 	Raw [StatusSize]byte
 }
@@ -62,6 +64,7 @@ func ParseStatus(b []byte) (Status, bool) {
 		Type:         b[18],
 		Phase:        b[19],
 		Notification: b[22],
+		TextColor:    b[25],
 	}
 	copy(st.Raw[:], b)
 	return st, true
@@ -136,6 +139,14 @@ const (
 	NotifyCoolingStarted  byte = 0x03
 	NotifyCoolingFinished byte = 0x04
 )
+
+// TwoColorRoll reports a red/black roll (DK-22251 and rolls that identify as
+// it). The QL-820NWB refuses a black-only job on such a roll with
+// 「ロール種類と印刷データが合わない」, stopping mid-job with no error bits
+// set (hakodate, 2026-09-29: text colour 0x81; office's DK-22205 reports 0x01).
+func (s Status) TwoColorRoll() bool {
+	return s.TextColor&0x80 != 0
+}
 
 // Busy reports the printer saying it is still busy with something else.
 func (s Status) Busy() bool {

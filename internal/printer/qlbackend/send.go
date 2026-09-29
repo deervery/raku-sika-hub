@@ -127,6 +127,14 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 		if p, bad := reply.MediaMismatch(job.Media); bad {
 			return s.failProblems(res, []Problem{p})
 		}
+		if reply.TwoColorRoll() && !job.TwoColor {
+			if two, err := ToTwoColor(data); err != nil {
+				fmt.Fprintf(s.Log, "DEBUG: %v\n", err)
+			} else {
+				data = two
+				s.info("赤黒 2 色のロールなので、2 色印刷モードで送ります")
+			}
+		}
 	} else {
 		// The printer takes data but answers nothing. It still prints in this
 		// state (office, 2026-09-25), so send anyway; the result is then

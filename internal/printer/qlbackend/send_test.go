@@ -152,6 +152,53 @@ func TestSend_JobWithoutRollCheckIgnoresOnlyTheRollMismatch(t *testing.T) {
 	}
 }
 
+// On a red/black roll the black-only job goes out in two-colour mode, black
+// lines as they were and the red lines empty, and prints.
+func TestSend_TwoColorRollGetsATwoColorJob(t *testing.T) {
+	data := golden(t, "traceable_732.bin")
+	p := newFakePrinter()
+	p.textColor = 0x81 // hakodate, 2026-09-29
+	res, log := send(t, p, data)
+	if res.Outcome != OutcomePrinted || p.printed != 1 {
+		t.Fatalf("printed=%d result = %+v\n%s", p.printed, res, log)
+	}
+	if !p.twoColorMode || p.redLines != 0 || p.blackLines == 0 || !strings.Contains(log, "2 色印刷モード") {
+		t.Fatalf("twoColorMode=%t black=%d red=%d\n%s", p.twoColorMode, p.blackLines, p.redLines, log)
+	}
+	job, err := ParseJob(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.twoColorLines != 2*rasterLines(t, data) || job.Pages != 1 {
+		t.Fatalf("w lines %d for %d rows", p.twoColorLines, rasterLines(t, data))
+	}
+}
+
+// Without the conversion the printer stops the job, as it did at hakodate.
+func TestSend_WhiteRollJobIsNotConverted(t *testing.T) {
+	p := newFakePrinter()
+	res, log := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomePrinted || p.twoColorMode || p.twoColorLines != 0 {
+		t.Fatalf("twoColorMode=%t lines=%d result = %+v\n%s", p.twoColorMode, p.twoColorLines, res, log)
+	}
+}
+
+func rasterLines(t *testing.T, data []byte) int {
+	t.Helper()
+	n := 0
+	for i := 0; i < len(data); {
+		c := commandSize(data[i:])
+		if c == 0 {
+			t.Fatalf("unknown byte at %d", i)
+		}
+		if data[i] == 'g' {
+			n++
+		}
+		i += c
+	}
+	return n
+}
+
 // Every frame the printer sends is logged as received, so that an error the
 // backend cannot interpret can still be read afterwards.
 func TestSend_LogsThePrintersFrames(t *testing.T) {

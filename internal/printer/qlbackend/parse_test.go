@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -167,6 +168,38 @@ func TestResults_RoundTrip(t *testing.T) {
 		if err := WriteResult(dir, Result{JobID: bad}); err == nil {
 			t.Errorf("job id %q accepted", bad)
 		}
+	}
+}
+
+// CUPS runs the backend with umask 077; hub, which is not root, must still be
+// able to read what it wrote (siknue, 2026-10-05).
+func TestWriteResult_DirectoriesAreReadableUnderCUPSUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(parent, "raku-sika", "print-results")
+	if err := WriteResult(dir, Result{JobID: "1482", Outcome: OutcomeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Join(parent, "raku-sika"), dir} {
+		info, err := os.Stat(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o755 {
+			t.Errorf("%s mode = %o, want 755", d, got)
+		}
+	}
+	// An existing parent that this call did not create is left as it was.
+	if info, _ := os.Stat(parent); info.Mode().Perm() != 0o700 {
+		t.Errorf("pre-existing parent mode changed to %o", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(filepath.Join(dir, "1482.json")); info.Mode().Perm() != 0o644 {
+		t.Errorf("result file mode = %o, want 644", info.Mode().Perm())
 	}
 }
 

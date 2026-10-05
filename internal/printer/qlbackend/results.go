@@ -25,7 +25,7 @@ func WriteResult(dir string, res Result) error {
 	if !validJobID(res.JobID) {
 		return fmt.Errorf("qlbackend: invalid job id %q", res.JobID)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirReadable(dir); err != nil {
 		return err
 	}
 	b, err := json.Marshal(res)
@@ -55,6 +55,37 @@ func WriteResult(dir string, res Result) error {
 		return err
 	}
 	pruneResults(dir, keepResults)
+	return nil
+}
+
+// mkdirReadable creates dir so that raku-sika-hub, which does not run as root,
+// can read the results in it.
+//
+// CUPS starts backends with umask 077, so MkdirAll alone left
+// /run/raku-sika and print-results at 0700 root:lp. hub then got "permission
+// denied" on every result and fell back to the CUPS job state, which cannot
+// tell a printed label from one the printer never confirmed (siknue,
+// 2026-10-05: the tablet kept saying 印刷中です while the job had failed).
+// Only directories this call creates, plus dir itself, are chmodded; an
+// existing parent is left alone.
+func mkdirReadable(dir string) error {
+	var created []string
+	for d := filepath.Dir(dir); d != filepath.Dir(d); d = filepath.Dir(d) {
+		if _, err := os.Stat(d); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		created = append(created, d)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, d := range append(created, dir) {
+		if err := os.Chmod(d, 0o755); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

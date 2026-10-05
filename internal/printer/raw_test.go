@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
 	"github.com/deervery/raku-sika-hub/internal/printer/qlbackend"
@@ -228,5 +229,22 @@ exit 0
 				t.Fatalf("res = %+v", res)
 			}
 		})
+	}
+}
+
+// The tablet must hear rakuql's verdict for a label the printer never
+// confirmed, which comes after the 20 s per-label timeout (siknue,
+// 2026-10-05). Other queues keep the old 12 s.
+func TestRawConfirmWait_OutlastsTheBackendsVerdict(t *testing.T) {
+	ql := qlbackend.DeviceURI("000L5G610757")
+	perPage := qlbackend.NewSender(nil).PerPageTimeout
+	if got := rawConfirmWait(ql, 1); got <= perPage {
+		t.Errorf("1 copy: wait %v, must exceed the per-label timeout %v", got, perPage)
+	}
+	if got := rawConfirmWait(ql, 30); got != maxQLConfirmWait {
+		t.Errorf("30 copies: wait %v, want the cap %v", got, maxQLConfirmWait)
+	}
+	if got := rawConfirmWait("usb://Brother/QL-820NWB", 1); got != 12*time.Second {
+		t.Errorf("non-rakuql queue: wait %v, want 12s", got)
 	}
 }

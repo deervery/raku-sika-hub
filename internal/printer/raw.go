@@ -119,7 +119,7 @@ func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (Pr
 	if jobID == "" {
 		return PrintResult{State: "done", Message: "印刷ジョブを送信しました。"}, nil
 	}
-	result, err := b.verifySubmittedJob(status.SelectedName, jobID, 12*time.Second)
+	result, err := b.verifySubmittedJob(status.SelectedName, jobID, rawConfirmWait(status.DeviceURI, copies))
 	if err != nil {
 		return PrintResult{}, err
 	}
@@ -128,6 +128,31 @@ func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (Pr
 		return b.confirmWithPrinter(result)
 	}
 	return result, nil
+}
+
+// maxQLConfirmWait caps how long one print request may hold the tablet.
+// Past it the request answers "pending", as it did before rakuql.
+const maxQLConfirmWait = 60 * time.Second
+
+// rawConfirmWait is how long printRaw waits for a job to leave the queue
+// before answering the tablet.
+//
+// A rakuql job reaches its own verdict — printed, or failed with a reason —
+// only after the printer reports every label or the per-label timeout runs
+// out. hub used to stop waiting after 12 s, well before that 20 s timeout, so
+// a printer that took the data but never confirmed it showed up on the tablet
+// as 印刷中です／そのままお待ちください, and the failure that followed was
+// never shown (siknue, 2026-10-05, job 1482). The staff power-cycled the
+// station instead. A healthy label still returns in a few seconds: the wait
+// ends as soon as the job leaves the queue.
+func rawConfirmWait(deviceURI string, copies int) time.Duration {
+	const queued = 12 * time.Second
+	if !usesQLBackend(deviceURI) {
+		return queued
+	}
+	s := qlbackend.NewSender(nil)
+	w := s.PreflightTimeout + s.WriteTimeout + time.Duration(max(copies, 1))*s.PerPageTimeout + 5*time.Second
+	return max(queued, min(w, maxQLConfirmWait))
 }
 
 // qlResultDir is where the rakuql backend leaves its per-job results.

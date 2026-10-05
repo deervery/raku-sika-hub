@@ -358,6 +358,10 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
+PC が無いときは、GitHub（スマホのアプリでも可）の **Actions → Release → Run workflow**
+で同じことができる。main の先頭にタグを打ってからビルドする。version を空にすると
+最新の正式版の patch を 1 つ上げる（v0.3.31 → v0.3.32）。
+
 Pi 側での更新は [raku-sika-ops](https://github.com/deervery/raku-sika-ops) を使用:
 
 ```bash

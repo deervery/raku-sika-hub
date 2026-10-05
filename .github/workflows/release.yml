@@ -1,9 +1,29 @@
 name: Release
 
+# 2 通りで起動する。
+#
+# - タグ push（従来どおり）: `git push origin v0.3.32`
+# - 手動実行: GitHub の Actions → Release → Run workflow。スマホの GitHub アプリ
+#   からも押せる。main の先頭にタグを打ってから同じ手順でビルドする。
+#   version を空にすると、最新の正式版（vX.Y.Z。-dev などは除く）の patch を
+#   1 つ上げる（v0.3.31 → v0.3.32）。
+#
+# 手動実行が打つタグは GITHUB_TOKEN で push するので、タグ push 側の起動は
+# 二重には走らない（GitHub は GITHUB_TOKEN の push でワークフローを起動しない）。
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版（例: v0.3.32）。空なら最新の正式版の patch を 1 つ上げる'
+        required: false
+        default: ''
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -12,18 +32,64 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::手動リリースは main から実行してください（今は ${GITHUB_REF}）"
+            exit 1
+          fi
+
+          v="${INPUT_VERSION// /}"
+          if [ -z "${v}" ]; then
+            latest="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+            if [ -z "${latest}" ]; then
+              echo "::error::正式版のタグが見つかりません。version を指定してください"
+              exit 1
+            fi
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            v="v${major}.${minor}.$((patch + 1))"
+            echo "latest=${latest} -> ${v}"
+          fi
+
+          if ! printf '%s' "${v}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::版の形式が違います: ${v}（例: v0.3.32）"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/${v}" >/dev/null; then
+            echo "::error::${v} はすでにあります（$(git rev-parse --short "refs/tags/${v}^{commit}")）"
+            exit 1
+          fi
+
+          git tag "${v}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${v}"
+          echo "tagged ${v} at ${GITHUB_SHA}"
+          echo "version=${v}" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
 
       - name: Build for Raspberry Pi (ARM64)
-        run: |
-          VERSION=${GITHUB_REF_NAME} scripts/build-release-arm64.sh raku-sika-hub-linux-arm64
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/build-release-arm64.sh raku-sika-hub-linux-arm64
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.version }}
           files: |
             raku-sika-hub-linux-arm64
             raku-sika-hub-linux-arm64.sha256

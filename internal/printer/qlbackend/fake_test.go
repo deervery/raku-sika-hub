@@ -24,6 +24,13 @@ type fakePrinter struct {
 	busyReplies  int  // replies to report as busy before a normal one
 	failOnPrint  *[2]byte
 	noCompletion bool
+	// After a label: stop answering anything (silentAfterPrint), set error
+	// bits without saying so (errAfterPrint), or report the completion only
+	// once asked for the status (completeOnAsk).
+	silentAfterPrint bool
+	errAfterPrint    *[2]byte
+	completeOnAsk    bool
+	askCompleted     bool
 	dropOnPrint  bool // disconnect when the first label is printed
 	coolFor      time.Duration // pause to cool the head before completing
 
@@ -92,8 +99,12 @@ func (p *fakePrinter) interpret() {
 			}
 		case len(cmd) == 3 && cmd[0] == 0x1B && cmd[1] == 'i' && cmd[2] == 'S':
 			p.statusRequests++
-			if p.muted {
+			if p.muted || (p.silentAfterPrint && p.printed > 0) {
 				continue
+			}
+			if p.completeOnAsk && p.printed > 0 && !p.askCompleted {
+				p.askCompleted = true
+				p.out = append(p.out, p.frame(TypePrintingCompleted, 0x01, 0, 0)...)
 			}
 			e1 := p.err1
 			if p.busyReplies > 0 {
@@ -109,7 +120,11 @@ func (p *fakePrinter) interpret() {
 			p.out = append(p.out, p.frame(typ, 0x00, e1, p.err2)...)
 		case cmd[0] == 0x0C || cmd[0] == 0x1A:
 			p.printed++
-			if p.muted {
+			if p.muted || p.silentAfterPrint {
+				continue
+			}
+			if p.errAfterPrint != nil {
+				p.err1, p.err2 = p.errAfterPrint[0], p.errAfterPrint[1]
 				continue
 			}
 			if p.dropOnPrint {

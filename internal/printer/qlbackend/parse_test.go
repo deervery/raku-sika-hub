@@ -3,6 +3,7 @@ package qlbackend
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -312,5 +313,18 @@ func TestToTwoColor(t *testing.T) {
 	}
 	if _, err := ToTwoColor(append([]byte{'M', 0x02}, data...)); err == nil {
 		t.Fatal("compressed jobs must not be converted")
+	}
+}
+
+// The journal gets one entry per line, each tagged with the job, so that a
+// failure can be read back after CUPS has dropped its DEBUG lines.
+func TestJournalLines_OneEntryPerLineTaggedWithTheJob(t *testing.T) {
+	var got []string
+	j := journalLines{emit: func(s string) error { got = append(got, s); return nil }, prefix: "job 1525: "}
+	fmt.Fprintf(j, "INFO: a\nDEBUG: b (+1ms)\n")
+	fmt.Fprintf(j, "ERROR: c\n")
+	want := []string{"job 1525: INFO: a", "job 1525: DEBUG: b (+1ms)", "job 1525: ERROR: c"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

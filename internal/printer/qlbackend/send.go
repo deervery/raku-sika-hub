@@ -63,6 +63,10 @@ type Sender struct {
 	SettleTimeout time.Duration
 	// Sleep is time.Sleep, replaceable in tests.
 	Sleep func(time.Duration)
+
+	// started is when Send began, so that each logged frame carries how far
+	// into the job it came.
+	started time.Time
 }
 
 // NewSender returns a Sender with the timeouts used in production.
@@ -91,6 +95,7 @@ type writeDeadliner interface {
 // Send prints data on dev and closes dev when done. dev must return the
 // printer's status frames from Read.
 func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data []byte) Result {
+	s.started = time.Now()
 	frames := make(chan Status, 64)
 	go readFrames(dev, frames)
 	defer func() {
@@ -157,8 +162,9 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 		if ctx.Err() != nil {
 			return s.cancel(dev, res)
 		}
-		return abort(s.fail(res, "プリンタが印刷データを受け取りません。電源を入れ直してから再送信してください。", "other-error", err))
+		return abort(s.fail(res, "プリンタが印刷データを受け取りません。"+powerCycleOnly+"再送信してください。", "other-error", err))
 	}
+	s.debugf("sent %d bytes", len(data))
 
 	// 3. Wait for the printer to report every label.
 	heard := false
@@ -168,7 +174,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 		select {
 		case st, ok := <-frames:
 			if !ok {
-				return abort(s.fail(res, "印刷中にプリンタとの接続が切れました。電源と USB ケーブルを確認し、ラベルを確かめてから再送信してください。", "other-error", nil))
+				return abort(s.fail(res, "印刷中にプリンタとの接続が切れました。プリンタが起動し終わるのを待ち、電源と USB ケーブルを確認してから、ラベルを確かめて再送信してください。", "other-error", nil))
 			}
 			heard = true
 			s.debugFrame(st)
@@ -209,7 +215,23 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 				s.info(res.Message)
 				return res
 			}
-			return abort(s.fail(res, fmt.Sprintf("プリンタから印刷完了の知らせが届きませんでした（%d 枚中 %d 枚）。ラベルを確かめ、足りなければ再送信してください。", job.Pages, res.Completed), "other-error", nil))
+			// Before calling the job lost, ask the printer how it is.
+			// Whether it still answers tells a slow or dropped notification
+			// apart from a printer that has stopped talking (siknue
+			// 2026-10-06 20:02, hakodate 14:21: neither was recorded,
+			// because CUPS keeps no DEBUG lines).
+			pr := s.probe(dev, frames)
+			res.Completed = min(job.Pages, res.Completed+pr.completed)
+			if res.Completed == job.Pages {
+				s.info("印刷完了の知らせが遅れて届きました")
+				continue
+			}
+			if pr.answered {
+				if ps := pr.reply.Problems(); len(ps) > 0 {
+					return abort(s.failProblems(res, ps))
+				}
+			}
+			return abort(s.fail(res, noCompletionMessage(job.Pages, res.Completed, pr.answered), "other-error", nil))
 		case <-ctx.Done():
 			return s.cancel(dev, res)
 		}
@@ -238,6 +260,61 @@ drain:
 	fmt.Fprintf(s.Log, "STATE: -%s\n", strings.Join(problemReasons, ","))
 	s.info(res.Message)
 	return res
+}
+
+// powerCycleOnly is how the tablet says to restart the printer. Staff who
+// were only told to restart switched off the station too, at the same power
+// strip (siknue, 2026-10-05 12:02 and 2026-10-06 20:03); hakodate restarted
+// only the printer and printed again 80 seconds later (2026-10-06 14:22).
+const powerCycleOnly = "プリンタの電源だけを入れ直し（端末の電源は切らないでください）、プリンタが起動してから"
+
+// noCompletionMessage words a job the printer never confirmed. answered is
+// whether the printer still replied to a status request afterwards.
+func noCompletionMessage(pages, completed int, answered bool) string {
+	head := fmt.Sprintf("プリンタから印刷完了の知らせが届きませんでした（%d 枚中 %d 枚）。", pages, completed)
+	if answered {
+		return head + "ラベルが出ていれば再送信は不要です。出ていなければ再送信し、それでも出なければ" + powerCycleOnly + "再送信してください。"
+	}
+	return head + "プリンタが応答しなくなっています。ラベルが出ていなければ、" + powerCycleOnly + "再送信してください。"
+}
+
+type probeResult struct {
+	answered  bool
+	reply     Status
+	completed int // "printing completed" notifications that arrived meanwhile
+}
+
+// probe asks a printer that went quiet mid-job for its status, and logs what
+// comes back.
+func (s *Sender) probe(dev io.Writer, frames <-chan Status) probeResult {
+	var pr probeResult
+	if err := s.writeAll(dev, cmdStatusRequest); err != nil {
+		s.debugf("probe: status request not sent: %v", err)
+		return pr
+	}
+	t := time.NewTimer(s.PreflightTimeout)
+	defer t.Stop()
+	for {
+		select {
+		case st, ok := <-frames:
+			if !ok {
+				s.debugf("probe: printer disconnected")
+				return pr
+			}
+			s.debugFrame(st)
+			switch st.Type {
+			case TypePrintingCompleted:
+				pr.completed++
+			case TypeReply, TypeErrorOccurred:
+				pr.answered, pr.reply = true, st
+				s.debugf("probe: printer answered (phase %02x, errors %02x%02x, late completions %d)", st.Phase, st.Err1, st.Err2, pr.completed)
+				return pr
+			}
+		case <-t.C:
+			s.debugf("probe: no answer within %s (late completions %d)", s.PreflightTimeout, pr.completed)
+			return pr
+		}
+	}
 }
 
 // drain reads until the printer has been quiet for a moment, so that a job
@@ -378,7 +455,12 @@ func dropReason(ps []Problem, reason string) []Problem {
 // debugFrame writes a status frame to the CUPS log as it came from the
 // printer, so that what the printer said can be read afterwards.
 func (s *Sender) debugFrame(st Status) {
-	fmt.Fprintf(s.Log, "DEBUG: printer status %x\n", st.Raw)
+	s.debugf("printer status %x", st.Raw)
+}
+
+// debugf writes a DEBUG line stamped with the time since Send began.
+func (s *Sender) debugf(format string, args ...any) {
+	fmt.Fprintf(s.Log, "DEBUG: "+format+" (+%s)\n", append(args, time.Since(s.started).Round(time.Millisecond))...)
 }
 
 func (s *Sender) info(msg string) {

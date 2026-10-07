@@ -151,11 +151,16 @@ func rawConfirmWait(deviceURI string, copies int) time.Duration {
 		return queued
 	}
 	s := qlbackend.NewSender(nil)
-	// Two status waits: the check before sending, and the probe of a
-	// printer that stays quiet after a label.
-	w := 2*s.PreflightTimeout + s.WriteTimeout + time.Duration(max(copies, 1))*s.PerPageTimeout + 5*time.Second
+	// rakuql gives each label PerPageTimeout from the one before it, then
+	// probes the printer (a second status wait after the check before
+	// sending). The labels it did print took qlLabelTime each.
+	w := 2*s.PreflightTimeout + s.WriteTimeout + s.PerPageTimeout + time.Duration(max(copies, 1)-1)*qlLabelTime + 5*time.Second
 	return max(queued, min(w, maxQLConfirmWait))
 }
+
+// qlLabelTime is a generous time for one label on a QL-820NWB (siknue,
+// 2026-10-07: 6 pet labels in 16 s, 3 in 8 s).
+const qlLabelTime = 5 * time.Second
 
 // qlResultDir is where the rakuql backend leaves its per-job results.
 var qlResultDir = qlbackend.ResultDir

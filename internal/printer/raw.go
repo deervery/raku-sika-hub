@@ -151,7 +151,9 @@ func rawConfirmWait(deviceURI string, copies int) time.Duration {
 		return queued
 	}
 	s := qlbackend.NewSender(nil)
-	w := s.PreflightTimeout + s.WriteTimeout + time.Duration(max(copies, 1))*s.PerPageTimeout + 5*time.Second
+	// Two status waits: the check before sending, and the probe of a
+	// printer that stays quiet after a label.
+	w := 2*s.PreflightTimeout + s.WriteTimeout + time.Duration(max(copies, 1))*s.PerPageTimeout + 5*time.Second
 	return max(queued, min(w, maxQLConfirmWait))
 }
 

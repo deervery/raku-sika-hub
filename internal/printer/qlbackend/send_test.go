@@ -263,6 +263,75 @@ func TestSend_MissingCompletionIsAFailure(t *testing.T) {
 	}
 }
 
+// A printer that stays quiet after the job is asked how it is. One that
+// still answers is alive: the label may have come out, so the tablet says to
+// look before sending again.
+func TestSend_MissingCompletionFromAPrinterThatStillAnswers(t *testing.T) {
+	p := newFakePrinter()
+	p.noCompletion = true
+	res, log := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "ラベルが出ていれば再送信は不要") {
+		t.Fatalf("result = %+v", res)
+	}
+	if !strings.Contains(log, "probe: printer answered") {
+		t.Fatalf("the probe is not in the log:\n%s", log)
+	}
+}
+
+// One that answers nothing has stopped talking; only restarting the printer
+// brings it back (hakodate, 2026-10-06 14:22). The tablet must not lead staff
+// to switch off the station with it (siknue, 2026-10-06 20:03).
+func TestSend_MissingCompletionFromAPrinterThatStoppedAnswering(t *testing.T) {
+	p := newFakePrinter()
+	p.silentAfterPrint = true
+	res, log := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "応答しなくなっています") ||
+		!strings.Contains(res.Message, "プリンタの電源だけを入れ直し") || !strings.Contains(res.Message, "端末の電源は切らないでください") {
+		t.Fatalf("result = %+v", res)
+	}
+	if !strings.Contains(log, "probe: no answer") {
+		t.Fatalf("the probe is not in the log:\n%s", log)
+	}
+}
+
+// A completion that comes late — only once the printer is asked — means the
+// label printed.
+func TestSend_LateCompletionIsPrinted(t *testing.T) {
+	p := newFakePrinter()
+	p.noCompletion = true
+	p.completeOnAsk = true
+	res, log := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomePrinted || res.Completed != 1 {
+		t.Fatalf("result = %+v\n%s", res, log)
+	}
+}
+
+// A printer that stopped on an error without reporting it says what is wrong
+// when asked.
+func TestSend_ProbeReportsAnErrorThePrinterDidNotAnnounce(t *testing.T) {
+	p := newFakePrinter()
+	p.errAfterPrint = &[2]byte{0x00, 0x10} // cover opened
+	res, _ := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "カバーが開いています") {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+// Every frame in the log carries how far into the job it came, so a slow
+// printer can be told from a silent one afterwards.
+func TestSend_LoggedFramesAreTimed(t *testing.T) {
+	p := newFakePrinter()
+	_, log := send(t, p, golden(t, "traceable_732.bin"))
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		if strings.HasPrefix(line, "DEBUG: ") && !strings.Contains(line, " (+") {
+			t.Fatalf("untimed DEBUG line: %q", line)
+		}
+	}
+	if !strings.Contains(log, "DEBUG: sent ") {
+		t.Fatalf("the send is not in the log:\n%s", log)
+	}
+}
+
 func TestSend_WaitsWhileThePrinterIsBusy(t *testing.T) {
 	p := newFakePrinter()
 	p.busyReplies = 2

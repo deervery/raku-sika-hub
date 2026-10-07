@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/syslog"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -37,7 +39,33 @@ const maxJobBytes = 64 << 20
 //
 // with DEVICE_URI in the environment. Messages for CUPS go to stderr.
 func Main(args []string) int {
-	return run(args, os.Stdin, os.Stderr, os.Getenv("DEVICE_URI"), "/", ResultDir)
+	var stderr io.Writer = os.Stderr
+	if len(args) >= 5 {
+		if j, err := syslog.New(syslog.LOG_INFO|syslog.LOG_LPR, "rakuql"); err == nil {
+			defer j.Close()
+			stderr = io.MultiWriter(os.Stderr, journalLines{emit: j.Info, prefix: "job " + args[0] + ": "})
+		}
+	}
+	return run(args, os.Stdin, stderr, os.Getenv("DEVICE_URI"), "/", ResultDir)
+}
+
+// journalLines copies the backend's messages to the system journal, one entry
+// per line. CUPS keeps only what its LogLevel allows (warn on the stations),
+// which drops the DEBUG lines holding every status frame the printer sent —
+// the only record of why a job failed. The journal outlives a reboot, which
+// is what staff do when a print fails.
+type journalLines struct {
+	emit   func(string) error
+	prefix string
+}
+
+func (j journalLines) Write(b []byte) (int, error) {
+	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		if line != "" {
+			_ = j.emit(j.prefix + line)
+		}
+	}
+	return len(b), nil
 }
 
 func run(args []string, stdin io.Reader, stderr io.Writer, uri, sysRoot, resultDir string) int {

@@ -63,10 +63,10 @@ func TestSend_RefusesBeforeSendingWhenThePrinterReportsAProblem(t *testing.T) {
 		message    string
 	}{
 		{"cover open", 0, 0x10, "cover-open-error", "カバーが開いています"}, // office, 2026-09-25
-		{"cannot feed", 0, 0x40, "media-jam-error", "ラベルを送れません"},
+		{"cannot feed", 0, 0x40, "media-jam-error", "用紙を送れません"},
 		{"fan failure", 0x80, 0, "other-error", "ファンが動いていません"},
 		{"no roll", 0x01, 0, "media-empty-error", "ロールが入っていません"},
-		{"roll used up", 0x02, 0, "media-empty-error", "ロールがなくなりました"},
+		{"end of media", 0x02, 0, "media-empty-error", "用紙を送れません"},
 		{"cutter jam", 0x04, 0, "media-jam-error", "カッターが詰まっています"},
 	}
 	for _, tc := range cases {
@@ -239,16 +239,39 @@ func TestSend_MutePrinterIsUnconfirmedNotPrinted(t *testing.T) {
 func TestSend_ReportsAnErrorRaisedWhilePrinting(t *testing.T) {
 	p := newFakePrinter()
 	p.failOnPrint = &[2]byte{0x02, 0x00} // roll ran out mid-job
-	res, log := send(t, p, golden(t, "traceable_732.bin"))
-	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "ロールがなくなりました") {
+	data := golden(t, "traceable_732.bin")
+	res, log := send(t, p, data)
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "用紙を送れません") {
 		t.Fatalf("result = %+v", res)
 	}
 	if !strings.Contains(log, "STATE: +media-empty-error") {
 		t.Fatalf("CUPS messages:\n%s", log)
 	}
 	// The rest of the job must not print once the roll is replaced.
-	if !bytes.HasSuffix(p.written(), cmdReset) {
+	all := p.written()
+	if after := all[bytes.LastIndex(all, data)+len(data):]; !bytes.Contains(after, cmdReset) {
 		t.Fatal("a failed job must leave the printer's buffer cleared")
+	}
+	// It still answers, so restarting it is not part of the advice.
+	if strings.Contains(res.Message, "応答しなくなっています") {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+// After 用紙を送れません the printer can stop answering until it is
+// power-cycled (office, 2026-10-07, twice). The tablet must then say to
+// restart the printer — and only the printer.
+func TestSend_ErrorThatLeavesThePrinterMuteSaysToRestartIt(t *testing.T) {
+	p := newFakePrinter()
+	p.failOnPrint = &[2]byte{0x02, 0x00}
+	p.muteAfterError = true
+	res, log := send(t, p, golden(t, "traceable_732.bin"))
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "用紙を送れません") ||
+		!strings.Contains(res.Message, "応答しなくなっています") || !strings.Contains(res.Message, "タブレットの電源は切らないでください") {
+		t.Fatalf("result = %+v", res)
+	}
+	if !strings.Contains(log, "probe: no answer") || !strings.Contains(log, "STATE: +media-empty-error") {
+		t.Fatalf("CUPS messages:\n%s", log)
 	}
 }
 
@@ -286,7 +309,7 @@ func TestSend_MissingCompletionFromAPrinterThatStoppedAnswering(t *testing.T) {
 	p.silentAfterPrint = true
 	res, log := send(t, p, golden(t, "traceable_732.bin"))
 	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "応答しなくなっています") ||
-		!strings.Contains(res.Message, "プリンタの電源だけを入れ直し") || !strings.Contains(res.Message, "端末の電源は切らないでください") {
+		!strings.Contains(res.Message, "プリンタの電源だけを入れ直し") || !strings.Contains(res.Message, "タブレットの電源は切らないでください") {
 		t.Fatalf("result = %+v", res)
 	}
 	if !strings.Contains(log, "probe: no answer") {

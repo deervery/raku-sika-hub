@@ -211,7 +211,7 @@ func (b *Brother) confirmWithPrinter(result PrintResult) (PrintResult, error) {
 			Blocking: true,
 			Title:    "印刷できたか確認できません",
 			Detail:   res.Message,
-			Action:   "ラベルが出ていなければ、プリンタの電源を入れ直してから再送信してください。",
+			Action:   "ラベルが出ていなければ、プリンタの電源だけを入れ直してから（タブレットの電源は切らないでください）再送信してください。",
 		}
 		return result, nil
 	case qlbackend.OutcomeCanceled:

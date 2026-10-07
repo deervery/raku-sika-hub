@@ -274,7 +274,7 @@ func TestProblems_Err2Bits(t *testing.T) {
 	want := map[byte]string{
 		0x01: "印刷データが一致しません",
 		0x10: "カバーが開いています",
-		0x40: "ラベルを送れません",
+		0x40: "用紙を送れません",
 		0x80: "プリンタ本体でエラー",
 	}
 	for bit, msg := range want {

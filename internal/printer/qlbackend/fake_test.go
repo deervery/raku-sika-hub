@@ -29,6 +29,7 @@ type fakePrinter struct {
 	// once asked for the status (completeOnAsk).
 	silentAfterPrint bool
 	completeOnly     int // report only this many labels, then go quiet (still answering)
+	muteAfterError   bool // answer nothing once failOnPrint has been reported
 	errAfterPrint    *[2]byte
 	completeOnAsk    bool
 	askCompleted     bool
@@ -134,6 +135,7 @@ func (p *fakePrinter) interpret() {
 			}
 			if p.failOnPrint != nil {
 				p.out = append(p.out, p.frame(TypeErrorOccurred, 0x00, p.failOnPrint[0], p.failOnPrint[1])...)
+				p.muted = p.muteAfterError
 				continue
 			}
 			// Like hakodate's QL-820NWB: a black-only job on a red/black

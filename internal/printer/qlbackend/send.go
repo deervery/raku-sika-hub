@@ -195,7 +195,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 					// 「ロール種類と印刷データが合わない」). Its screen says more.
 					ps = []Problem{{Message: fmt.Sprintf("プリンタがエラーを報告しました（コード %02x%02x）。プリンタの画面の表示とロールを確認してください。", st.Err1, st.Err2), Reason: "other-error"}}
 				}
-				return abort(s.failProblems(res, ps))
+				return s.failMidJob(dev, frames, res, ps)
 			case TypeNotification:
 				switch st.Notification {
 				case NotifyCoolingStarted:
@@ -211,13 +211,13 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 				return abort(s.fail(res, "印刷中にプリンタの電源が切れました。ラベルを確かめてから再送信してください。", "other-error", nil))
 			default:
 				if ps := st.Problems(); len(ps) > 0 {
-					return abort(s.failProblems(res, ps))
+					return s.failMidJob(dev, frames, res, ps)
 				}
 			}
 		case <-timeout.C:
 			if res.Muted && !heard {
 				res.Outcome = OutcomeUnconfirmed
-				res.Message = "印刷データは送りましたが、プリンタが応答しないため印刷できたか確認できません。ラベルが出たか確かめてください。プリンタの電源を入れ直すと応答が戻ります。"
+				res.Message = "印刷データは送りましたが、プリンタが応答しないため印刷できたか確認できません。ラベルが出ていなければ、" + powerCycleOnly + "再送信してください。"
 				s.info(res.Message)
 				return res
 			}
@@ -272,7 +272,22 @@ drain:
 // were only told to restart switched off the station too, at the same power
 // strip (siknue, 2026-10-05 12:02 and 2026-10-06 20:03); hakodate restarted
 // only the printer and printed again 80 seconds later (2026-10-06 14:22).
-const powerCycleOnly = "プリンタの電源だけを入れ直し（端末の電源は切らないでください）、プリンタが起動してから"
+const powerCycleOnly = "プリンタの電源だけを入れ直し（タブレットの電源は切らないでください）、プリンタが起動してから"
+
+// failMidJob ends a job the printer stopped with an error. After such an
+// error the printer can stop answering anything until it is power-cycled:
+// office, 2026-10-07, twice after 用紙を送れません; neither a roll change nor
+// a USB reset brought it back. So clear its buffer, ask it, and if it stays
+// quiet tell staff to restart the printer — fixing the roll alone will not
+// get the next label out.
+func (s *Sender) failMidJob(dev io.Writer, frames <-chan Status, res Result, ps []Problem) Result {
+	_ = s.writeAll(dev, cmdReset)
+	s.drain(frames)
+	if pr := s.probe(dev, frames); !pr.answered {
+		ps = append(ps, Problem{Message: "プリンタが応答しなくなっています。直したあと、" + powerCycleOnly + "再送信してください。", Reason: "other-error"})
+	}
+	return s.failProblems(res, ps)
+}
 
 // noCompletionMessage words a job the printer never confirmed. answered is
 // whether the printer still replied to a status request afterwards.

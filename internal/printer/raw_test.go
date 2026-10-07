@@ -241,6 +241,17 @@ func TestRawConfirmWait_OutlastsTheBackendsVerdict(t *testing.T) {
 	if got := rawConfirmWait(ql, 1); got <= perPage {
 		t.Errorf("1 copy: wait %v, must exceed the per-label timeout %v", got, perPage)
 	}
+	// A printer that stops after k of n labels is reported k labels plus one
+	// per-label timeout and the probe after the job went out. hub must still
+	// be waiting then, for the multi-copy jobs staff send (siknue 2026-10-07:
+	// 3 and 6 copies).
+	s := qlbackend.NewSender(nil)
+	for copies := 1; copies <= 6; copies++ {
+		verdict := s.PreflightTimeout + time.Duration(copies-1)*qlLabelTime + perPage + s.PreflightTimeout
+		if got := rawConfirmWait(ql, copies); got <= verdict {
+			t.Errorf("%d copies: wait %v, the backend decides at %v", copies, got, verdict)
+		}
+	}
 	if got := rawConfirmWait(ql, 30); got != maxQLConfirmWait {
 		t.Errorf("30 copies: wait %v, want the cap %v", got, maxQLConfirmWait)
 	}

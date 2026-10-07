@@ -332,6 +332,36 @@ func TestSend_LoggedFramesAreTimed(t *testing.T) {
 	}
 }
 
+// A printer that stops partway through a multi-copy job is noticed one
+// per-label timeout after its last label, not after the whole job's worth
+// (siknue 2026-10-07 14:53: 3 copies, the verdict came after hub stopped
+// waiting).
+func TestSend_StallMidJobIsNoticedPerLabel(t *testing.T) {
+	p := newFakePrinter()
+	p.completeOnly = 1
+	data := golden(t, "edges_696_x2.bin")
+	job, err := ParseJob(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make it an 8-label job, like the multi-copy pet labels staff send.
+	for i := 0; i < 2; i++ {
+		data = append(data, data...)
+	}
+	job.Pages *= 4
+	var log bytes.Buffer
+	s := testSender(&log)
+	start := time.Now()
+	res := s.Send(context.Background(), p, job, data)
+	elapsed := time.Since(start)
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "8 枚中 1 枚") {
+		t.Fatalf("result = %+v\n%s", res, log.String())
+	}
+	if limit := 3 * s.PerPageTimeout; elapsed > limit {
+		t.Fatalf("took %v to notice; want about one per-label timeout (%v), well under %v", elapsed, s.PerPageTimeout, limit)
+	}
+}
+
 func TestSend_WaitsWhileThePrinterIsBusy(t *testing.T) {
 	p := newFakePrinter()
 	p.busyReplies = 2

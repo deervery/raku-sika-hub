@@ -166,9 +166,14 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 	}
 	s.debugf("sent %d bytes", len(data))
 
-	// 3. Wait for the printer to report every label.
+	// 3. Wait for the printer to report every label. Each label gets its own
+	// PerPageTimeout, restarted when the one before it is reported: a single
+	// window of Pages x PerPageTimeout let a printer that stopped on the first
+	// of 3 labels go unnoticed for a full minute, past the point where hub
+	// stops waiting, so the tablet never heard of the failure (siknue,
+	// 2026-10-07 14:53, job 1552).
 	heard := false
-	timeout := time.NewTimer(time.Duration(job.Pages) * s.PerPageTimeout)
+	timeout := time.NewTimer(s.PerPageTimeout)
 	defer timeout.Stop()
 	for res.Completed < job.Pages {
 		select {
@@ -181,6 +186,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 			switch st.Type {
 			case TypePrintingCompleted:
 				res.Completed++
+				timeout.Reset(s.PerPageTimeout)
 			case TypeErrorOccurred:
 				ps := st.Problems()
 				if len(ps) == 0 {
@@ -198,7 +204,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 					timeout.Reset(s.CoolingTimeout)
 					s.info("プリンタがヘッドを冷やしています。しばらくすると印刷を続けます")
 				case NotifyCoolingFinished:
-					timeout.Reset(time.Duration(job.Pages-res.Completed) * s.PerPageTimeout)
+					timeout.Reset(s.PerPageTimeout)
 					s.info("印刷を続けています")
 				}
 			case TypeTurnedOff:

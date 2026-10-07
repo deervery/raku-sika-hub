@@ -28,6 +28,7 @@ type fakePrinter struct {
 	// bits without saying so (errAfterPrint), or report the completion only
 	// once asked for the status (completeOnAsk).
 	silentAfterPrint bool
+	completeOnly     int // report only this many labels, then go quiet (still answering)
 	errAfterPrint    *[2]byte
 	completeOnAsk    bool
 	askCompleted     bool
@@ -150,7 +151,7 @@ func (p *fakePrinter) interpret() {
 				go p.finishAfterCooling()
 				continue
 			}
-			if !p.noCompletion {
+			if !p.noCompletion && (p.completeOnly == 0 || p.printed <= p.completeOnly) {
 				p.out = append(p.out, p.frame(TypePrintingCompleted, 0x01, 0, 0)...)
 			}
 			p.out = append(p.out, p.frame(TypePhaseChange, 0x00, 0, 0)...)

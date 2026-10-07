@@ -92,11 +92,19 @@ type flag struct {
 // reported: the printer cannot cool its head without it.
 // Cover open is err2 0x10: confirmed on office's QL-820NWB with the roll
 // cover open (2026-09-25).
+// cannotFeed is how the QL-820NWB's own screen words both "end of media"
+// (err1 0x02) and "media cannot be fed" (err2 0x40): 用紙を送れません. On a
+// continuous roll the printer cannot tell the two apart — office, 2026-10-07:
+// err1 0x02 twice while the roll still had tape, caught on adhesive left on
+// the roller. Telling staff the roll is used up sent them looking for a new
+// roll instead of the jam.
+const cannotFeed = "用紙を送れません。ロールが引っかかっていないか、終わっていないかを確かめ、正しくセットし直してください。"
+
 var err1Flags = []flag{
 	{0x01, "ロールが入っていません。ロールを入れてください。", "media-empty-error"},
-	{0x02, "ロールがなくなりました。新しいロールに交換してください。", "media-empty-error"},
+	{0x02, cannotFeed, "media-empty-error"},
 	{0x04, "カッターが詰まっています。詰まったラベルを取り除いてください。", "media-jam-error"},
-	{0x80, "プリンタのファンが動いていません。電源を入れ直し、直らなければ修理を依頼してください。", "other-error"},
+	{0x80, "プリンタのファンが動いていません。プリンタの電源を入れ直し、直らなければ修理を依頼してください。", "other-error"},
 }
 
 var err2Flags = []flag{
@@ -105,8 +113,8 @@ var err2Flags = []flag{
 	{0x04, "プリンタとの通信でエラーが起きました。", "other-error"},
 	{0x08, "プリンタの受信バッファがいっぱいです。", "other-error"},
 	{0x10, "カバーが開いています。カバーを閉じてください。", "cover-open-error"},
-	{0x40, "ラベルを送れません。ロールの詰まりを確認してください。", "media-jam-error"},
-	{0x80, "プリンタ本体でエラーが起きました。電源を入れ直してください。", "other-error"},
+	{0x40, cannotFeed, "media-jam-error"},
+	{0x80, "プリンタ本体でエラーが起きました。プリンタの電源を入れ直してください。", "other-error"},
 }
 
 // Problems lists what the error bits say is wrong.

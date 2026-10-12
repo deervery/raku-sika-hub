@@ -149,6 +149,74 @@ func (b *Brother) IsAvailable() bool {
 
 // Status returns the current CUPS printer resolution.
 func (b *Brother) Status() (PrinterStatus, error) {
+	configuredNames := parseConfiguredPrinterNames(b.name)
+	var status PrinterStatus
+	if name := firstExistingPrinter(configuredNames); name != "" {
+		// A configured queue that exists always wins (resolvePrinter), so the
+		// other destinations and the CUPS default are not needed. Listing them
+		// is slow: every `lpstat -p`, `lpstat -d` or `lpoptions -p` makes libcups
+		// browse the network for printers (DNS-SD) for about a second, while a
+		// query for one named queue takes ~10 ms. On siknue (2026-10-12, an
+		// EPSON on the LAN) /health took 3 s this way, longer than the browser
+		// launcher's 2 s health check, so after a reboot the browser waited out
+		// all 60 retries (about 3 minutes); every print paid the same 3 s.
+		status = PrinterStatus{
+			ConfiguredName: b.name,
+			Available:      []string{name},
+			SelectedName:   name,
+			Source:         "configured",
+		}
+	} else {
+		var err error
+		status, err = b.statusFromAllDestinations(configuredNames)
+		if err != nil {
+			return PrinterStatus{}, err
+		}
+	}
+	status.Model = PrinterModel(status.SelectedName)
+
+	if status.SelectedName != "" {
+		status.DeviceURI = readPrinterDeviceURI(status.SelectedName)
+		// raku-sika-ops creates every rakuql queue raw (switch-printer-backend.sh
+		// --to raw), and raw jobs are sent with -o raw anyway; skip lpoptions,
+		// which lists every destination too.
+		status.Raw = usesQLBackend(status.DeviceURI) || readQueueIsRaw(status.SelectedName)
+		status.CUPSState, status.BackendError = readPrinterState(status.SelectedName)
+		status.BackendReady = status.BackendError == ""
+		if status.BackendReady {
+			status.BackendReady, status.BackendError = checkPrinterBackend(status.DeviceURI)
+		}
+		// A rakuql queue names its printer by serial; if that printer is not
+		// on USB, no job can reach it. Without the backend wrapper CUPS
+		// cannot run the job at all and stops the queue.
+		if status.BackendReady && usesQLBackend(status.DeviceURI) {
+			if _, err := os.Stat(qlBackendWrapper); err != nil {
+				status.BackendReady, status.BackendError = false,
+					"CUPS に rakuql バックエンドがありません。raku-sika-ops の switch-printer-backend.sh --to raw をやり直してください"
+			} else if _, err := qlbackend.ResolveDevice(status.DeviceURI, "/"); err != nil {
+				status.BackendReady, status.BackendError = false, err.Error()
+			}
+		}
+	}
+
+	return status, nil
+}
+
+// firstExistingPrinter returns the first of the configured queue names that
+// CUPS holds, asking about each by name.
+func firstExistingPrinter(names []string) string {
+	for _, name := range names {
+		out, err := exec.Command("lpstat", "-p", name).CombinedOutput()
+		if err == nil && contains(parseAvailablePrinters(string(out)), name) {
+			return name
+		}
+	}
+	return ""
+}
+
+// statusFromAllDestinations resolves the printer from every CUPS destination
+// and the CUPS default, for when no configured queue exists.
+func (b *Brother) statusFromAllDestinations(configuredNames []string) (PrinterStatus, error) {
 	availableOut, err := exec.Command("lpstat", "-p").CombinedOutput()
 	// `lpstat -p` exits 1 with "No destinations added." when CUPS holds no queue
 	// at all. That is a printer *configuration* state, not a failure to query
@@ -173,32 +241,7 @@ func (b *Brother) Status() (PrinterStatus, error) {
 		DefaultName:    defaultName,
 		Available:      available,
 	}
-
-	configuredNames := parseConfiguredPrinterNames(b.name)
 	status.SelectedName, status.Source = resolvePrinter(configuredNames, available, defaultName)
-	status.Model = PrinterModel(status.SelectedName)
-
-	if status.SelectedName != "" {
-		status.DeviceURI = readPrinterDeviceURI(status.SelectedName)
-		status.Raw = readQueueIsRaw(status.SelectedName)
-		status.CUPSState, status.BackendError = readPrinterState(status.SelectedName)
-		status.BackendReady = status.BackendError == ""
-		if status.BackendReady {
-			status.BackendReady, status.BackendError = checkPrinterBackend(status.DeviceURI)
-		}
-		// A rakuql queue names its printer by serial; if that printer is not
-		// on USB, no job can reach it. Without the backend wrapper CUPS
-		// cannot run the job at all and stops the queue.
-		if status.BackendReady && usesQLBackend(status.DeviceURI) {
-			if _, err := os.Stat(qlBackendWrapper); err != nil {
-				status.BackendReady, status.BackendError = false,
-					"CUPS に rakuql バックエンドがありません。raku-sika-ops の switch-printer-backend.sh --to raw をやり直してください"
-			} else if _, err := qlbackend.ResolveDevice(status.DeviceURI, "/"); err != nil {
-				status.BackendReady, status.BackendError = false, err.Error()
-			}
-		}
-	}
-
 	return status, nil
 }
 

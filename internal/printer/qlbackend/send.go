@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/deervery/raku-sika-hub/internal/printer/qlraster"
 )
 
 // Outcome is how a job ended, as far as the printer told us.
@@ -84,7 +86,11 @@ func NewSender(log io.Writer) *Sender {
 }
 
 var (
-	cmdReset         = append(make([]byte, 200), 0x1B, 0x40) // invalidate + initialize
+	// Invalidate + initialize. The QL-800 series needs 400 bytes of 0x00 to
+	// leave whatever it was parsing (Raster Command Reference); with fewer, a
+	// printer still inside a half-received job can read the rest of the reset
+	// as raster data.
+	cmdReset         = append(make([]byte, qlraster.InvalidateBytes), 0x1B, 0x40)
 	cmdStatusRequest = []byte{0x1B, 0x69, 0x53}
 )
 
@@ -252,10 +258,16 @@ drain:
 	for {
 		select {
 		case st, ok := <-frames:
-			if !ok || (st.Type == TypePhaseChange && st.Phase == 0x00) {
+			if !ok {
+				s.debugf("settle: device closed")
+				break drain
+			}
+			s.debugFrame(st)
+			if st.Type == TypePhaseChange && st.Phase == 0x00 {
 				break drain
 			}
 		case <-settle.C:
+			s.debugf("settle: no return to receiving within %v", s.SettleTimeout)
 			break drain
 		}
 	}
@@ -353,11 +365,12 @@ func (s *Sender) drainFor(frames <-chan Status, quiet, max time.Duration) {
 	for {
 		idle := time.NewTimer(quiet)
 		select {
-		case _, ok := <-frames:
+		case st, ok := <-frames:
 			idle.Stop()
 			if !ok {
 				return
 			}
+			s.debugFrame(st)
 		case <-idle.C:
 			return
 		case <-deadline.C:

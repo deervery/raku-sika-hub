@@ -26,8 +26,10 @@ func loadPNG(t *testing.T, name string) image.Image {
 }
 
 // The goldens are brother_ql's output for the same images (testdata/gen_golden.py).
-// brother_ql is known to drive QL-820NWB correctly, so byte equality here means
-// the printer receives exactly what a working implementation would send.
+// The raster rows and page settings must match them byte for byte; only the
+// framing differs, where brother_ql departs from Brother's reference (see the
+// package comment). toReference applies exactly those differences, so any
+// other change still fails here.
 func TestEncode_MatchesBrotherQL(t *testing.T) {
 	cases := []struct {
 		png, golden string
@@ -45,6 +47,7 @@ func TestEncode_MatchesBrotherQL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			want = toReference(t, want)
 			got, err := Encode(loadPNG(t, tc.png), Continuous62, Options{Cut: tc.cut})
 			if err != nil {
 				t.Fatal(err)
@@ -60,14 +63,15 @@ func TestEncode_MatchesBrotherQL(t *testing.T) {
 	}
 }
 
-// Copies: brother_ql initializes once and repeats information, raster and
-// print per page. Re-initializing between pages could drop a label that is
+// Copies: the printer is initialized once and information, raster and print
+// repeat per page. Re-initializing between pages could drop a label that is
 // still in the printer's buffer.
 func TestEncodePages_MatchesBrotherQLForCopies(t *testing.T) {
 	want, err := os.ReadFile(filepath.Join("testdata", "edges_696_x2.bin"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	want = toReference(t, want)
 	img := loadPNG(t, "edges_696.png")
 	got, err := EncodePages([]image.Image{img, img}, Continuous62, Options{Cut: true})
 	if err != nil {
@@ -78,6 +82,46 @@ func TestEncodePages_MatchesBrotherQLForCopies(t *testing.T) {
 	}
 	if n := bytes.Count(got, []byte{0x1B, 0x40}); n != 1 {
 		t.Fatalf("printer initialized %d times, want once", n)
+	}
+}
+
+// Brother's Raster Command Reference (QL-800/810W/820NWB): a 400-byte
+// invalidate, then initialize; no status request once print data is out; pages
+// after the first flagged as such; 0x0C between pages and 0x1A at the end.
+func TestEncodePages_FollowsTheReferenceFraming(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 732, 300))
+	got, err := EncodePages([]image.Image{img, img, img}, Continuous62, Options{Cut: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := append(make([]byte, 400), 0x1B, 0x40, 0x1B, 0x69, 0x61, 0x01)
+	if !bytes.HasPrefix(got, head) || got[len(head)] == 0x00 {
+		t.Fatalf("stream does not start with exactly 400 bytes of invalidate, initialize, raster mode")
+	}
+	cmds := commands(t, got)
+	var flags, prints []byte
+	for _, c := range cmds {
+		switch {
+		case len(c) >= 3 && c[0] == 0x1B && c[1] == 'i' && c[2] == 'S':
+			t.Fatal("status request inside the job")
+		case len(c) == 13 && c[0] == 0x1B && c[1] == 'i' && c[2] == 'z':
+			flags = append(flags, c[11])
+		case c[0] == 0x0C || c[0] == 0x1A:
+			prints = append(prints, c[0])
+		}
+	}
+	if !bytes.Equal(flags, []byte{0, 1, 1}) {
+		t.Errorf("page flags %v, want [0 1 1]", flags)
+	}
+	if !bytes.Equal(prints, []byte{0x0C, 0x0C, 0x1A}) {
+		t.Errorf("print commands % x, want 0c 0c 1a", prints)
+	}
+	single, err := Encode(img, Continuous62, Options{Cut: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single[len(single)-1] != 0x1A || bytes.Count(single, []byte{0x1B, 0x69, 0x53}) != 0 {
+		t.Error("a single label must end with 0x1A and carry no status request")
 	}
 }
 
@@ -218,4 +262,80 @@ func decodeRows(t *testing.T, data []byte) [][]byte {
 		t.Fatalf("stream does not end with a print command at byte %d", i)
 	}
 	return rows
+}
+
+// commands splits a raster stream into its commands; each run of invalidate
+// bytes is one entry.
+func commands(t *testing.T, data []byte) [][]byte {
+	t.Helper()
+	var out [][]byte
+	for i := 0; i < len(data); {
+		n := 1
+		switch c := data[i]; {
+		case c == 0x00:
+			for i+n < len(data) && data[i+n] == 0x00 {
+				n++
+			}
+		case c == 0x1B && data[i+1] == '@':
+			n = 2
+		case c == 0x1B && data[i+1] == 'i':
+			switch data[i+2] {
+			case 'S':
+				n = 3
+			case 'a', 'M', 'A', 'K':
+				n = 4
+			case 'd':
+				n = 5
+			case 'z':
+				n = 13
+			default:
+				t.Fatalf("unknown command ESC i 0x%02x at byte %d", data[i+2], i)
+			}
+		case c == 'g':
+			n = 3 + int(data[i+2])
+		case c == 0x0C || c == 0x1A:
+		default:
+			t.Fatalf("unknown byte 0x%02x at byte %d", c, i)
+		}
+		out = append(out, data[i:i+n])
+		i += n
+	}
+	return out
+}
+
+// toReference rewrites brother_ql's framing into the reference's: the leading
+// raster-mode switch and 200-byte invalidate become a 400-byte invalidate, the
+// per-page status requests go, pages after the first are flagged, and every
+// print but the last becomes 0x0C. Raster rows and page settings are kept.
+func toReference(t *testing.T, golden []byte) []byte {
+	t.Helper()
+	cmds := commands(t, golden)
+	if len(cmds) < 3 || !bytes.Equal(cmds[0], []byte{0x1B, 0x69, 0x61, 0x01}) || len(cmds[1]) != 200 || cmds[1][0] != 0x00 {
+		t.Fatal("golden does not start with brother_ql's raster switch and 200-byte invalidate")
+	}
+	lastPrint := -1
+	for i, c := range cmds {
+		if c[0] == 0x1A {
+			lastPrint = i
+		}
+	}
+	out := make([]byte, 400)
+	page := 0
+	for i, c := range cmds[2:] {
+		i += 2
+		switch {
+		case len(c) == 3 && c[0] == 0x1B && c[2] == 'S':
+			continue
+		case len(c) == 13 && c[0] == 0x1B && c[2] == 'z':
+			c = append([]byte{}, c...)
+			if page > 0 {
+				c[11] = 1
+			}
+			page++
+		case c[0] == 0x1A && i != lastPrint:
+			c = []byte{0x0C}
+		}
+		out = append(out, c...)
+	}
+	return out
 }

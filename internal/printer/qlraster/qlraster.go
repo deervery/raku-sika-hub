@@ -8,9 +8,26 @@
 // which the printer rejects with 「ロール種類の不一致」. Encoding the raster
 // here removes every one of those layers: what the hub drew is what prints.
 //
-// The output is byte-for-byte identical to brother_ql 0.9.4
-// (https://github.com/pklaus/brother_ql) for the same image and options; the
-// golden tests in this package enforce that. See testdata/gen_golden.py.
+// The raster rows and page settings are byte-for-byte those of brother_ql
+// 0.9.4 (https://github.com/pklaus/brother_ql) for the same image and options;
+// the golden tests in this package enforce that (testdata/gen_golden.py). The
+// framing around them follows Brother's Raster Command Reference for the
+// QL-800/810W/820NWB instead, where brother_ql departs from it:
+//
+//   - the invalidate is 400 bytes of 0x00 for this series; brother_ql sends
+//     200 for every model;
+//   - nothing may be sent once print data is out until printing completion is
+//     confirmed, not even a status request; brother_ql puts ESC i S at the
+//     start of every page, so page 2 of a copies job asked while page 1 was
+//     printing. The backend asks for the status before sending the job;
+//   - pages after the first are flagged "other page" in the print
+//     information, and every page but the last ends with 0x0C, the last with
+//     0x1A; brother_ql flags every page as the first and ends each with 0x1A.
+//
+// All three printers stopped mid-job about once in 120-300 labels with no
+// error reported, office's newest included (2026-10-12/13/14); each stopped
+// right after the printer said it had started printing. Matching the
+// reference is the first thing to rule out.
 package qlraster
 
 import (
@@ -101,30 +118,32 @@ func Encode(img image.Image, m Media, opts Options) ([]byte, error) {
 	return EncodePages([]image.Image{img}, m, opts)
 }
 
+// InvalidateBytes is how many 0x00 bytes the QL-800 series needs to drop
+// whatever it was in the middle of and return to receiving.
+const InvalidateBytes = 400
+
 // EncodePages encodes several labels into one job — how copies are printed.
 //
 // The printer is set up once; each page then carries its own print
 // information, raster and print command. The printer is deliberately not
 // re-initialized between pages: that could clear a label still in its buffer.
-// This mirrors brother_ql's multi-image output byte for byte.
 func EncodePages(imgs []image.Image, m Media, opts Options) ([]byte, error) {
 	if len(imgs) == 0 {
 		return nil, fmt.Errorf("qlraster: no pages")
 	}
 	var out bytes.Buffer
-	out.Write([]byte{0x1B, 0x69, 0x61, 0x01}) // ESC i a: raster mode
-	out.Write(make([]byte, 200))              // invalidate
+	out.Write(make([]byte, InvalidateBytes))  // invalidate
 	out.Write([]byte{0x1B, 0x40})             // ESC @: initialize
 	out.Write([]byte{0x1B, 0x69, 0x61, 0x01}) // ESC i a: raster mode
 	for i, img := range imgs {
-		if err := writePage(&out, img, m, opts); err != nil {
+		if err := writePage(&out, img, m, opts, i == 0, i == len(imgs)-1); err != nil {
 			return nil, fmt.Errorf("page %d: %w", i+1, err)
 		}
 	}
 	return out.Bytes(), nil
 }
 
-func writePage(out *bytes.Buffer, img image.Image, m Media, opts Options) error {
+func writePage(out *bytes.Buffer, img image.Image, m Media, opts Options, first, last bool) error {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 
@@ -147,7 +166,6 @@ func writePage(out *bytes.Buffer, img image.Image, m Media, opts Options) error 
 	pad := headDots - m.DotsPrintable - m.OffsetRight
 
 	out.Grow(60 + h*(3+rowBytes))
-	out.Write([]byte{0x1B, 0x69, 0x53}) // ESC i S: status request
 
 	// ESC i z: print information. Valid: recover | quality | length | width | type,
 	// or only recover | quality when the roll is not to be checked.
@@ -159,7 +177,11 @@ func writePage(out *bytes.Buffer, img image.Image, m Media, opts Options) error 
 	var n [4]byte
 	binary.LittleEndian.PutUint32(n[:], uint32(h))
 	out.Write(n[:])
-	out.Write([]byte{0x00, 0x00}) // page flag (brother_ql always sends 0), fixed 0
+	var page byte // n9: starting page 0, other pages 1
+	if !first {
+		page = 1
+	}
+	out.Write([]byte{page, 0x00}) // n9, n10 (fixed 0)
 
 	if opts.Cut {
 		out.Write([]byte{0x1B, 0x69, 0x4D, 0x40}) // ESC i M: auto cut
@@ -191,7 +213,11 @@ func writePage(out *bytes.Buffer, img image.Image, m Media, opts Options) error 
 		out.Write(row)
 	}
 
-	out.WriteByte(0x1A) // print with feed
+	if last {
+		out.WriteByte(0x1A) // print with feed: the last page
+	} else {
+		out.WriteByte(0x0C) // print: every other page
+	}
 	return nil
 }
 

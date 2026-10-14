@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/deervery/raku-sika-hub/internal/printer/qlraster"
 )
 
 // Outcome is how a job ended, as far as the printer told us.
@@ -84,7 +86,11 @@ func NewSender(log io.Writer) *Sender {
 }
 
 var (
-	cmdReset         = append(make([]byte, 200), 0x1B, 0x40) // invalidate + initialize
+	// Invalidate + initialize. The QL-800 series needs 400 bytes of 0x00 to
+	// leave whatever it was parsing (Raster Command Reference); with fewer, a
+	// printer still inside a half-received job can read the rest of the reset
+	// as raster data.
+	cmdReset         = append(make([]byte, qlraster.InvalidateBytes), 0x1B, 0x40)
 	cmdStatusRequest = []byte{0x1B, 0x69, 0x53}
 )
 

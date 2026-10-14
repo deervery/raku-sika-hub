@@ -258,10 +258,16 @@ drain:
 	for {
 		select {
 		case st, ok := <-frames:
-			if !ok || (st.Type == TypePhaseChange && st.Phase == 0x00) {
+			if !ok {
+				s.debugf("settle: device closed")
+				break drain
+			}
+			s.debugFrame(st)
+			if st.Type == TypePhaseChange && st.Phase == 0x00 {
 				break drain
 			}
 		case <-settle.C:
+			s.debugf("settle: no return to receiving within %v", s.SettleTimeout)
 			break drain
 		}
 	}
@@ -359,11 +365,12 @@ func (s *Sender) drainFor(frames <-chan Status, quiet, max time.Duration) {
 	for {
 		idle := time.NewTimer(quiet)
 		select {
-		case _, ok := <-frames:
+		case st, ok := <-frames:
 			idle.Stop()
 			if !ok {
 				return
 			}
+			s.debugFrame(st)
 		case <-idle.C:
 			return
 		case <-deadline.C:

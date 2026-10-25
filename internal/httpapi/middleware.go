@@ -58,7 +58,7 @@ func CORS(next http.Handler) http.Handler {
 		// the browser blocks the request at the preflight and the button does
 		// nothing, while curl — which sends no preflight — works fine.
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

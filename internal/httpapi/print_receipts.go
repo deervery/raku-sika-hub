@@ -205,7 +205,7 @@ func PrintReceiptStatus(dir string) http.Handler {
 			return
 		}
 		if dir == "" {
-			receiptUnavailable(w)
+			writeError(w, 503, "PRINT_RECEIPTS_UNAVAILABLE", "印刷受付の保存先が設定されていません。以前の印刷結果は確認できません。")
 			return
 		}
 		digest := sha256.Sum256([]byte(key))

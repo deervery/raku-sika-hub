@@ -99,3 +99,30 @@ func TestCORS_AllowsDeleteFromTablet(t *testing.T) {
 		}
 	}
 }
+
+// Browsers preflight the durable request ID before sending a print command.
+// No printer call may happen during OPTIONS.
+func TestCORS_DurablePrintPreflight(t *testing.T) {
+	calls := 0
+	handler := CORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+	}))
+	req := httptest.NewRequest(http.MethodOptions, "/printer/print", nil)
+	req.Header.Set("Origin", "https://rakusika.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "content-type,idempotency-key")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || calls != 0 {
+		t.Fatalf("preflight status=%d printer calls=%d", rec.Code, calls)
+	}
+	allowed := map[string]bool{}
+	for _, header := range strings.Split(rec.Header().Get("Access-Control-Allow-Headers"), ",") {
+		allowed[strings.ToLower(strings.TrimSpace(header))] = true
+	}
+	for _, header := range []string{"content-type", "idempotency-key"} {
+		if !allowed[header] {
+			t.Errorf("browser preflight blocks %s", header)
+		}
+	}
+}

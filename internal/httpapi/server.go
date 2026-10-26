@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
 )
@@ -65,7 +66,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/scale/weigh", s.handler.HandleScaleWeigh)
 	mux.HandleFunc("/scale/tare", s.handler.HandleScaleTare)
 	mux.HandleFunc("/scale/zero", s.handler.HandleScaleZero)
-	mux.HandleFunc("/printer/print", s.handler.HandlePrinterPrint)
+	mux.Handle("/printer/print", DurablePrint(os.Getenv("RAKUSIKA_PRINT_RECEIPTS_DIR"), http.HandlerFunc(s.handler.HandlePrinterPrint)))
+	mux.Handle("/printer/print/durable", RequiredDurablePrint(os.Getenv("RAKUSIKA_PRINT_RECEIPTS_DIR"), http.HandlerFunc(s.handler.HandlePrinterPrint)))
+	mux.Handle("/printer/receipts/{id}", PrintReceiptStatus(os.Getenv("RAKUSIKA_PRINT_RECEIPTS_DIR")))
 	mux.HandleFunc("/printer/preview", s.handler.HandlePrinterPreview)
 	mux.HandleFunc("/printer/test", s.handler.HandlePrinterTest)
 	mux.HandleFunc("/printer/queue", s.handler.HandlePrinterQueue)

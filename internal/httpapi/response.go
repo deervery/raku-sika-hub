@@ -104,7 +104,7 @@ type VersionResponse struct {
 }
 
 // hubFeatures is what VersionResponse.Features reports.
-var hubFeatures = []string{"rakuql", "durable-print-receipts-v1"}
+var hubFeatures = []string{"rakuql", "durable-print-receipts-v1", "durable-print-receipts-v2"}
 
 // ScanResponse is returned by GET /scanner/scan.
 type ScanResponse struct {

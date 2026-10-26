@@ -174,3 +174,56 @@ func receiptUnavailable(w http.ResponseWriter) {
 func printUnknown(w http.ResponseWriter) {
 	writeError(w, 409, "PRINT_OUTCOME_UNKNOWN", "印刷結果が未確定です。再印刷せず、用紙と印刷キューを確認してください。")
 }
+
+// RequiredDurablePrint is mounted at a dedicated URL. Older servers cannot
+// accidentally accept a request while ignoring its idempotency key.
+func RequiredDurablePrint(dir string, next http.Handler) http.Handler {
+	durable := DurablePrint(dir, next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, 405, "METHOD_NOT_ALLOWED", "POSTのみ対応しています。")
+			return
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			writeError(w, 400, "INVALID_REQUEST", "印刷要求IDが必要です。")
+			return
+		}
+		durable.ServeHTTP(w, r)
+	})
+}
+
+// PrintReceiptStatus only reads persisted evidence. It NEVER dispatches a print.
+func PrintReceiptStatus(dir string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, 405, "METHOD_NOT_ALLOWED", "GETのみ対応しています。")
+			return
+		}
+		key := r.PathValue("id")
+		if !printRequestKey.MatchString(key) {
+			writeError(w, 400, "INVALID_REQUEST", "印刷要求IDが不正です。")
+			return
+		}
+		if dir == "" {
+			receiptUnavailable(w)
+			return
+		}
+		digest := sha256.Sum256([]byte(key))
+		raw, err := os.ReadFile(filepath.Join(dir, hex.EncodeToString(digest[:])+".json"))
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, 404, "PRINT_RECEIPT_NOT_FOUND", "この受付番号の記録はまだありません。自動では印刷しません。")
+			return
+		}
+		var receipt printReceipt
+		if err != nil || json.Unmarshal(raw, &receipt) != nil || receipt.State != "recorded" || receipt.Status < 100 || receipt.Status > 599 {
+			printUnknown(w)
+			return
+		}
+		writeJSON(w, 200, struct {
+			Status       string `json:"status"`
+			ReceiptState string `json:"receiptState"`
+			HTTPStatus   int    `json:"httpStatus"`
+			ResponseBody string `json:"responseBody"`
+		}{"ok", "recorded", receipt.Status, string(receipt.Body)})
+	})
+}

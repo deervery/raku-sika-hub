@@ -27,8 +27,9 @@ type LabelData struct {
 	SaltEquivalentQuantity string `json:"saltEquivalentQuantity"` // 食塩相当量
 
 	// Block fields (v0.8.2) - 改行区切りの複数行テキスト
-	CompanyBlock  string `json:"companyBlock"`  // 加工者情報ブロック（name/address/phone、改行区切り）
-	FacilityBlock string `json:"facilityBlock"` // 加工所情報ブロック（name/address/phone、改行区切り）
+	CompanyBlock  string `json:"companyBlock"`          // 加工者情報ブロック（name/address/phone、改行区切り）
+	FacilityBlock string `json:"facilityBlock"`         // 加工所情報ブロック（name/address/phone、改行区切り）
+	SellerBlock   string `json:"sellerBlock,omitempty"` // dev trial: optional seller, separate from processor/facility
 
 	// Processed-specific
 	IsHeatedMeatProducts string `json:"isHeatedMeatProducts"` // 加熱食肉製品区分

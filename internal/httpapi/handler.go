@@ -35,16 +35,17 @@ type PrintRequest struct {
 
 // Handler holds references to all service components.
 type Handler struct {
-	scaleClient *scale.Client
-	printer     *printer.Brother
-	scanner     ScannerClient
-	broadcaster Broadcaster
-	logger      *logging.Logger
-	version     string
-	commit      string
-	buildDate   string
-	assetsDir   string
-	network     *netadmin.Manager
+	scaleClient        *scale.Client
+	printer            *printer.Brother
+	scanner            ScannerClient
+	broadcaster        Broadcaster
+	logger             *logging.Logger
+	version            string
+	commit             string
+	buildDate          string
+	assetsDir          string
+	sellerLabelEnabled bool
+	network            *netadmin.Manager
 }
 
 // NewHandler creates a Handler.
@@ -57,16 +58,17 @@ func NewHandler(
 	version, commit, buildDate, assetsDir string,
 ) *Handler {
 	return &Handler{
-		scaleClient: scaleClient,
-		printer:     prn,
-		scanner:     scanner,
-		broadcaster: broadcaster,
-		logger:      logger,
-		version:     version,
-		commit:      commit,
-		buildDate:   buildDate,
-		assetsDir:   assetsDir,
-		network:     netadmin.NewManager(),
+		scaleClient:        scaleClient,
+		printer:            prn,
+		scanner:            scanner,
+		broadcaster:        broadcaster,
+		logger:             logger,
+		version:            version,
+		commit:             commit,
+		buildDate:          buildDate,
+		assetsDir:          assetsDir,
+		sellerLabelEnabled: os.Getenv("HUB_SELLER_LABEL_TRIAL") == "1",
+		network:            netadmin.NewManager(),
 	}
 }
 
@@ -149,11 +151,15 @@ func (h *Handler) HandleVersion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	features := append([]string(nil), hubFeatures...)
+	if h.sellerLabelEnabled {
+		features = append(features, printer.SellerLabelFeature)
+	}
 	writeJSON(w, http.StatusOK, VersionResponse{
 		Version:   h.version,
 		Commit:    h.commit,
 		BuildDate: h.buildDate,
-		Features:  hubFeatures,
+		Features:  features,
 	})
 }
 
@@ -647,6 +653,14 @@ func (h *Handler) validateAndBuildLabelData(req PrintRequest) (*printer.LabelDat
 	}
 
 	req.Data = printer.NormalizeRequestData(req.Data)
+	if req.Data["sellerBlock"] != "" {
+		if !h.sellerLabelEnabled {
+			return nil, http.StatusBadRequest, &ErrorBody{Status: "error", Code: "INVALID_REQUEST", Message: "このHubでは販売者欄の試験印刷は無効です。"}
+		}
+		if err := printer.ValidateSellerLabel(req.Template, req.Data); err != nil {
+			return nil, http.StatusBadRequest, &ErrorBody{Status: "error", Code: "INVALID_REQUEST", Message: err.Error()}
+		}
+	}
 	required := printer.RequiredFields(req.Template)
 	var missing []string
 	for _, f := range required {

@@ -344,6 +344,15 @@ func (h *Handler) handlePrint(ctx context.Context, client *WSClient, raw []byte)
 	}
 
 	req.Data = printer.NormalizeRequestData(req.Data)
+	// The seller trial is HTTP-only. Legacy WebSocket users must not silently
+	// gain a new row or bypass the explicit HTTP trial gate.
+	if req.Data["sellerBlock"] != "" {
+		client.Send(PrintErrorResponse{
+			Type: "print_error", RequestID: req.RequestID, Code: ErrCodeInvalidRequest,
+			Message: "販売者欄の試験印刷はoffice検証用のHTTP APIを使用してください。",
+		})
+		return
+	}
 
 	// Validate required fields.
 	required := printer.RequiredFields(req.Template)

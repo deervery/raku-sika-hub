@@ -73,7 +73,8 @@ func rawSupportedModel(model string) bool {
 }
 
 // printRaw encodes the rendered label and submits it to the raw queue.
-func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (PrintResult, error) {
+func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int, timings ...*printTiming) (PrintResult, error) {
+	timing := firstTiming(timings)
 	if !rawSupportedModel(status.Model) {
 		return PrintResult{}, fmt.Errorf(
 			"PRINTER_ERROR: raw 印刷は QL-800 / QL-820NWB のみ対応しています。キュー名 %q から機種を判別できません",
@@ -115,17 +116,19 @@ func (b *Brother) printRaw(status PrinterStatus, pngPath string, copies int) (Pr
 	if err != nil {
 		return PrintResult{}, classifyLpError(string(out), status)
 	}
+	timing.mark("spool-submitted", "accepted")
 	jobID := parseSubmittedJobID(string(out))
 	if jobID == "" {
 		return PrintResult{State: "done", Message: "印刷ジョブを送信しました。"}, nil
 	}
 	result, err := b.verifySubmittedJob(status.SelectedName, jobID, rawConfirmWait(status.DeviceURI, copies))
+	timing.mark("queue-verified", "returned")
 	if err != nil {
 		return PrintResult{}, err
 	}
 	b.logger.Info("raw print state: job=%s state=%s printer_state=%s", result.JobID, result.State, result.PrinterState)
 	if result.State == "done" && usesQLBackend(status.DeviceURI) {
-		return b.confirmWithPrinter(result)
+		return b.confirmWithPrinter(result, timing)
 	}
 	return result, nil
 }
@@ -177,7 +180,8 @@ func usesQLBackend(deviceURI string) bool {
 
 // confirmWithPrinter replaces "the job left the CUPS queue" — which is all a
 // CUPS job state can say — with what the printer itself reported.
-func (b *Brother) confirmWithPrinter(result PrintResult) (PrintResult, error) {
+func (b *Brother) confirmWithPrinter(result PrintResult, timings ...*printTiming) (PrintResult, error) {
+	timing := firstTiming(timings)
 	number := result.JobID[strings.LastIndex(result.JobID, "-")+1:]
 	var (
 		res qlbackend.Result
@@ -199,6 +203,7 @@ func (b *Brother) confirmWithPrinter(result PrintResult) (PrintResult, error) {
 	b.logger.Info("printer result: job=%s outcome=%s completed=%d/%d message=%s", result.JobID, res.Outcome, res.Completed, res.Pages, res.Message)
 	switch res.Outcome {
 	case qlbackend.OutcomePrinted:
+		timing.mark("printer-confirmed", "reported-printed")
 		result.Message = "印刷しました。"
 		return result, nil
 	case qlbackend.OutcomeUnconfirmed:

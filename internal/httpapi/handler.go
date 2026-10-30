@@ -28,9 +28,10 @@ type Broadcaster interface {
 
 // PrintRequest is the JSON body for POST /printer/print and /printer/preview.
 type PrintRequest struct {
-	Template string            `json:"template"`
-	Copies   int               `json:"copies"`
-	Data     map[string]string `json:"data"`
+	ExperienceTraceID string            `json:"experienceTraceId,omitempty"`
+	Template          string            `json:"template"`
+	Copies            int               `json:"copies"`
+	Data              map[string]string `json:"data"`
 }
 
 // Handler holds references to all service components.
@@ -283,6 +284,7 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	labelData.ExperienceTraceID = req.ExperienceTraceID
 	printResult, err := h.printer.PrintLabel(*labelData)
 	if err != nil {
 		code := classifyPrinterError(err)

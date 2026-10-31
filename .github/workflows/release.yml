@@ -90,6 +90,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
+          # dev tags must never replace the production release selected by latest.
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: |
             raku-sika-hub-linux-arm64
             raku-sika-hub-linux-arm64.sha256

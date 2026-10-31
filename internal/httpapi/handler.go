@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
+	"github.com/deervery/raku-sika-hub/internal/netadmin"
 	"github.com/deervery/raku-sika-hub/internal/printer"
 	"github.com/deervery/raku-sika-hub/internal/scale"
 )
@@ -43,6 +44,7 @@ type Handler struct {
 	commit      string
 	buildDate   string
 	assetsDir   string
+	network     *netadmin.Manager
 }
 
 // NewHandler creates a Handler.
@@ -64,6 +66,7 @@ func NewHandler(
 		commit:      commit,
 		buildDate:   buildDate,
 		assetsDir:   assetsDir,
+		network:     netadmin.NewManager(),
 	}
 }
 
@@ -104,6 +107,7 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			DeviceURI:    status.DeviceURI,
 			BackendReady: status.BackendReady,
 			BackendError: status.BackendError,
+			Transport:    printerTransport(status),
 		},
 		Scanner: ScannerHealth{
 			Connected: scannerConnected,
@@ -149,6 +153,7 @@ func (h *Handler) HandleVersion(w http.ResponseWriter, r *http.Request) {
 		Version:   h.version,
 		Commit:    h.commit,
 		BuildDate: h.buildDate,
+		Features:  hubFeatures,
 	})
 }
 
@@ -215,6 +220,12 @@ func (h *Handler) HandleScaleTare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Weigh already does this (handler.go の HandleScaleWeigh)。風袋・ゼロだけ
+	// 自己回復しないと、watchdog が一瞬切断扱いにした直後に押されたときだけ
+	// 503 になる。同じ扱いに揃える。
+	if !h.scaleClient.Connected() {
+		h.scaleClient.TryConnect()
+	}
 	if !h.scaleClient.Connected() {
 		writeError(w, http.StatusServiceUnavailable, "SCALE_NOT_CONNECTED",
 			"スケールが接続されていません。USBケーブルを確認してください。")
@@ -236,6 +247,9 @@ func (h *Handler) HandleScaleZero(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.scaleClient.Connected() {
+		h.scaleClient.TryConnect()
+	}
 	if !h.scaleClient.Connected() {
 		writeError(w, http.StatusServiceUnavailable, "SCALE_NOT_CONNECTED",
 			"スケールが接続されていません。USBケーブルを確認してください。")
@@ -286,13 +300,26 @@ func (h *Handler) HandlePrinterPrint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, SuccessResponse{
+	resp := SuccessResponse{
 		Status:     "ok",
 		PrintState: printResult.State,
 		JobID:      printResult.JobID,
 		Copies:     labelData.Copies,
 		Message:    printResult.Message,
-	})
+	}
+	// "pending" means the job was accepted but never left the queue. Say why,
+	// so the operator is not left watching a spinner with no cause named.
+	if printResult.Diagnosis != nil {
+		resp.Diagnosis = printResult.Diagnosis
+	} else if printResult.State == "pending" {
+		if snapshot, err := h.printer.QueueSnapshot(); err == nil {
+			diagnosis := printer.DiagnoseQueue(snapshot)
+			resp.Diagnosis = &diagnosis
+		} else {
+			h.logger.Warn("diagnosis unavailable after pending print: %v", err)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 	if h.broadcaster != nil {
 		h.broadcaster.Broadcast(map[string]any{
 			"type":     "print_progress",
@@ -370,8 +397,16 @@ func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
 	if snapshot.BackendError != "" && len(jobs) > 0 {
 		message = "印刷キューが残っていますが、プリンタ送信先に接続できません。キュー削除とプリンタ再起動を確認してください。"
 	}
+	diagnosis := printer.DiagnoseQueue(snapshot)
+	// Best effort: the pending queue is what callers depend on, so a failure to
+	// read the completed list must not turn a healthy queue into a 500.
+	recent, recentErr := h.printer.RecentJobs(5)
+	if recentErr != nil {
+		h.logger.Warn("recent print jobs unavailable: %v", recentErr)
+	}
 	writeJSON(w, http.StatusOK, QueueResponse{
 		Status:       "ok",
+		Diagnosis:    &diagnosis,
 		Printer:      snapshot.PrinterName,
 		PrinterState: snapshot.PrinterState,
 		DeviceURI:    snapshot.BackendDevice,
@@ -382,6 +417,7 @@ func (h *Handler) handlePrinterQueueGet(w http.ResponseWriter) {
 		Clearable:    len(jobs) > 0,
 		Message:      message,
 		Jobs:         jobs,
+		RecentJobs:   queueJobsFrom(snapshot.PrinterName, recent),
 	})
 }
 
@@ -416,9 +452,13 @@ func (h *Handler) handlePrinterQueueDelete(w http.ResponseWriter) {
 }
 
 func queueJobsFromSnapshot(snapshot printer.QueueSnapshot) []QueueJob {
-	jobs := make([]QueueJob, 0, len(snapshot.Jobs))
-	for _, job := range snapshot.Jobs {
-		printerName := snapshot.PrinterName
+	return queueJobsFrom(snapshot.PrinterName, snapshot.Jobs)
+}
+
+func queueJobsFrom(snapshotPrinter string, source []printer.QueueJobStatus) []QueueJob {
+	jobs := make([]QueueJob, 0, len(source))
+	for _, job := range source {
+		printerName := snapshotPrinter
 		if printerName == "" {
 			printerName = job.ID
 			if idx := strings.LastIndex(job.ID, "-"); idx > 0 {
@@ -432,6 +472,7 @@ func queueJobsFromSnapshot(snapshot printer.QueueSnapshot) []QueueJob {
 			Size:        job.Size,
 			SubmittedAt: job.SubmittedAt,
 			State:       job.State,
+			AgeSec:      job.AgeSec,
 		})
 	}
 	return jobs
@@ -679,4 +720,15 @@ func classifyPrinterError(err error) string {
 	default:
 		return "PRINTER_ERROR"
 	}
+}
+
+// printerTransport names how labels reach the printer, for /health.
+func printerTransport(status printer.PrinterStatus) string {
+	if status.SelectedName == "" {
+		return ""
+	}
+	if status.Raw {
+		return "raw"
+	}
+	return "driver"
 }

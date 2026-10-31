@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/deervery/raku-sika-hub/internal/logging"
+	"github.com/deervery/raku-sika-hub/internal/printer/qlbackend"
 )
 
 type PrinterStatus struct {
@@ -29,6 +31,9 @@ type PrinterStatus struct {
 	CUPSState    string
 	BackendReady bool
 	BackendError string
+	// Raw is true when the selected queue is a CUPS raw queue. Labels are then
+	// encoded by the hub (qlraster) instead of going through a driver.
+	Raw bool
 }
 
 type PrintResult struct {
@@ -37,6 +42,9 @@ type PrintResult struct {
 	Message      string
 	PrinterState string
 	JobState     string
+	// Diagnosis, when set, is what the printer itself reported and takes
+	// precedence over a diagnosis derived from the CUPS queue.
+	Diagnosis *Diagnosis
 }
 
 type QueueSnapshot struct {
@@ -47,6 +55,10 @@ type QueueSnapshot struct {
 	BackendError  string
 	BackendDevice string
 	Jobs          []QueueJobStatus
+	// OldestJobAgeSec is how long the longest-waiting job has been in the
+	// queue, measured from when this hub first saw it. It drives the
+	// backlog/stalled distinction in DiagnoseQueue.
+	OldestJobAgeSec int
 }
 
 type QueueJobStatus struct {
@@ -55,6 +67,10 @@ type QueueJobStatus struct {
 	Size        string
 	SubmittedAt string
 	State       string
+	// AgeSec is seconds since this hub first observed the job. We track it
+	// ourselves instead of parsing SubmittedAt, whose format follows the
+	// CUPS locale and differs between the Pi and dev machines.
+	AgeSec int
 }
 
 // Brother manages printing to a Brother label printer via CUPS lp command.
@@ -68,6 +84,16 @@ type Brother struct {
 	name     string
 	renderer *LabelRenderer
 	logger   *logging.Logger
+
+	// noRollCheck: raw jobs do not ask the printer to compare its roll with
+	// the job (see qlraster.Options.NoMediaCheck).
+	noRollCheck bool
+
+	// jobSeenMu guards jobSeen, which maps a CUPS job id to the moment this
+	// hub first saw it queued. Entries are dropped once the job leaves the
+	// queue, so the map stays the size of the backlog.
+	jobSeenMu sync.Mutex
+	jobSeen   map[string]time.Time
 }
 
 var labelMediaCandidates = []string{
@@ -102,6 +128,16 @@ func NewBrother(name string, fontPath string, assetsDir string, logger *logging.
 	return b
 }
 
+// SetRollCheck sets whether raw jobs let the printer refuse a roll that does
+// not match the job. It is on unless the station uses rolls the printer does
+// not recognise.
+func (b *Brother) SetRollCheck(on bool) {
+	b.noRollCheck = !on
+	if !on {
+		b.logger.Info("raw printing: roll check off (the printer prints on whatever roll is loaded)")
+	}
+}
+
 // IsAvailable checks whether the printer is registered in CUPS.
 func (b *Brother) IsAvailable() bool {
 	status, err := b.Status()
@@ -113,6 +149,74 @@ func (b *Brother) IsAvailable() bool {
 
 // Status returns the current CUPS printer resolution.
 func (b *Brother) Status() (PrinterStatus, error) {
+	configuredNames := parseConfiguredPrinterNames(b.name)
+	var status PrinterStatus
+	if name := firstExistingPrinter(configuredNames); name != "" {
+		// A configured queue that exists always wins (resolvePrinter), so the
+		// other destinations and the CUPS default are not needed. Listing them
+		// is slow: every `lpstat -p`, `lpstat -d` or `lpoptions -p` makes libcups
+		// browse the network for printers (DNS-SD) for about a second, while a
+		// query for one named queue takes ~10 ms. On siknue (2026-10-12, an
+		// EPSON on the LAN) /health took 3 s this way, longer than the browser
+		// launcher's 2 s health check, so after a reboot the browser waited out
+		// all 60 retries (about 3 minutes); every print paid the same 3 s.
+		status = PrinterStatus{
+			ConfiguredName: b.name,
+			Available:      []string{name},
+			SelectedName:   name,
+			Source:         "configured",
+		}
+	} else {
+		var err error
+		status, err = b.statusFromAllDestinations(configuredNames)
+		if err != nil {
+			return PrinterStatus{}, err
+		}
+	}
+	status.Model = PrinterModel(status.SelectedName)
+
+	if status.SelectedName != "" {
+		status.DeviceURI = readPrinterDeviceURI(status.SelectedName)
+		// raku-sika-ops creates every rakuql queue raw (switch-printer-backend.sh
+		// --to raw), and raw jobs are sent with -o raw anyway; skip lpoptions,
+		// which lists every destination too.
+		status.Raw = usesQLBackend(status.DeviceURI) || readQueueIsRaw(status.SelectedName)
+		status.CUPSState, status.BackendError = readPrinterState(status.SelectedName)
+		status.BackendReady = status.BackendError == ""
+		if status.BackendReady {
+			status.BackendReady, status.BackendError = checkPrinterBackend(status.DeviceURI)
+		}
+		// A rakuql queue names its printer by serial; if that printer is not
+		// on USB, no job can reach it. Without the backend wrapper CUPS
+		// cannot run the job at all and stops the queue.
+		if status.BackendReady && usesQLBackend(status.DeviceURI) {
+			if _, err := os.Stat(qlBackendWrapper); err != nil {
+				status.BackendReady, status.BackendError = false,
+					"CUPS に rakuql バックエンドがありません。raku-sika-ops の switch-printer-backend.sh --to raw をやり直してください"
+			} else if _, err := qlbackend.ResolveDevice(status.DeviceURI, "/"); err != nil {
+				status.BackendReady, status.BackendError = false, err.Error()
+			}
+		}
+	}
+
+	return status, nil
+}
+
+// firstExistingPrinter returns the first of the configured queue names that
+// CUPS holds, asking about each by name.
+func firstExistingPrinter(names []string) string {
+	for _, name := range names {
+		out, err := exec.Command("lpstat", "-p", name).CombinedOutput()
+		if err == nil && contains(parseAvailablePrinters(string(out)), name) {
+			return name
+		}
+	}
+	return ""
+}
+
+// statusFromAllDestinations resolves the printer from every CUPS destination
+// and the CUPS default, for when no configured queue exists.
+func (b *Brother) statusFromAllDestinations(configuredNames []string) (PrinterStatus, error) {
 	availableOut, err := exec.Command("lpstat", "-p").CombinedOutput()
 	// `lpstat -p` exits 1 with "No destinations added." when CUPS holds no queue
 	// at all. That is a printer *configuration* state, not a failure to query
@@ -137,20 +241,7 @@ func (b *Brother) Status() (PrinterStatus, error) {
 		DefaultName:    defaultName,
 		Available:      available,
 	}
-
-	configuredNames := parseConfiguredPrinterNames(b.name)
 	status.SelectedName, status.Source = resolvePrinter(configuredNames, available, defaultName)
-	status.Model = PrinterModel(status.SelectedName)
-
-	if status.SelectedName != "" {
-		status.DeviceURI = readPrinterDeviceURI(status.SelectedName)
-		status.CUPSState, status.BackendError = readPrinterState(status.SelectedName)
-		status.BackendReady = status.BackendError == ""
-		if status.BackendReady {
-			status.BackendReady, status.BackendError = checkPrinterBackend(status.DeviceURI)
-		}
-	}
-
 	return status, nil
 }
 
@@ -195,7 +286,171 @@ func (b *Brother) QueueSnapshot() (QueueSnapshot, error) {
 			snapshot.Jobs[i].State = "stalled"
 		}
 	}
+	b.annotateJobAges(&snapshot)
 	return snapshot, nil
+}
+
+// annotateJobAges fills AgeSec / OldestJobAgeSec from the first-seen ledger and
+// forgets jobs that have left the queue.
+func (b *Brother) annotateJobAges(snapshot *QueueSnapshot) {
+	now := time.Now()
+
+	b.jobSeenMu.Lock()
+	defer b.jobSeenMu.Unlock()
+	if b.jobSeen == nil {
+		b.jobSeen = make(map[string]time.Time)
+	}
+
+	live := make(map[string]struct{}, len(snapshot.Jobs))
+	oldest := 0
+	for i, job := range snapshot.Jobs {
+		live[job.ID] = struct{}{}
+		seen, ok := b.jobSeen[job.ID]
+		if !ok {
+			seen = now
+			b.jobSeen[job.ID] = seen
+		}
+		age := int(now.Sub(seen).Seconds())
+		snapshot.Jobs[i].AgeSec = age
+		if age > oldest {
+			oldest = age
+		}
+	}
+	for id := range b.jobSeen {
+		if _, ok := live[id]; !ok {
+			delete(b.jobSeen, id)
+		}
+	}
+	snapshot.OldestJobAgeSec = oldest
+}
+
+// CancelJob removes a single job from the queue.
+//
+// jobID must be a job id currently in this printer's queue ("QUEUE-1136").
+// We look it up in the live snapshot rather than trusting the caller, so a
+// crafted id cannot be handed to the cancel binary.
+func (b *Brother) CancelJob(jobID string) error {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return fmt.Errorf("PRINTER_ERROR: ジョブ ID が指定されていません")
+	}
+
+	snapshot, err := b.QueueSnapshot()
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: 印刷キューの確認に失敗しました: %s", err)
+	}
+	if _, ok := snapshot.findJob(jobID); !ok {
+		return fmt.Errorf("PRINTER_NOT_FOUND: 印刷ジョブ %s はキューにありません", jobID)
+	}
+
+	// -x also discards the spooled document, which is the point: a job we
+	// cancel here is one CUPS could not print.
+	out, err := exec.Command("cancel", "-x", jobID).CombinedOutput()
+	b.logger.Info("cancel output (job=%s): %s", jobID, strings.TrimSpace(string(out)))
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: 印刷ジョブの削除に失敗しました: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// jobIDPattern is the shape CUPS gives job ids ("Brother_QL_820NWB_USB-763").
+// RestartJob hands the id to lp, so it is checked against this before anything
+// else, on top of the membership check against the printer's own job list.
+var jobIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+func isSafeJobID(jobID string) bool {
+	return jobID != "" && len(jobID) <= 128 && jobIDPattern.MatchString(jobID)
+}
+
+// RecentJobs lists jobs CUPS has already finished for the selected printer,
+// newest first, at most limit entries.
+//
+// The tablet needs these to offer 再送信: a label that printed badly (wrong roll,
+// half-cut, blank) is finished as far as CUPS is concerned, so it never shows up
+// in the pending queue the operator can act on.
+func (b *Brother) RecentJobs(limit int) ([]QueueJobStatus, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	status, err := b.Status()
+	if err != nil {
+		return nil, err
+	}
+	if status.SelectedName == "" {
+		return nil, nil
+	}
+	out, err := exec.Command("lpstat", "-W", "completed", "-o", status.SelectedName).CombinedOutput()
+	if err != nil && strings.TrimSpace(string(out)) != "" {
+		return nil, fmt.Errorf("lpstat completed failed: %s", strings.TrimSpace(string(out)))
+	}
+	return newestCompletedJobs(string(out), limit), nil
+}
+
+// newestCompletedJobs parses `lpstat -W completed -o` output, which is oldest
+// first, and returns at most limit jobs newest first.
+func newestCompletedJobs(output string, limit int) []QueueJobStatus {
+	jobs := parseQueueJobs(output)
+	for i := range jobs {
+		jobs[i].State = "completed"
+	}
+	// Reverse: CUPS prints oldest first, the operator wants the last label.
+	for i, j := 0, len(jobs)-1; i < j; i, j = i+1, j-1 {
+		jobs[i], jobs[j] = jobs[j], jobs[i]
+	}
+	if limit > 0 && len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs
+}
+
+// RestartJob re-submits a job CUPS still holds the document for.
+//
+// This is 再送信 on the tablet. CUPS keeps the spool file for a while after a
+// job finishes (PreserveJobFiles), so a label that came out wrong can be sent
+// again without the operator re-entering anything. Once CUPS has dropped the
+// file, lp refuses and we pass its message through rather than pretending.
+func (b *Brother) RestartJob(jobID string) error {
+	jobID = strings.TrimSpace(jobID)
+	if !isSafeJobID(jobID) {
+		return fmt.Errorf("PRINTER_ERROR: ジョブ ID の形式が不正です")
+	}
+
+	known, err := b.jobBelongsToPrinter(jobID)
+	if err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf("PRINTER_NOT_FOUND: 印刷ジョブ %s が見つかりません", jobID)
+	}
+
+	out, err := exec.Command("lp", "-i", jobID, "-H", "restart").CombinedOutput()
+	b.logger.Info("restart output (job=%s): %s", jobID, strings.TrimSpace(string(out)))
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: 印刷ジョブの再送信に失敗しました: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// jobBelongsToPrinter reports whether jobID is one of the selected printer's
+// own jobs, pending or completed. Restarting is only ever offered for those.
+func (b *Brother) jobBelongsToPrinter(jobID string) (bool, error) {
+	snapshot, err := b.QueueSnapshot()
+	if err != nil {
+		return false, fmt.Errorf("PRINTER_ERROR: 印刷キューの確認に失敗しました: %s", err)
+	}
+	if _, ok := snapshot.findJob(jobID); ok {
+		return true, nil
+	}
+	recent, err := b.RecentJobs(0)
+	if err != nil {
+		return false, fmt.Errorf("PRINTER_ERROR: 印刷履歴の確認に失敗しました: %s", err)
+	}
+	for _, job := range recent {
+		if job.ID == jobID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // LogStatus logs the configured and discovered printers.
@@ -242,6 +497,14 @@ func (b *Brother) TestPrint() error {
 		return err
 	}
 
+	if status.Raw {
+		if err := b.testPrintRaw(status); err != nil {
+			return err
+		}
+		b.logger.Info("test print sent as raw label (printer=%q)", status.SelectedName)
+		return nil
+	}
+
 	cmd := exec.Command("bash", "-c",
 		fmt.Sprintf(`echo "RakuSika Hub Test Print\n$(date)" | lp -d "%s" -`, status.SelectedName))
 	out, err := cmd.CombinedOutput()
@@ -283,17 +546,27 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 			"日本語フォントをインストールしてください: sudo apt-get install fonts-noto-cjk")
 	}
 
-	// Render the label image.
+	// Render the label image. An ipp-usb queue prints it shrunk to fit.
+	data.ShrunkToFit = !status.Raw
 	result, err := b.renderer.Render(data)
 	if err != nil {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
 	}
 	defer os.Remove(result.Path)
 
+	if err := verifyRenderedLabel(result.Path); err != nil {
+		b.logger.Warn("refusing to submit label: %v", err)
+		return PrintResult{}, err
+	}
+
 	// Print via CUPS lp command with dynamic media size for auto-cut.
 	copies := data.Copies
 	if copies < 1 {
 		copies = 1
+	}
+
+	if status.Raw {
+		return b.printRaw(status, result.Path, copies)
 	}
 
 	// Keep width fixed to 62mm and adjust only height per rendered label.
@@ -318,8 +591,8 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 		"-o", "media=" + media,
 		"-o", "PageSize=" + media,
 		"-o", "fit-to-page",
-		"-o", "CutMedia=EndOfPage",
 	}
+	args = append(args, b.cutArgs(status.SelectedName)...)
 	b.logger.Info("lp args: %s", strings.Join(args, " "))
 	args = append(args, result.Path)
 	out, err := exec.Command("lp", args...).CombinedOutput()
@@ -552,6 +825,32 @@ func (b *Brother) verifySubmittedJob(printerName, jobID string, timeout time.Dur
 	}, nil
 }
 
+// minRenderedLabelBytes is the floor a rendered label PNG must clear before we
+// hand it to lp. Real labels are ~125-130 KB; anything this small is a failed
+// render, not a printable label.
+const minRenderedLabelBytes = 1024
+
+// verifyRenderedLabel rejects an empty or truncated render before it reaches
+// CUPS.
+//
+// On 2026-09-22 a zero-byte spool file (job 1136) sat at the head of the
+// シクヌ queue and CUPS retried "The print file could not be opened" forever,
+// blocking the five healthy jobs behind it. CUPS accepts such a job happily,
+// so the check has to happen here, before submission.
+func verifyRenderedLabel(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("PRINTER_ERROR: ラベル画像を確認できませんでした: %s", err)
+	}
+	if info.Size() < minRenderedLabelBytes {
+		return fmt.Errorf(
+			"PRINTER_ERROR: ラベル画像の生成に失敗しました（%d バイト）。印刷は中止しました。もう一度印刷してください",
+			info.Size(),
+		)
+	}
+	return nil
+}
+
 func readQueueSnapshot(printerName string) (QueueSnapshot, error) {
 	out, err := exec.Command("lpstat", "-W", "not-completed", "-o", printerName).CombinedOutput()
 	if err != nil && strings.TrimSpace(string(out)) != "" {
@@ -655,6 +954,72 @@ func printerConfigError(status PrinterStatus) error {
 		status.DefaultName,
 		formatPrinters(status.Available),
 	)
+}
+
+// cutArgs returns the lp options that make the printer cut after each label,
+// chosen by asking the queue what it accepts.
+//
+// The two print paths spell this differently:
+//
+//	ipp-usb + IPP Everywhere PPD : CutMedia=EndOfPage
+//	printer-driver-ptouch PPD    : AutoCut=True + CutLabel=1
+//
+// The ptouch PPD has no CutMedia option at all, so sending it there is a no-op
+// and the roll never gets cut. Stations migrate one at a time, so a single hub
+// binary has to work with both; we ask the queue rather than guessing from the
+// device URI.
+//
+// If the queue cannot be queried we keep the historical behaviour
+// (CutMedia=EndOfPage) rather than silently dropping the cut.
+func (b *Brother) cutArgs(printerName string) []string {
+	out, err := exec.Command("lpoptions", "-p", printerName, "-l").CombinedOutput()
+	if err != nil {
+		b.logger.Warn("lpoptions -l failed for %q, assuming CutMedia: %s", printerName, strings.TrimSpace(string(out)))
+		return []string{"-o", "CutMedia=EndOfPage"}
+	}
+	args := cutArgsFor(parseOptionNames(string(out)))
+	b.logger.Info("cut options resolved: printer=%q args=%s", printerName, strings.Join(args, " "))
+	return args
+}
+
+// parseOptionNames returns the option keywords a queue accepts. Each line of
+// `lpoptions -p <queue> -l` looks like
+//
+//	PageSize/Page Size: Custom.WIDTHxHEIGHT 29mm *62mm 62x100mm
+//
+// so the keyword is everything before the first '/'.
+func parseOptionNames(output string) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		slash := strings.Index(line, "/")
+		colon := strings.Index(line, ":")
+		if slash <= 0 || colon < slash {
+			continue
+		}
+		names[line[:slash]] = struct{}{}
+	}
+	return names
+}
+
+func cutArgsFor(names map[string]struct{}) []string {
+	if names == nil {
+		return []string{"-o", "CutMedia=EndOfPage"}
+	}
+	if _, ok := names["CutMedia"]; ok {
+		return []string{"-o", "CutMedia=EndOfPage"}
+	}
+	if _, ok := names["AutoCut"]; ok {
+		args := []string{"-o", "AutoCut=True"}
+		if _, ok := names["CutLabel"]; ok {
+			// "Cut every N labels"; 1 cuts each label, matching EndOfPage.
+			args = append(args, "-o", "CutLabel=1")
+		}
+		return args
+	}
+	// Neither spelling is offered. Sending an unknown option makes CUPS reject
+	// the job, so send nothing and let the roll run on.
+	return nil
 }
 
 func (b *Brother) resolveLabelMedia(printerName string) (string, []string, error) {

@@ -57,6 +57,7 @@ func New(cfg config.Config, version, commit, buildDate string) (*App, error) {
 	})
 
 	prn := printer.NewBrother(cfg.PrinterName, cfg.FontPath, cfg.AssetsDir, logger)
+	prn.SetRollCheck(cfg.PrinterRollCheck)
 
 	// Scanner (optional: only created if any scanner config is set)
 	var sc *scanner.Client

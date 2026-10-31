@@ -1,0 +1,39 @@
+# PR ごとに go vet / go test / ARM64 ビルドを走らせる。
+#
+# 2026-09-23 まで hub の CI は release.yml（タグ push でビルドして
+# Release を作る）だけで、14本ある Go テストは PR では一度も走って
+# いなかった。ビルド破綻をタグ打ちの前に捕まえる意味もある。
+#
+# 配布は行わない。Pi への反映は raku-sika-ops の push 型手動運用のまま
+# （組織がデプロイキーを禁止しており、CI に tailnet の鍵を置かない）。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go vet / test / arm64 build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      # release.yml と同じスクリプトで、実際に配る成果物が作れることを確認する。
+      - name: Build for Raspberry Pi (ARM64)
+        run: VERSION=ci-${{ github.sha }} scripts/build-release-arm64.sh /tmp/raku-sika-hub-ci

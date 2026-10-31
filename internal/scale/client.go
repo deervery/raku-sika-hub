@@ -332,12 +332,32 @@ func (c *Client) watchdogCheck() {
 	// Send a real keepalive to verify the serial port is still responsive.
 	// This detects stale USB-serial connections before the user triggers a weigh.
 	_, err := c.sendCommandLocked(CmdWeigh)
-	if err != nil {
-		c.logger.Warn("watchdog: keepalive failed, marking disconnected: %v", err)
+	if err == nil {
+		return
+	}
+
+	// One immediate retry before declaring the scale gone.
+	//
+	// On the stations, 99.8% of these failures are "read timeout (3s) after
+	// 0 bytes" — the scale simply did not answer this one poll — and the
+	// reconnect that follows succeeds in the same second (函館 2026-09-16..23:
+	// 5027 of 5032 failures, every one recovered immediately). Each of those
+	// spurious disconnects broadcasts connected=false, and the tablet polls
+	// /health only every 30s, so a poll landing in that window leaves the
+	// operator looking at 「はかり未接続」 — 風袋/ゼロ ボタンが消え、自動計量も
+	// 止まる — for up to half a minute with nothing actually wrong.
+	//
+	// A pulled cable is not slowed down by this: the port returns an error
+	// immediately, so the retry costs nothing in the case worth detecting.
+	c.logger.Info("watchdog: keepalive failed (%v); retrying once", err)
+	if _, retryErr := c.sendCommandLocked(CmdWeigh); retryErr != nil {
+		c.logger.Warn("watchdog: keepalive failed twice, marking disconnected: %v", retryErr)
 		c.closePortLocked()
 		c.setStatusLocked(false, "")
 		// reconnectLoop will call tryConnect() within reconnectDelay (3s)
+		return
 	}
+	c.logger.Info("watchdog: keepalive recovered on retry; staying connected")
 }
 
 func (c *Client) tryConnect() {

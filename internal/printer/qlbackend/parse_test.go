@@ -1,0 +1,330 @@
+package qlbackend
+
+import (
+	"bytes"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+)
+
+// The reply the QL-820NWB on office sent on 2026-09-23: 62 mm continuous
+// tape, no error.
+func TestParseStatus_OfficeReply(t *testing.T) {
+	b, _ := hex.DecodeString("802042344130040000003e0a0000150000000000000000000001000000000000")
+	st, ok := ParseStatus(b)
+	if !ok {
+		t.Fatal("not recognised as a status frame")
+	}
+	if st.MediaWidth != 62 || st.MediaType != 0x0A || st.Type != TypeReply || len(st.Problems()) != 0 {
+		t.Fatalf("status = %+v", st)
+	}
+	if _, bad := st.MediaMismatch(Media{Known: true, Type: 0x0A, WidthMM: 62}); bad {
+		t.Fatal("62 mm continuous must match a 62 mm continuous job")
+	}
+}
+
+func TestParseStatus_RejectsNonFrames(t *testing.T) {
+	for _, b := range [][]byte{nil, make([]byte, 31), make([]byte, 32)} {
+		if _, ok := ParseStatus(b); ok {
+			t.Fatalf("%x accepted", b)
+		}
+	}
+}
+
+func TestParseJob_Goldens(t *testing.T) {
+	cases := []struct {
+		file  string
+		pages int
+	}{
+		{"traceable_732.bin", 1},
+		{"edges_696_x2.bin", 2},
+		{"edges_696_nocut.bin", 1},
+		{"blank_696.bin", 1},
+	}
+	for _, tc := range cases {
+		job, err := ParseJob(golden(t, tc.file))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.file, err)
+		}
+		if job.Pages != tc.pages || job.Media != (Media{Known: true, Type: 0x0A, WidthMM: 62}) {
+			t.Fatalf("%s: job = %+v", tc.file, job)
+		}
+	}
+}
+
+// Raster rows can hold any byte. A row full of 0x1A must not count as a page.
+func TestParseJob_RasterBytesAreNotCommands(t *testing.T) {
+	data := golden(t, "traceable_732.bin")
+	i := bytes.IndexByte(data, 'g')
+	row := data[i+3 : i+3+90]
+	for j := range row {
+		row[j] = 0x1A
+	}
+	job, err := ParseJob(data)
+	if err != nil || job.Pages != 1 {
+		t.Fatalf("job = %+v, err = %v", job, err)
+	}
+}
+
+func TestParseJob_RejectsWhatItCannotFollow(t *testing.T) {
+	data := golden(t, "traceable_732.bin")
+	cases := map[string][]byte{
+		"truncated": data[:len(data)-40],
+		"png":       []byte("\x89PNG\r\n\x1a\n"),
+		"text":      []byte("テスト印刷\n"),
+		"no print":  data[:len(data)-1],
+		"empty":     nil,
+	}
+	for name, b := range cases {
+		if _, err := ParseJob(b); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestReadFrames_ResyncsOnJunkAndSplitReads(t *testing.T) {
+	p := newFakePrinter()
+	f1 := p.frame(TypeReply, 0, 0, 0)
+	f2 := p.frame(TypePrintingCompleted, 1, 0, 0)
+	stream := append(append([]byte{0x00, 0x80, 0x01}, f1...), f2...)
+	r := &chunkReader{data: stream, sizes: []int{2, 5, 30, 1, 100}}
+	out := make(chan Status, 4)
+	readFrames(r, out)
+	var got []byte
+	for st := range out {
+		got = append(got, st.Type)
+	}
+	if !bytes.Equal(got, []byte{TypeReply, TypePrintingCompleted}) {
+		t.Fatalf("frames = %x", got)
+	}
+}
+
+type chunkReader struct {
+	data  []byte
+	sizes []int
+}
+
+func (r *chunkReader) Read(b []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, os.ErrClosed
+	}
+	n := len(r.data)
+	if len(r.sizes) > 0 {
+		n = min(r.sizes[0], n)
+		r.sizes = r.sizes[1:]
+	}
+	n = copy(b, r.data[:n])
+	r.data = r.data[n:]
+	return n, nil
+}
+
+func TestResolveDevice_FindsThePrinterBySerial(t *testing.T) {
+	root := t.TempDir()
+	dev := filepath.Join(root, "sys/devices/platform/usb3/3-1")
+	iface := filepath.Join(dev, "3-1:1.0")
+	if err := os.MkdirAll(iface, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dev, "serial"), []byte("000M5G736596\n"), 0o644)
+	node := filepath.Join(root, "sys/class/usbmisc/lp1")
+	os.MkdirAll(node, 0o755)
+	if err := os.Symlink(iface, filepath.Join(node, "device")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolveDevice(DeviceURI("000M5G736596"), root)
+	if err != nil || got != filepath.Join(root, "dev/usb/lp1") {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if _, err := ResolveDevice(DeviceURI("OTHER"), root); err == nil || !strings.Contains(err.Error(), "見つかりません") {
+		t.Fatalf("unknown serial: %v", err)
+	}
+	if got, _ := ResolveDevice("rakuql:///dev/usb/lp0", root); got != "/dev/usb/lp0" {
+		t.Fatalf("path form: %q", got)
+	}
+	if _, err := ResolveDevice("usb://Brother/QL-820NWB", root); err == nil {
+		t.Fatal("another scheme must be refused")
+	}
+}
+
+func TestResults_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	want := Result{JobID: "115", Outcome: OutcomeFailed, Message: "カバーが開いています。", Reasons: []string{"cover-open-error"}, Pages: 1}
+	if err := WriteResult(dir, want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := ReadResult(dir, "115")
+	if err != nil || !ok || got.Outcome != want.Outcome || got.Message != want.Message {
+		t.Fatalf("got %+v ok=%v err=%v", got, ok, err)
+	}
+	if _, ok, _ := ReadResult(dir, "116"); ok {
+		t.Fatal("a job without a result must read as missing")
+	}
+	for _, bad := range []string{"", "../x", "Brother_QL-1", "0"} {
+		if err := WriteResult(dir, Result{JobID: bad}); err == nil {
+			t.Errorf("job id %q accepted", bad)
+		}
+	}
+}
+
+// CUPS runs the backend with umask 077; hub, which is not root, must still be
+// able to read what it wrote (siknue, 2026-10-05).
+func TestWriteResult_DirectoriesAreReadableUnderCUPSUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(parent, "raku-sika", "print-results")
+	if err := WriteResult(dir, Result{JobID: "1482", Outcome: OutcomeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Join(parent, "raku-sika"), dir} {
+		info, err := os.Stat(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o755 {
+			t.Errorf("%s mode = %o, want 755", d, got)
+		}
+	}
+	// An existing parent that this call did not create is left as it was.
+	if info, _ := os.Stat(parent); info.Mode().Perm() != 0o700 {
+		t.Errorf("pre-existing parent mode changed to %o", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(filepath.Join(dir, "1482.json")); info.Mode().Perm() != 0o644 {
+		t.Errorf("result file mode = %o, want 644", info.Mode().Perm())
+	}
+}
+
+func TestRun_WritesAFailedResultForDataItCannotPrint(t *testing.T) {
+	dir := t.TempDir()
+	var stderr bytes.Buffer
+	code := run([]string{"42", "u", "t", "1", ""}, strings.NewReader("plain text"), &stderr, DeviceURI("X"), t.TempDir(), dir)
+	if code != exitFailed {
+		t.Fatalf("exit = %d", code)
+	}
+	res, ok, _ := ReadResult(dir, "42")
+	if !ok || res.Outcome != OutcomeFailed || !strings.Contains(stderr.String(), "ERROR: ") {
+		t.Fatalf("result = %+v ok=%v\n%s", res, ok, stderr.String())
+	}
+}
+
+func TestRun_MissingPrinterFailsTheJob(t *testing.T) {
+	openWait = 0
+	defer func() { openWait = defaultOpenWait }()
+	dir := t.TempDir()
+	var stderr bytes.Buffer
+	code := run([]string{"43", "u", "t", "1", ""}, bytes.NewReader(golden(t, "traceable_732.bin")), &stderr, DeviceURI("NOPE"), t.TempDir(), dir)
+	res, _, _ := ReadResult(dir, "43")
+	if code != exitFailed || !strings.Contains(res.Message, "USB に見つかりません") {
+		t.Fatalf("exit = %d result = %+v", code, res)
+	}
+}
+
+func TestRun_ListsNoDevices(t *testing.T) {
+	if code := run(nil, nil, &bytes.Buffer{}, "", "", ""); code != exitOK {
+		t.Fatalf("exit = %d", code)
+	}
+}
+
+// usblp returns 0 bytes (io.EOF from *os.File) when the printer answers with a
+// zero-length packet. That must not end reading: on office it made the backend
+// report a lost connection while the labels were printing.
+func TestReadFrames_ZeroLengthReadsAreNotTheEnd(t *testing.T) {
+	p := newFakePrinter()
+	r := &eofThenData{eofs: 3, data: p.frame(TypePrintingCompleted, 1, 0, 0)}
+	out := make(chan Status, 2)
+	readFrames(r, out)
+	st, ok := <-out
+	if !ok || st.Type != TypePrintingCompleted {
+		t.Fatalf("frame after zero-length reads was lost: %+v %v", st, ok)
+	}
+}
+
+type eofThenData struct {
+	eofs int
+	data []byte
+}
+
+func (r *eofThenData) Read(b []byte) (int, error) {
+	if r.eofs > 0 {
+		r.eofs--
+		return 0, io.EOF
+	}
+	if len(r.data) == 0 {
+		return 0, os.ErrClosed
+	}
+	n := copy(b, r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+// Error information 2, bit by bit, as the Brother raster reference (and
+// brother_ql) define it. The first version had every bit one place off and
+// reported an open cover as a full buffer.
+func TestProblems_Err2Bits(t *testing.T) {
+	want := map[byte]string{
+		0x01: "印刷データが一致しません",
+		0x10: "カバーが開いています",
+		0x40: "用紙を送れません",
+		0x80: "プリンタ本体でエラー",
+	}
+	for bit, msg := range want {
+		ps := Status{Err2: bit}.Problems()
+		if len(ps) != 1 || !strings.Contains(ps[0].Message, msg) {
+			t.Errorf("err2 0x%02x: %+v, want %q", bit, ps, msg)
+		}
+	}
+	if ps := (Status{Err2: 0x20}).Problems(); len(ps) != 0 {
+		t.Errorf("err2 0x20 (cancel key, unused) should not stop a job: %+v", ps)
+	}
+}
+
+// The conversion changes nothing but the colour mode and the raster lines,
+// and the result is still a job the backend can follow.
+func TestToTwoColor(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "qlraster", "testdata", "traceable_732.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := ToTwoColor(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := ParseJob(two)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := ParseJob(data)
+	if !job.TwoColor || orig.TwoColor || job.Pages != orig.Pages || job.Media != orig.Media {
+		t.Fatalf("converted %+v, original %+v", job, orig)
+	}
+	i := bytes.Index(two, []byte{0x1B, 'i', 'K'})
+	if i < 0 || two[i+3] != 0x09 {
+		t.Fatalf("ESC i K = %x", two[i:i+4])
+	}
+	if _, err := ToTwoColor(append([]byte{'M', 0x02}, data...)); err == nil {
+		t.Fatal("compressed jobs must not be converted")
+	}
+}
+
+// The journal gets one entry per line, each tagged with the job, so that a
+// failure can be read back after CUPS has dropped its DEBUG lines.
+func TestJournalLines_OneEntryPerLineTaggedWithTheJob(t *testing.T) {
+	var got []string
+	j := journalLines{emit: func(s string) error { got = append(got, s); return nil }, prefix: "job 1525: "}
+	fmt.Fprintf(j, "INFO: a\nDEBUG: b (+1ms)\n")
+	fmt.Fprintf(j, "ERROR: c\n")
+	want := []string{"job 1525: INFO: a", "job 1525: DEBUG: b (+1ms)", "job 1525: ERROR: c"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

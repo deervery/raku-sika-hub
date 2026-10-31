@@ -56,3 +56,17 @@ func TestLoad_PORTIsListenAddrOnlyAndScalePortUsesSCALE_PORT(t *testing.T) {
 		t.Fatalf("expected scale Port from SCALE_PORT, got %q", cfg.Port)
 	}
 }
+
+func TestLoad_PrinterRollCheck(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for env, want := range map[string]bool{"": true, "on": true, "off": false, "OFF": false, "false": false, "0": false, "no": false, "true": true} {
+		t.Setenv("PRINTER_ROLL_CHECK", env)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.PrinterRollCheck != want {
+			t.Errorf("PRINTER_ROLL_CHECK=%q: PrinterRollCheck = %t, want %t", env, cfg.PrinterRollCheck, want)
+		}
+	}
+}

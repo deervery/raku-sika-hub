@@ -9,6 +9,7 @@ import (
 
 	"github.com/deervery/raku-sika-hub/internal/app"
 	"github.com/deervery/raku-sika-hub/internal/config"
+	"github.com/deervery/raku-sika-hub/internal/printer/qlbackend"
 )
 
 var (
@@ -18,6 +19,12 @@ var (
 )
 
 func main() {
+	// CUPS runs the same binary as the backend for rakuql:// queues, through
+	// the wrapper raku-sika-ops installs in /usr/lib/cups/backend.
+	if len(os.Args) > 1 && os.Args[1] == "cups-backend" {
+		os.Exit(qlbackend.Main(os.Args[2:]))
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load config: %v\n", err)

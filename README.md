@@ -251,6 +251,7 @@ curl -s http://localhost:19800/health | jq .printer
 | `parity` | `"even"` | `PARITY` | パリティ |
 | `stopBits` | `1` | `STOP_BITS` | ストップビット |
 | `printerName` | `""` | `PRINTER_NAME` | CUPS プリンタ名（空 = 自動選択、`,` / `;` 区切りで複数候補可） |
+| `printerRollCheck` | `true` | `PRINTER_ROLL_CHECK` | raw キューで、装着ロールと印刷データの照合をプリンタにさせるか。純正品でないロールをプリンタが認識できない施設では `off`（どのロールにも印刷されるため、ロールの入れ間違いは検出されない） |
 | `fontPath` | `""` (自動検出) | `FONT_PATH` | 日本語フォントパス |
 | `scannerDeviceName` | `""` | `SCANNER_DEVICE_NAME` | バーコードリーダーのデバイス名パターン |
 | `scannerVid` | `""` | `SCANNER_VID` | バーコードリーダーの USB VID |
@@ -356,6 +357,10 @@ Git タグを push すると GitHub Actions が ARM64 バイナリをビルド�
 git tag v0.3.0
 git push origin v0.3.0
 ```
+
+PC が無いときは、GitHub（スマホのアプリでも可）の **Actions → Release → Run workflow**
+で同じことができる。main の先頭にタグを打ってからビルドする。version を空にすると
+最新の正式版の patch を 1 つ上げる（v0.3.31 → v0.3.32）。
 
 Pi 側での更新は [raku-sika-ops](https://github.com/deervery/raku-sika-ops) を使用:
 

@@ -3,6 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/deervery/raku-sika-hub/internal/printer"
 )
 
 // SuccessResponse is a generic success JSON response.
@@ -12,6 +14,10 @@ type SuccessResponse struct {
 	JobID      string `json:"jobId,omitempty"`
 	Message    string `json:"message,omitempty"`
 	Copies     int    `json:"copies,omitempty"`
+	// Diagnosis is attached when a print did not complete, so the tablet can
+	// tell a wedged USB link from a backed-up queue instead of showing the
+	// same "送信しました" for both.
+	Diagnosis *printer.Diagnosis `json:"diagnosis,omitempty"`
 }
 
 // ErrorBody is the standard error response format.
@@ -64,6 +70,9 @@ type PrinterHealth struct {
 	DeviceURI    string `json:"deviceUri,omitempty"`
 	BackendReady bool   `json:"backendReady"`
 	BackendError string `json:"backendError,omitempty"`
+	// Transport is "raw" when the hub encodes the raster itself for a CUPS
+	// raw queue, "driver" when a CUPS driver renders the label.
+	Transport string `json:"transport,omitempty"`
 }
 
 // ScannerHealth is the scanner section of the health response.
@@ -89,7 +98,13 @@ type VersionResponse struct {
 	Version   string `json:"version"`
 	Commit    string `json:"commit"`
 	BuildDate string `json:"buildDate"`
+	// Features lets raku-sika-ops check what this binary can do without
+	// running it. "rakuql": it serves as the CUPS backend for rakuql:// queues.
+	Features []string `json:"features"`
 }
+
+// hubFeatures is what VersionResponse.Features reports.
+var hubFeatures = []string{"rakuql"}
 
 // ScanResponse is returned by GET /scanner/scan.
 type ScanResponse struct {
@@ -121,6 +136,12 @@ type QueueResponse struct {
 	Clearable    bool       `json:"clearable"`
 	Message      string     `json:"message,omitempty"`
 	Jobs         []QueueJob `json:"jobs"`
+	// RecentJobs are the printer's most recent finished jobs, newest first.
+	// A label that printed wrong is already "completed" for CUPS, so it never
+	// appears in Jobs — the tablet needs these to offer 再送信.
+	RecentJobs []QueueJob `json:"recentJobs,omitempty"`
+	// Diagnosis classifies the queue state for the tablet and the admin GUI.
+	Diagnosis *printer.Diagnosis `json:"diagnosis,omitempty"`
 }
 
 // QueueJob represents a single CUPS print job.
@@ -131,6 +152,8 @@ type QueueJob struct {
 	Size        string `json:"size"`
 	SubmittedAt string `json:"submittedAt"`
 	State       string `json:"state,omitempty"`
+	// AgeSec is how long the hub has seen this job waiting.
+	AgeSec int `json:"ageSec"`
 }
 
 func writeError(w http.ResponseWriter, httpStatus int, code, message string) {

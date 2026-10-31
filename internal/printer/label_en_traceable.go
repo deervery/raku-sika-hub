@@ -39,6 +39,10 @@ const (
 	enLandHeightMM = 62.0
 
 	enLandMarginPx       = 8
+	// The long edges run across the head, which prints only the centre 696 of
+	// the 732 dots (58mm of 62mm). 8 px there lost the table's outer border
+	// and the edge of the text on raw printing; use the JA labels' margin.
+	enLandEdgeMarginPx = marginXPx
 	enLandColumnGapPx    = 12
 	enLandFontBody = 8.0
 	enLandFontMin  = 5.5
@@ -347,9 +351,9 @@ func (r *LabelRenderer) renderENTraceable(data LabelData) (RenderResult, error) 
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
 
 	contentLeftX := enLandMarginPx
-	contentTopY := enLandMarginPx
+	contentTopY := enLandEdgeMarginPx
 	contentRightX := enLandWidthPx - enLandMarginPx
-	contentBottomY := enLandHeightPx - enLandMarginPx
+	contentBottomY := enLandHeightPx - enLandEdgeMarginPx
 	contentW := contentRightX - contentLeftX
 	contentH := contentBottomY - contentTopY
 

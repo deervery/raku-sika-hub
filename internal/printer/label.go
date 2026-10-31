@@ -25,26 +25,28 @@ const (
 	// - Width is fixed to 62mm (horizontal is the priority).
 	// - Height is driven by table height + image section height.
 	// - Overall layout is intentionally horizontal (wide) rather than tall.
-	labelWidthMM                = 62.0
-	labelHeightMM               = 60.0
-	labelDPI                    = 300
-	marginXPx                   = 24
-	marginYPx                   = 0
-	imageSlotGap                = 6
-	fontSizeBody                = 9.5
-	minFontSize                 = 8.0
-	lineSpacingRatio            = 1.1
-	tableLabelWidthRatio        = 0.3
-	tableLabelWidthTraceable    = 0.317
-	tableLabelWidthNonTraceable = 0.295
-	tableLabelWidthProcessed    = 0.208
-	tableLabelWidthPet          = 0.295
-	tableCellPadding            = 3
-	maxTableLines               = 2
-	logoWidthRatio              = 1.5
-	imageSectionScale           = 0.89
-	contentWidthScale           = 1.0
-	minImageSizePx              = 90
+	labelWidthMM             = 62.0
+	labelHeightMM            = 60.0
+	labelDPI                 = 300
+	marginXPx                = 24
+	marginYPx                = 0
+	imageSlotGap             = 6
+	fontSizeBody             = 9.5
+	minFontSize              = 8.0
+	lineSpacingRatio         = 1.1
+	tableLabelWidthRatio     = 0.3
+	tableLabelWidthTraceable = 0.317
+	tableLabelWidthPet       = 0.295
+	tableCellPadding         = 3
+	// Table rules are 2 dots (≈0.17mm), as the P-touch templates' 0.5pt pen.
+	// A 1-dot rule vanished when the image was shown scaled down, and
+	// thinned out when ipp-usb shrank the label to fit.
+	ruleDots          = 2
+	maxTableLines     = 2
+	logoWidthRatio    = 1.5
+	imageSectionScale = 0.89
+	contentWidthScale = 1.0
+	minImageSizePx    = 90
 )
 
 var (
@@ -97,21 +99,20 @@ func (r *LabelRenderer) Render(data LabelData) (RenderResult, error) {
 	if isENBilingualTraceable(data) {
 		return r.renderENTraceable(data)
 	}
-	rows := r.buildRows(data)
-
-	height := 0
-	for _, row := range rows {
-		height += row.height()
+	if isProcessedLandscape(data) {
+		return r.renderProcessed(data)
 	}
-
-	img := image.NewRGBA(image.Rect(0, 0, labelWidthPx, height))
-	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
-
-	y := 0
-	for _, row := range rows {
-		y = row.draw(img, r, y)
+	if isNonTraceableLandscape(data) {
+		return r.renderNonTraceable(data)
 	}
+	if isPetLabel(data) {
+		return r.renderPet(data)
+	}
+	return r.renderRows(r.buildRows(data))
+}
 
+// saveLabelPNG writes a label laid out on the 62mm width.
+func saveLabelPNG(img *image.RGBA) (RenderResult, error) {
 	tmpFile, err := os.CreateTemp("", "label-*.png")
 	if err != nil {
 		return RenderResult{}, fmt.Errorf("create temp file: %w", err)
@@ -186,12 +187,8 @@ func (r *LabelRenderer) buildRows(data LabelData) []row {
 			lines:    warningLines(data.Locale, certPath != ""),
 			qrURL:    data.QRCode,
 			certPath: certPath,
+			plaMark:  data.PlaMark,
 		})
-	} else if data.Template == "pet" {
-		// Pet: no warning text, no image section
-	} else if data.Template == "processed" {
-		// Processed: warning text only, no image section
-		rows = append(rows, textRow{value: warningText(data.Locale), fontSize: fontSize})
 	} else {
 		rows = append(rows,
 			textRow{value: warningText(data.Locale), fontSize: fontSize},
@@ -242,8 +239,7 @@ func (t textRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		text = t.label + ": " + t.value
 	}
 
-	baseline := y + int(t.fontSize*float64(labelDPI)/72)
-	drawString(img, face, text, contentLeft, baseline)
+	drawString(img, face, text, contentLeft, baselineInSlot(face, y, t.height()))
 	return y + t.height()
 }
 
@@ -297,7 +293,7 @@ func (t tableBlockRow) layout() tableLayout {
 	rows := make([]tableRowLayout, 0, len(t.entries))
 	totalHeight := 0
 	for _, entry := range t.entries {
-		labelLines, labelSize := fitLines(entry.label, t.fontSize, minFontSize, t.maxLines, labelWidth-2*tableCellPadding)
+		labelLines, labelSize := fitAllLines(entry.label, t.fontSize, minFontSize, t.maxLines, labelWidth-2*tableCellPadding)
 		valueMaxLines := t.maxLines
 		if entry.maxValueLines > 0 {
 			valueMaxLines = entry.maxValueLines
@@ -305,11 +301,12 @@ func (t tableBlockRow) layout() tableLayout {
 		var valueLines []string
 		var valueSize float64
 		if entry.keepValueFont {
+			// A block's lines are printed in full: a long address used to
+			// push the TEL line out behind "...".
 			valueLines = wrapText(entry.value, t.fontSize, valueWidth-2*tableCellPadding)
-			valueLines = clampLines(valueLines, valueMaxLines, t.fontSize, valueWidth-2*tableCellPadding)
 			valueSize = t.fontSize
 		} else {
-			valueLines, valueSize = fitLines(entry.value, t.fontSize, minFontSize, valueMaxLines, valueWidth-2*tableCellPadding)
+			valueLines, valueSize = fitAllLines(entry.value, t.fontSize, minFontSize, valueMaxLines, valueWidth-2*tableCellPadding)
 		}
 		valueLineHeight := lineHeight(valueSize)
 		if entry.valueLineGap > 0 {
@@ -384,41 +381,35 @@ func (t tableBlockRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		return y
 	}
 
-	borderColor := color.RGBA{R: 0, G: 0, B: 0, A: 255}
-	topY := y
-	bottomY := y + layout.totalHeight
-	drawHLine(img, contentLeft, contentLeft+contentWidth, topY, borderColor)
-	drawHLine(img, contentLeft, contentLeft+contentWidth, bottomY, borderColor)
-	drawVLine(img, contentLeft, topY, bottomY, borderColor)
-	drawVLine(img, contentLeft+layout.labelWidth, topY, bottomY, borderColor)
-	drawVLine(img, contentLeft+contentWidth, topY, bottomY, borderColor)
-
+	ys := []int{y}
 	currY := y
 	for _, row := range layout.rows {
 		labelFace := r.makeFace(row.labelFontSize)
 		valueFace := r.makeFace(row.valueFontSize)
 
-		labelBaseline := currY + tableCellPadding + lineHeight(row.labelFontSize)
-		valueBaseline := currY + tableCellPadding + lineHeight(row.valueFontSize)
-
 		labelX := contentLeft + tableCellPadding
 		valueX := contentLeft + layout.labelWidth + tableCellPadding
 
+		labelLH := lineHeight(row.labelFontSize)
+		slotTop := currY + tableCellPadding
 		for _, line := range row.labelLines {
-			drawStringFitWidth(img, labelFace, line, labelX, labelBaseline, layout.labelWidth-2*tableCellPadding)
-			labelBaseline += lineHeight(row.labelFontSize)
+			drawStringFitWidth(img, labelFace, line, labelX, baselineInSlot(labelFace, slotTop, labelLH), layout.labelWidth-2*tableCellPadding)
+			slotTop += labelLH
 		}
+		slotTop = currY + tableCellPadding
 		for _, line := range row.valueLines {
-			drawStringFitWidth(img, valueFace, line, valueX, valueBaseline, layout.valueWidth-2*tableCellPadding)
-			valueBaseline += row.valueLineHeight
+			drawStringFitWidth(img, valueFace, line, valueX, baselineInSlot(valueFace, slotTop, row.valueLineHeight), layout.valueWidth-2*tableCellPadding)
+			slotTop += row.valueLineHeight
 		}
 
 		labelFace.Close()
 		valueFace.Close()
 
 		currY += row.height
-		drawHLine(img, contentLeft, contentLeft+contentWidth, currY, borderColor)
+		ys = append(ys, currY)
 	}
+	xs := []int{contentLeft, contentLeft + layout.labelWidth, contentLeft + contentWidth}
+	drawGrid(img, xs, ys, ruleDots)
 
 	return y + layout.totalHeight
 }
@@ -465,7 +456,7 @@ func (row imageSectionRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 
 func (row imageSectionRow) showLogoOnly() bool {
 	switch row.data.Template {
-	case "processed", "pet", "non_traceable", "non_traceable_deer":
+	case "pet":
 		return true
 	default:
 		return false
@@ -674,64 +665,6 @@ func buildTableEntries(data LabelData) []tableEntry {
 			tableEntry{label: localizedCaption(data.Locale, "個体識別番号", "Individual ID"), value: trim(data.IndividualNumber)},
 		)
 		return entries
-	case "non_traceable", "non_traceable_deer":
-		entries := []tableEntry{
-			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
-			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: deadlineCaption(data, "消費期限", "Use By"), value: trim(data.DeadlineDate)},
-			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
-		}
-		if entry, ok := companyEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		if entry, ok := facilityEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
-		return entries
-	case "processed":
-		entries := []tableEntry{
-			{label: localizedCaption(data.Locale, "名称", "Name"), value: trim(data.ProductName)},
-			{label: localizedCaption(data.Locale, "原材料名", "Ingredients"), value: trim(data.ProductIngredient)},
-			{label: localizedCaption(data.Locale, "内容量", "Net Weight"), value: trim(data.ProductQuantity)},
-			{label: deadlineCaption(data, "賞味期限", "Best Before"), value: trim(data.DeadlineDate)},
-			{label: localizedCaption(data.Locale, "保存方法", "Storage"), value: trim(data.StorageTemperature)},
-		}
-		if trim(data.NutritionUnit) != "" {
-			entries = append(entries, tableEntry{label: trim(data.NutritionUnit), value: ""})
-			nutrition := []string{}
-			if v := trim(data.CaloriesQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "熱量", "Energy")+" "+v)
-			}
-			if v := trim(data.ProteinQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "たんぱく質", "Protein")+" "+v)
-			}
-			if v := trim(data.FatQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "脂質", "Fat")+" "+v)
-			}
-			if v := trim(data.CarbohydratesQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "炭水化物", "Carbs")+" "+v)
-			}
-			if v := trim(data.SaltEquivalentQuantity); v != "" {
-				nutrition = append(nutrition, localizedCaption(data.Locale, "食塩相当量", "Salt")+" "+v)
-			}
-			if len(nutrition) > 0 {
-				entries = append(entries, tableEntry{label: "", value: strings.Join(nutrition, " / ")})
-			}
-		}
-		if v := trim(data.IsHeatedMeatProducts); v != "" && v != "false" {
-			entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "食肉製品区分", "Meat Product"), value: v})
-		}
-		if entry, ok := companyEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		if entry, ok := facilityEntry(data); ok {
-			entries = append(entries, entry)
-		}
-		if v := trim(data.AttentionText); v != "" {
-			entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "注意事項", "Note"), value: v})
-		}
-		return entries
 	case "pet":
 		entries := []tableEntry{
 			{label: localizedCaption(data.Locale, "商品名", "Product Name"), value: trim(data.ProductName)},
@@ -745,6 +678,7 @@ func buildTableEntries(data LabelData) []tableEntry {
 		if entry, ok := facilityEntry(data); ok {
 			entries = append(entries, entry)
 		}
+		entries = append(entries, tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")})
 		return entries
 	}
 	entries := []tableEntry{
@@ -794,10 +728,6 @@ func labelWidthRatioForTemplate(template string) float64 {
 	switch template {
 	case "traceable", "traceable_deer", "traceable_bear", "traceable_boar", "traceable_raccoon":
 		return tableLabelWidthTraceable
-	case "non_traceable", "non_traceable_deer":
-		return tableLabelWidthNonTraceable
-	case "processed":
-		return tableLabelWidthProcessed
 	case "pet":
 		return tableLabelWidthPet
 	default:
@@ -831,6 +761,19 @@ func (r *LabelRenderer) drawQRCodeIntoRect(img *image.RGBA, rect image.Rectangle
 
 func lineHeight(size float64) int {
 	return int(size * lineSpacingRatio * float64(labelDPI) / 72)
+}
+
+// baselineInSlot returns the baseline that centers a line of text in a slot
+// of the given height, measured on a full-width ideograph. A baseline one
+// line height (or one em) below the slot top, as before, left the bottom of
+// the glyphs on the table rule below and on the top of the next line.
+func baselineInSlot(face font.Face, slotTop, slotHeight int) int {
+	b, _ := font.BoundString(face, "国")
+	top, bottom := b.Min.Y.Floor(), b.Max.Y.Ceil()
+	if bottom <= top {
+		return slotTop + slotHeight
+	}
+	return slotTop + (slotHeight-(bottom-top))/2 - top
 }
 
 func lineHeightWithRatio(size, ratio float64) int {
@@ -933,6 +876,18 @@ func fitLines(text string, baseSize, minSize float64, maxLines, maxWidth int) ([
 	lines := wrapText(text, minSize, maxWidth)
 	lines = clampLines(lines, maxLines, minSize, maxWidth)
 	return lines, minSize
+}
+
+// fitAllLines is fitLines without the "..." cut: text that does not fit in
+// maxLines even at minSize takes as many lines as it needs. What the table
+// shows (ingredients and allergens, nutrition, the processor's address) must
+// be printed in full; the label grows instead.
+func fitAllLines(text string, baseSize, minSize float64, maxLines, maxWidth int) ([]string, float64) {
+	lines, size := fitLines(text, baseSize, minSize, maxLines, maxWidth)
+	if all := wrapText(text, size, maxWidth); len(all) > len(lines) {
+		return all, size
+	}
+	return lines, size
 }
 
 func calcImageSizeForData(data LabelData, widthPx, availableHeight int) int {
@@ -1097,6 +1052,8 @@ type textQRRow struct {
 	fontSize float64
 	// certPath: 空でなければ警告文と QR の間にエゾシカ認証ロゴを描画する (#271)。
 	certPath string
+	// plaMark: 警告文の下にプラマーク＋「外装」を置く。
+	plaMark bool
 }
 
 func (t textQRRow) effectiveFontSize() float64 {
@@ -1116,10 +1073,20 @@ func (t textQRRow) qrSizePx() int {
 	return contentWidth * 40 / 100
 }
 
+// plaMarkAbovePt is the space between the warning and the プラ badge.
+const plaMarkAbovePt = 2.0
+
+func (t textQRRow) plaMarkHeight() int {
+	if !t.plaMark {
+		return 0
+	}
+	return pt(plaMarkAbovePt) + pt(plaMarkPt)
+}
+
 func (t textQRRow) height() int {
 	fs := t.effectiveFontSize()
 	lh := lineHeight(fs)
-	textH := lh * len(t.lines)
+	textH := lh*len(t.lines) + t.plaMarkHeight()
 	qrH := t.qrSizePx() + 4
 	if qrH > textH {
 		return qrH
@@ -1150,12 +1117,14 @@ func (t textQRRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 		textWidth = 1
 	}
 
-	textTotalH := lh * len(t.lines)
+	textTotalH := lh*len(t.lines) + t.plaMarkHeight()
 	ty := y + (rowHeight-textTotalH)/2
 	for _, line := range t.lines {
-		baseline := ty + int(fs*float64(labelDPI)/72)
-		drawStringFitWidth(img, face, line, contentLeft, baseline, textWidth)
+		drawStringFitWidth(img, face, line, contentLeft, baselineInSlot(face, ty, lh), textWidth)
 		ty += lh
+	}
+	if t.plaMark {
+		r.drawPlaBadge(img, contentLeft, ty+pt(plaMarkAbovePt))
 	}
 
 	if showCert {
@@ -1214,8 +1183,7 @@ func (c carcassRow) draw(img *image.RGBA, r *LabelRenderer, y int) int {
 	textTotalH := lh * len(c.texts)
 	ty := y + (rowHeight-textTotalH)/2
 	for _, text := range c.texts {
-		baseline := ty + int(c.fontSize*float64(labelDPI)/72)
-		drawStringFitWidth(img, face, text, left, baseline, textWidth)
+		drawStringFitWidth(img, face, text, left, baselineInSlot(face, ty, lh), textWidth)
 		ty += lh
 	}
 
@@ -1357,8 +1325,10 @@ func drawStringFitWidth(img *image.RGBA, face font.Face, text string, x, y, maxW
 		return
 	}
 
+	// tmp and scaled stay transparent so only the glyphs reach img. The box
+	// is taller than a line (ascent + descent); filled white, it erased the
+	// bottom of the line above and the table rule it overlapped.
 	tmp := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(tmp, tmp.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
 	d := &font.Drawer{
 		Dst:  tmp,
 		Src:  &image.Uniform{color.Black},

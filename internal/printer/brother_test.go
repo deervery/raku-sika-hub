@@ -286,3 +286,120 @@ func TestValidateStatus_NoDestinations(t *testing.T) {
 		t.Fatalf("expected PRINTER_NOT_CONFIGURED, got %q", err.Error())
 	}
 }
+
+// 実機から採取した lpoptions -l の出力。
+// office (2026-09-23) の ipp-usb キューと ptouch キューの実物。
+const lpoptionsIPPUSB = `PageSize/Media Size: 12x12mm 17x54mm 17x87mm 23x23mm 24x24mm 29x42mm 29x52mm 29x54mm 29x62mm *29x90mm 38x90mm 39x48mm 58x58mm 60x86mm 62x100mm Custom.WIDTHxHEIGHT
+CutMedia/CutMedia: *None Auto EndOfPage EndOfJob
+Resolution/Resolution: *300dpi`
+
+const lpoptionsPtouch = `PageSize/Page Size: Custom.WIDTHxHEIGHT 12mm 12mm-circular 17x54mm 29mm 29x90mm 38mm *62mm 62x29mm 62x100mm
+Resolution/Resolution: *300dpi 300x600dpi
+PrintQuality/Print Quality: *High Fast
+MirrorPrint/Mirror Print: True *False
+PrintDensity/Print Density: *0PrinterDefault 1VeryLight 2Light 3Medium 4Dark 5VeryDark
+AutoCut/Auto Cut: *True False
+AutoEject/Auto Eject: *True False
+CutLabel/Cut every: *0 1 2 3 4 5 6 7 8 9 10
+ExtraMargin/Extra Margin (ignored for die-cut tape): *0mm 1mm 2mm
+MediaType/Media Type: Labels *Tape`
+
+func TestParseOptionNames(t *testing.T) {
+	ipp := parseOptionNames(lpoptionsIPPUSB)
+	for _, want := range []string{"PageSize", "CutMedia", "Resolution"} {
+		if _, ok := ipp[want]; !ok {
+			t.Errorf("ipp-usb: %q missing from %v", want, ipp)
+		}
+	}
+	if _, ok := ipp["AutoCut"]; ok {
+		t.Error("ipp-usb: AutoCut should not be reported")
+	}
+
+	pt := parseOptionNames(lpoptionsPtouch)
+	for _, want := range []string{"PageSize", "AutoCut", "CutLabel", "MediaType", "ExtraMargin"} {
+		if _, ok := pt[want]; !ok {
+			t.Errorf("ptouch: %q missing from %v", want, pt)
+		}
+	}
+	// ptouch の PPD には CutMedia が無い。ここが移行で効く差分。
+	if _, ok := pt["CutMedia"]; ok {
+		t.Error("ptouch: CutMedia should not be reported; the PPD has no such option")
+	}
+}
+
+func TestCutArgsFor(t *testing.T) {
+	join := func(args []string) string { return strings.Join(args, " ") }
+
+	if got := join(cutArgsFor(parseOptionNames(lpoptionsIPPUSB))); got != "-o CutMedia=EndOfPage" {
+		t.Errorf("ipp-usb queue: got %q", got)
+	}
+	if got := join(cutArgsFor(parseOptionNames(lpoptionsPtouch))); got != "-o AutoCut=True -o CutLabel=1" {
+		t.Errorf("ptouch queue: got %q", got)
+	}
+	// 照会できなかったときは従来どおりの挙動を保つ（カットを黙って落とさない）。
+	if got := join(cutArgsFor(nil)); got != "-o CutMedia=EndOfPage" {
+		t.Errorf("unknown queue: got %q", got)
+	}
+	// どちらの綴りも無いキューには何も送らない。未知のオプションは
+	// CUPS がジョブごと弾くため。
+	if got := cutArgsFor(parseOptionNames("PageSize/Page Size: A4\n")); got != nil {
+		t.Errorf("queue without any cut option: got %v", got)
+	}
+}
+
+func TestIsSafeJobID(t *testing.T) {
+	ok := []string{"Brother_QL_820NWB_USB-763", "q-1", "A.b_c-9"}
+	for _, id := range ok {
+		if !isSafeJobID(id) {
+			t.Errorf("expected %q to be accepted", id)
+		}
+	}
+	bad := []string{"", " ", "a b", "job;rm -rf /", "job$(id)", "job/../x", strings.Repeat("a", 129)}
+	for _, id := range bad {
+		if isSafeJobID(id) {
+			t.Errorf("expected %q to be rejected", id)
+		}
+	}
+}
+
+// lpstat prints completed jobs oldest first; the operator reprinting a bad
+// label wants the most recent one, so the list is reversed and capped.
+func TestNewestCompletedJobs(t *testing.T) {
+	output := `Brother_QL_820NWB_ptouch-49 rakusika 61440 Wed Sep 23 07:12:01 2026
+Brother_QL_820NWB_ptouch-50 rakusika 61440 Wed Sep 23 07:12:57 2026
+Brother_QL_820NWB_ptouch-51 rakusika 61440 Wed Sep 23 07:27:59 2026
+`
+	jobs := newestCompletedJobs(output, 2)
+	if len(jobs) != 2 {
+		t.Fatalf("expected 2 jobs, got %d", len(jobs))
+	}
+	if jobs[0].ID != "Brother_QL_820NWB_ptouch-51" {
+		t.Errorf("expected newest job first, got %q", jobs[0].ID)
+	}
+	if jobs[1].ID != "Brother_QL_820NWB_ptouch-50" {
+		t.Errorf("expected second newest job, got %q", jobs[1].ID)
+	}
+	for _, job := range jobs {
+		if job.State != "completed" {
+			t.Errorf("expected state completed, got %q", job.State)
+		}
+	}
+}
+
+func TestNewestCompletedJobs_EmptyOutput(t *testing.T) {
+	if jobs := newestCompletedJobs("", 5); len(jobs) != 0 {
+		t.Fatalf("expected no jobs, got %d", len(jobs))
+	}
+}
+
+// A limit of 0 means "everything", which jobBelongsToPrinter relies on to
+// validate a restart against the full history rather than the newest few.
+func TestNewestCompletedJobs_ZeroLimitKeepsAll(t *testing.T) {
+	output := `p-1 u 1 Wed Sep 23 07:00:00 2026
+p-2 u 1 Wed Sep 23 07:01:00 2026
+p-3 u 1 Wed Sep 23 07:02:00 2026
+`
+	if jobs := newestCompletedJobs(output, 0); len(jobs) != 3 {
+		t.Fatalf("expected all 3 jobs, got %d", len(jobs))
+	}
+}

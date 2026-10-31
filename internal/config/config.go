@@ -26,23 +26,28 @@ type Config struct {
 	ScannerVid        string `json:"scannerVid"`
 	ScannerPid        string `json:"scannerPid"`
 	ScannerDeviceName string `json:"scannerDeviceName"`
+	// PrinterRollCheck lets a raw queue's printer refuse a job whose roll
+	// does not match it. Turn it off (PRINTER_ROLL_CHECK=off) at stations
+	// that use rolls the printer does not recognise.
+	PrinterRollCheck bool `json:"printerRollCheck"`
 }
 
 // Default returns a Config with factory defaults for A&D HV-C series (HV-60KCWP-K) on Raspberry Pi.
 func Default() Config {
 	return Config{
-		VID:             "0403",
-		PID:             "6015",
-		Port:            "",
-		BaudRate:        2400,
-		DataBits:        7,
-		Parity:          "even",
-		StopBits:        1,
-		PrinterName:     "",
-		AssetsDir:       "assets",
-		ListenAddr:      "0.0.0.0:19800",
-		LogLevel:        "INFO",
-		EnableWebSocket: false,
+		VID:              "0403",
+		PID:              "6015",
+		Port:             "",
+		BaudRate:         2400,
+		DataBits:         7,
+		Parity:           "even",
+		StopBits:         1,
+		PrinterName:      "",
+		AssetsDir:        "assets",
+		ListenAddr:       "0.0.0.0:19800",
+		LogLevel:         "INFO",
+		EnableWebSocket:  false,
+		PrinterRollCheck: true,
 	}
 }
 
@@ -138,5 +143,8 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("SCANNER_DEVICE_NAME")); v != "" {
 		cfg.ScannerDeviceName = v
+	}
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("PRINTER_ROLL_CHECK"))); v != "" {
+		cfg.PrinterRollCheck = !(v == "off" || v == "false" || v == "0" || v == "no")
 	}
 }

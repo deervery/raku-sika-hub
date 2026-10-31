@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RakuSika Hub 保守</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #d8dce3;
+    --text: #12151a;
+    --muted: #5b6472;
+    --accent: #1d4ed8;
+    --danger: #b91c1c;
+    --ok: #15803d;
+    --warn: #b45309;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: env(safe-area-inset-top, 0) 16px calc(24px + env(safe-area-inset-bottom, 0));
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+  }
+  header { padding: 20px 0 12px; }
+  h1 { margin: 0; font-size: 22px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  h2 { margin: 0 0 12px; font-size: 17px; }
+  .banner { border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 2px solid; }
+  .banner .title { font-size: 20px; font-weight: 700; }
+  .banner .detail, .banner .action { margin-top: 6px; }
+  .banner .action { font-weight: 600; }
+  .banner.ok { border-color: #bbf7d0; background: #f0fdf4; color: var(--ok); }
+  .banner.warn { border-color: #fde68a; background: #fffbeb; color: var(--warn); }
+  .banner.bad { border-color: #fecaca; background: #fef2f2; color: var(--danger); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); font-size: 15px; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  button {
+    font: inherit;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .stack { display: flex; flex-direction: column; gap: 4px; }
+  .kv { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--muted); font-size: 14px; }
+  .empty { color: var(--muted); padding: 12px 0; }
+  .active { color: var(--ok); font-weight: 700; }
+  #toast {
+    position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0));
+    background: #12151a; color: #fff; padding: 14px 16px; border-radius: 10px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>RakuSika Hub 保守</h1>
+  <div class="sub">印刷ジョブとネットワークの確認・復旧</div>
+</header>
+
+<div id="diagnosis" class="banner warn">
+  <div class="title">読み込み中…</div>
+</div>
+
+<section>
+  <h2>印刷キュー</h2>
+  <div class="kv" id="printer-meta"></div>
+  <div class="scroll">
+    <table id="queue-table" hidden>
+      <thead><tr><th>ジョブ</th><th>待ち時間</th><th>サイズ</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="empty" id="queue-empty" hidden>待機中のジョブはありません。</div>
+  <div class="row" style="margin-top:14px">
+    <button id="refresh">再読み込み</button>
+    <button id="test-print">テスト印刷</button>
+    <button id="clear-queue" class="danger">キューを全部削除</button>
+  </div>
+</section>
+
+<section>
+  <h2>ネットワーク</h2>
+  <div id="net-warning" class="banner warn" hidden></div>
+  <div id="devices"></div>
+  <h2 style="margin-top:18px">接続プロファイル</h2>
+  <div id="profiles"></div>
+</section>
+
+<div id="toast" hidden></div>
+
+<script>
+const el = (id) => document.getElementById(id);
+let busy = false;
+
+function toast(message, ms = 4000) {
+  const t = el('toast');
+  t.textContent = message;
+  t.hidden = false;
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON error page */ }
+  if (!res.ok) throw new Error(body?.message || `${res.status} ${res.statusText}`);
+  return body;
+}
+
+function formatAge(sec) {
+  if (!sec || sec < 60) return `${sec || 0} 秒`;
+  const m = Math.floor(sec / 60);
+  return m < 60 ? `${m} 分` : `${Math.floor(m / 60)} 時間 ${m % 60} 分`;
+}
+
+function formatBytes(size) {
+  const n = Number(size);
+  if (!Number.isFinite(n)) return size ?? '';
+  return n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+}
+
+function renderDiagnosis(queue) {
+  const d = queue.diagnosis;
+  const box = el('diagnosis');
+  if (!d) { box.hidden = true; return; }
+  box.hidden = false;
+  box.className = 'banner ' + (d.code === 'ok' ? 'ok' : d.blocking ? 'bad' : 'warn');
+  box.replaceChildren();
+  const add = (cls, text) => {
+    if (!text) return;
+    const div = document.createElement('div');
+    div.className = cls;
+    div.textContent = text;
+    box.appendChild(div);
+  };
+  add('title', d.title);
+  add('detail', d.detail);
+  add('action', d.action);
+}
+
+function renderQueue(queue) {
+  el('printer-meta').replaceChildren(
+    ...[
+      `プリンタ: ${queue.printer || '未登録'}`,
+      `状態: ${queue.printerState || '不明'}`,
+      `接続先: ${queue.deviceUri || '不明'}`,
+      `待機: ${queue.jobCount} 件`,
+    ].map((text) => { const s = document.createElement('span'); s.textContent = text; return s; }),
+  );
+
+  const jobs = queue.jobs || [];
+  const table = el('queue-table');
+  const tbody = table.querySelector('tbody');
+  tbody.replaceChildren();
+  table.hidden = jobs.length === 0;
+  el('queue-empty').hidden = jobs.length !== 0;
+
+  for (const job of jobs) {
+    const tr = document.createElement('tr');
+    const id = document.createElement('td');
+    id.textContent = job.id;
+    const age = document.createElement('td');
+    age.className = 'num';
+    age.textContent = formatAge(job.ageSec);
+    const size = document.createElement('td');
+    size.className = 'num';
+    size.textContent = formatBytes(job.size);
+    const actions = document.createElement('td');
+    const del = document.createElement('button');
+    del.className = 'danger';
+    del.textContent = 'このジョブを削除';
+    del.onclick = () => cancelJob(job.id);
+    actions.appendChild(del);
+    tr.append(id, age, size, actions);
+    tbody.appendChild(tr);
+  }
+}
+
+function renderNetwork(net) {
+  const warn = el('net-warning');
+  warn.hidden = !net.warning;
+  if (net.warning) warn.textContent = net.warning;
+
+  const devices = el('devices');
+  devices.replaceChildren();
+  for (const dev of net.devices || []) {
+    const wrap = document.createElement('div');
+    wrap.className = 'stack';
+    wrap.style.marginBottom = '10px';
+    const head = document.createElement('div');
+    head.innerHTML = '';
+    head.textContent = `${dev.name}: ${dev.ssid || '未接続'}`;
+    head.style.fontWeight = '600';
+    const meta = document.createElement('div');
+    meta.className = 'kv';
+    const bits = [`状態 ${dev.state}`];
+    if (dev.band) bits.push(`帯域 ${dev.band}`);
+    if (dev.signalPercent) bits.push(`電波 ${dev.signalPercent}%`);
+    if (dev.rateMbps) bits.push(`リンク ${dev.rateMbps} Mbps`);
+    if (dev.connection) bits.push(`プロファイル ${dev.connection}`);
+    meta.replaceChildren(...bits.map((t) => { const s = document.createElement('span'); s.textContent = t; return s; }));
+    wrap.append(head, meta);
+    devices.appendChild(wrap);
+  }
+
+  const profiles = el('profiles');
+  profiles.replaceChildren();
+  for (const p of net.profiles || []) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.marginBottom = '10px';
+    const label = document.createElement('div');
+    label.style.flex = '1 1 200px';
+    label.textContent = `${p.name}${p.ssid ? ` (${p.ssid})` : ''}`;
+    if (p.active) {
+      const badge = document.createElement('span');
+      badge.className = 'active';
+      badge.textContent = ' — 使用中';
+      label.appendChild(badge);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'primary';
+    btn.textContent = 'この接続に切り替え';
+    btn.disabled = p.active;
+    btn.onclick = () => connectProfile(p.name);
+    row.append(label, btn);
+    profiles.appendChild(row);
+  }
+}
+
+async function refresh() {
+  try {
+    const queue = await api('/printer/queue');
+    renderDiagnosis(queue);
+    renderQueue(queue);
+  } catch (err) {
+    el('diagnosis').className = 'banner bad';
+    el('diagnosis').textContent = `Hub に接続できません: ${err.message}`;
+  }
+  try {
+    const net = await api('/system/network');
+    renderNetwork(net.network || {});
+  } catch (err) {
+    el('net-warning').hidden = false;
+    el('net-warning').textContent = `ネットワーク情報を取得できません: ${err.message}`;
+  }
+}
+
+async function guarded(fn, done) {
+  if (busy) return;
+  busy = true;
+  try {
+    await fn();
+    if (done) toast(done);
+  } catch (err) {
+    toast(`失敗しました: ${err.message}`, 8000);
+  } finally {
+    busy = false;
+    refresh();
+  }
+}
+
+function cancelJob(id) {
+  if (!confirm(`印刷ジョブ ${id} を削除します。よろしいですか？`)) return;
+  guarded(() => api(`/printer/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }), 'ジョブを削除しました。');
+}
+
+el('refresh').onclick = () => refresh();
+el('test-print').onclick = () =>
+  guarded(() => api('/printer/test', { method: 'POST' }), 'テスト印刷を送信しました。');
+el('clear-queue').onclick = () => {
+  if (!confirm('キューのジョブをすべて削除します。よろしいですか？')) return;
+  guarded(() => api('/printer/queue', { method: 'DELETE' }), 'キューを削除しました。');
+};
+
+function connectProfile(name) {
+  if (!confirm(`${name} に切り替えます。一時的に通信が切れます。よろしいですか？`)) return;
+  guarded(() => api('/system/network/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile: name }),
+  }), '接続を切り替えました。');
+}
+
+refresh();
+setInterval(() => { if (!busy) refresh(); }, 5000);
+</script>
+</body>
+</html>

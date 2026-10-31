@@ -3,6 +3,7 @@ package printer
 // LabelData holds the data for label printing.
 // Field names match the lite frontend's LabelData type in lib/labels/constants.ts.
 type LabelData struct {
+	ExperienceTraceID  string `json:"-"`                  // diagnostic only; never rendered
 	Template           string `json:"template"`           // traceable, non_traceable, processed, pet
 	Copies             int    `json:"copies"`             // number of copies (default 1, max 30)
 	Locale             string `json:"locale"`             // ja or en

@@ -518,11 +518,26 @@ func (b *Brother) TestPrint() error {
 }
 
 // PrintLabel renders a label image and sends it to the printer.
-func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
+func (b *Brother) PrintLabel(data LabelData) (resultValue PrintResult, resultError error) {
+	timing := newPrintTiming(data.ExperienceTraceID, b.logger)
+	timing.mark("request", "started")
+	defer func() {
+		outcome := "unconfirmed"
+		if resultError != nil {
+			outcome = "failed"
+		} else if resultValue.State == "pending" {
+			outcome = "pending"
+		} else if resultValue.State == "done" {
+			outcome = "backend-returned"
+		}
+		timing.mark("return", outcome)
+	}()
 	b.mu.Lock()
+	timing.mark("lock-acquired", "ok")
 	defer b.mu.Unlock()
 
 	status, err := b.Status()
+	timing.mark("status-ready", "returned")
 	if err != nil {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: CUPS の状態確認に失敗しました: %s", err)
 	}
@@ -549,6 +564,7 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 	// Render the label image. An ipp-usb queue prints it shrunk to fit.
 	data.ShrunkToFit = !status.Raw
 	result, err := b.renderer.Render(data)
+	timing.mark("image-ready", "returned")
 	if err != nil {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: ラベル画像の生成に失敗しました: %s", err)
 	}
@@ -566,7 +582,7 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 	}
 
 	if status.Raw {
-		return b.printRaw(status, result.Path, copies)
+		return b.printRaw(status, result.Path, copies, timing)
 	}
 
 	// Keep width fixed to 62mm and adjust only height per rendered label.
@@ -600,9 +616,11 @@ func (b *Brother) PrintLabel(data LabelData) (PrintResult, error) {
 	if err != nil {
 		return PrintResult{}, classifyLpError(string(out), status)
 	}
+	timing.mark("spool-submitted", "accepted")
 	jobID := parseSubmittedJobID(string(out))
 	if jobID != "" {
 		printResult, err := b.verifySubmittedJob(status.SelectedName, jobID, 12*time.Second)
+		timing.mark("queue-verified", "returned")
 		if err != nil {
 			return PrintResult{}, err
 		}

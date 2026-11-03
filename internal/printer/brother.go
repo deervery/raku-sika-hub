@@ -795,40 +795,21 @@ func parseSubmittedJobID(output string) string {
 }
 
 func (b *Brother) verifySubmittedJob(printerName, jobID string, timeout time.Duration) (PrintResult, error) {
-	deadline := time.Now().Add(timeout)
-	lastState := ""
-	lastQueueState := ""
-	for time.Now().Before(deadline) {
-		snapshot, err := readQueueSnapshot(printerName)
-		if err != nil {
-			b.logger.Warn("queue poll failed for %s: %v", jobID, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		job, ok := snapshot.findJob(jobID)
-		if !ok {
-			return PrintResult{
-				State:        "done",
-				JobID:        jobID,
-				Message:      "印刷ジョブを送信しました。",
-				PrinterState: snapshot.PrinterState,
-				JobState:     "cleared",
-			}, nil
-		}
-		lastState = job.State
-		lastQueueState = snapshot.QueueState
-		b.logger.Info("queue poll: job=%s queue_state=%s printer_state=%s job_state=%s", jobID, snapshot.QueueState, snapshot.PrinterState, job.State)
-		time.Sleep(2 * time.Second)
-	}
-	snapshot, err := readQueueSnapshot(printerName)
+	jobs, err := waitForQueueJob(jobID, timeout, func() ([]QueueJobStatus, error) {
+		return readPendingQueueJobs(printerName)
+	}, time.Now, time.Sleep)
 	if err != nil {
 		return PrintResult{}, fmt.Errorf("PRINTER_ERROR: 印刷キューの確認に失敗しました: %w", err)
 	}
-	if job, ok := snapshot.findJob(jobID); ok {
-		lastState = job.State
-	}
-	if snapshot.QueueState == "" {
-		snapshot.QueueState = lastQueueState
+	printerState := readQueuePrinterState(printerName)
+	snapshot := QueueSnapshot{Jobs: jobs, PrinterState: printerState, QueueState: normalizePrinterQueueState(printerState, len(jobs))}
+	job, found := snapshot.findJob(jobID)
+	b.logger.Info("queue wait returned: job=%s queue_state=%s printer_state=%s present=%t", jobID, snapshot.QueueState, printerState, found)
+	if !found {
+		return PrintResult{
+			State: "done", JobID: jobID, Message: "印刷ジョブを送信しました。",
+			PrinterState: printerState, JobState: "cleared",
+		}, nil
 	}
 	message := "印刷ジョブは送信済みですが、プリンタの復帰待ちです。"
 	if snapshot.QueueState == "stalled" {
@@ -839,7 +820,7 @@ func (b *Brother) verifySubmittedJob(printerName, jobID string, timeout time.Dur
 		JobID:        jobID,
 		Message:      message,
 		PrinterState: snapshot.PrinterState,
-		JobState:     lastState,
+		JobState:     job.State,
 	}, nil
 }
 
@@ -869,16 +850,27 @@ func verifyRenderedLabel(path string) error {
 	return nil
 }
 
-func readQueueSnapshot(printerName string) (QueueSnapshot, error) {
+func readPendingQueueJobs(printerName string) ([]QueueJobStatus, error) {
 	out, err := exec.Command("lpstat", "-W", "not-completed", "-o", printerName).CombinedOutput()
-	if err != nil && strings.TrimSpace(string(out)) != "" {
-		return QueueSnapshot{}, fmt.Errorf("lpstat queue failed: %s", strings.TrimSpace(string(out)))
+	if err != nil {
+		return nil, fmt.Errorf("lpstat queue failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	jobs := parseQueueJobs(string(out))
-	printerState := ""
+	return parseQueueJobs(string(out)), nil
+}
+
+func readQueuePrinterState(printerName string) string {
 	if stateOut, stateErr := exec.Command("lpstat", "-p", printerName, "-l").CombinedOutput(); stateErr == nil {
-		printerState = parsePrinterState(string(stateOut))
+		return parsePrinterState(string(stateOut))
 	}
+	return ""
+}
+
+func readQueueSnapshot(printerName string) (QueueSnapshot, error) {
+	jobs, err := readPendingQueueJobs(printerName)
+	if err != nil {
+		return QueueSnapshot{}, err
+	}
+	printerState := readQueuePrinterState(printerName)
 	return QueueSnapshot{
 		PrinterName:   printerName,
 		PrinterState:  printerState,

@@ -35,8 +35,8 @@ func TestHandleVersion(t *testing.T) {
 		t.Errorf("commit = %q, want %q", resp.Commit, "abc1234")
 	}
 	// raku-sika-ops reads this before pointing a queue at the rakuql backend.
-	if len(resp.Features) != 1 || resp.Features[0] != "rakuql" {
-		t.Errorf("features = %v, want [rakuql]", resp.Features)
+	if len(resp.Features) != 3 || resp.Features[0] != "rakuql" || resp.Features[1] != "durable-print-receipts-v1" || resp.Features[2] != "durable-print-receipts-v2" {
+		t.Errorf("features = %v, want [rakuql durable-print-receipts-v1 durable-print-receipts-v2]", resp.Features)
 	}
 }
 

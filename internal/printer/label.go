@@ -660,6 +660,9 @@ func buildTableEntries(data LabelData) []tableEntry {
 		if entry, ok := facilityEntry(data); ok {
 			entries = append(entries, entry)
 		}
+		if entry, ok := sellerEntry(data); ok {
+			entries = append(entries, entry)
+		}
 		entries = append(entries,
 			tableEntry{label: localizedCaption(data.Locale, "金属探知機", "Metal Detection"), value: localizedCaption(data.Locale, "検査済み", "Passed")},
 			tableEntry{label: localizedCaption(data.Locale, "個体識別番号", "Individual ID"), value: trim(data.IndividualNumber)},

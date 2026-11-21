@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-22",
+  "bundle_sha256": "6958174c37295a4ad5ffd73536870b13b40ee0213419fa43ebf615947f9441bd",
+  "implementation_manifest": {
+    "matched": 43,
+    "mismatch": [],
+    "missing": []
+  },
+  "pipecat_expected_commit": "77bb17660805a7fb1db5f02307044255d49340a6",
+  "pipecat_environment": "reused validation venv; source archive has no .git",
+  "fixed_pipecat": [
+    {
+      "load": "idle",
+      "n": 30,
+      "median_ms": 1.56561000039801,
+      "p95_nearest_rank_ms": 1.758018999680644,
+      "failed": 0
+    },
+    {
+      "load": "mock_hub",
+      "n": 30,
+      "median_ms": 1.5457219997188076,
+      "p95_nearest_rank_ms": 1.7834339996625204,
+      "failed": 0
+    }
+  ],
+  "physical_audio_measured": false,
+  "model_benchmarks_repeated": false,
+  "raw_sha256": "c21a89d08ec0b07c054aa2cf6f0695794ce69858b4d4540e4a1d18f9f4cabacc"
+}

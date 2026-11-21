@@ -234,6 +234,9 @@ func TestSend_MutePrinterIsUnconfirmedNotPrinted(t *testing.T) {
 	if strings.Contains(log, "ERROR:") {
 		t.Fatalf("an unconfirmed job is not a failure:\n%s", log)
 	}
+	if !strings.Contains(res.Message, "ロールが残っているか") {
+		t.Fatalf("a printer that answers nothing may be out of roll: %q", res.Message)
+	}
 }
 
 func TestSend_ReportsAnErrorRaisedWhilePrinting(t *testing.T) {
@@ -267,7 +270,8 @@ func TestSend_ErrorThatLeavesThePrinterMuteSaysToRestartIt(t *testing.T) {
 	p.muteAfterError = true
 	res, log := send(t, p, golden(t, "traceable_732.bin"))
 	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "用紙を送れません") ||
-		!strings.Contains(res.Message, "応答しなくなっています") || !strings.Contains(res.Message, "タブレットの電源は切らないでください") {
+		!strings.Contains(res.Message, "応答しなくなっています") || !strings.Contains(res.Message, "タブレットの電源は切らないでください") ||
+		!strings.Contains(res.Message, "ロールが残っているか") {
 		t.Fatalf("result = %+v", res)
 	}
 	if !strings.Contains(log, "probe: no answer") || !strings.Contains(log, "STATE: +media-empty-error") {
@@ -293,7 +297,8 @@ func TestSend_MissingCompletionFromAPrinterThatStillAnswers(t *testing.T) {
 	p := newFakePrinter()
 	p.noCompletion = true
 	res, log := send(t, p, golden(t, "traceable_732.bin"))
-	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "ラベルが出ていれば再送信は不要") {
+	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "ラベルが出ていれば再送信は不要") ||
+		strings.Contains(res.Message, "ロールが残っているか") {
 		t.Fatalf("result = %+v", res)
 	}
 	if !strings.Contains(log, "probe: printer answered") {
@@ -309,7 +314,8 @@ func TestSend_MissingCompletionFromAPrinterThatStoppedAnswering(t *testing.T) {
 	p.silentAfterPrint = true
 	res, log := send(t, p, golden(t, "traceable_732.bin"))
 	if res.Outcome != OutcomeFailed || !strings.Contains(res.Message, "応答しなくなっています") ||
-		!strings.Contains(res.Message, "プリンタの電源だけを入れ直し") || !strings.Contains(res.Message, "タブレットの電源は切らないでください") {
+		!strings.Contains(res.Message, "プリンタの電源だけを入れ直し") || !strings.Contains(res.Message, "タブレットの電源は切らないでください") ||
+		!strings.Contains(res.Message, "ロールが残っているか") {
 		t.Fatalf("result = %+v", res)
 	}
 	if !strings.Contains(log, "probe: no answer") {

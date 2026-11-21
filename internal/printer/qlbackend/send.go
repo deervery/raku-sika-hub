@@ -168,7 +168,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 		if ctx.Err() != nil {
 			return s.cancel(dev, res)
 		}
-		return abort(s.fail(res, "プリンタが印刷データを受け取りません。"+powerCycleOnly+"再送信してください。", "other-error", err))
+		return abort(s.fail(res, "プリンタが印刷データを受け取りません。"+checkRoll+powerCycleOnly+"再送信してください。", "other-error", err))
 	}
 	s.debugf("sent %d bytes", len(data))
 
@@ -223,7 +223,7 @@ func (s *Sender) Send(ctx context.Context, dev io.ReadWriteCloser, job Job, data
 		case <-timeout.C:
 			if res.Muted && !heard {
 				res.Outcome = OutcomeUnconfirmed
-				res.Message = "印刷データは送りましたが、プリンタが応答しないため印刷できたか確認できません。ラベルが出ていなければ、" + powerCycleOnly + "再送信してください。"
+				res.Message = "印刷データは送りましたが、プリンタが応答しないため印刷できたか確認できません。ラベルが出ていなければ、" + checkRoll + powerCycleOnly + "再送信してください。"
 				s.info(res.Message)
 				return res
 			}
@@ -286,6 +286,15 @@ drain:
 // only the printer and printed again 80 seconds later (2026-10-06 14:22).
 const powerCycleOnly = "プリンタの電源だけを入れ直し（タブレットの電源は切らないでください）、プリンタが起動してから"
 
+// checkRoll comes before powerCycleOnly wherever the printer has stopped
+// answering. A roll that runs out can leave the printer silent instead of
+// reporting the end of the roll: siknue, 2026-11-20 19:36 (job 2882), about
+// 363 labels after the last roll change, where a roll lasts about 400. The
+// printer sent only a communication error (err2 0x04) and then nothing, so
+// the tablet never mentioned the roll; staff tried again for 48 minutes and
+// switched off the station before restarting the printer.
+const checkRoll = "ロールが残っているか確かめ、なくなっていれば交換してから、"
+
 // failMidJob ends a job the printer stopped with an error. After such an
 // error the printer can stop answering anything until it is power-cycled:
 // office, 2026-10-07, twice after 用紙を送れません; neither a roll change nor
@@ -296,7 +305,7 @@ func (s *Sender) failMidJob(dev io.Writer, frames <-chan Status, res Result, ps 
 	_ = s.writeAll(dev, cmdReset)
 	s.drain(frames)
 	if pr := s.probe(dev, frames); !pr.answered {
-		ps = append(ps, Problem{Message: "プリンタが応答しなくなっています。直したあと、" + powerCycleOnly + "再送信してください。", Reason: "other-error"})
+		ps = append(ps, Problem{Message: "プリンタが応答しなくなっています。ロールが残っているかも確かめ、直したあと、" + powerCycleOnly + "再送信してください。", Reason: "other-error"})
 	}
 	return s.failProblems(res, ps)
 }
@@ -308,7 +317,7 @@ func noCompletionMessage(pages, completed int, answered bool) string {
 	if answered {
 		return head + "ラベルが出ていれば再送信は不要です。出ていなければ再送信し、それでも出なければ" + powerCycleOnly + "再送信してください。"
 	}
-	return head + "プリンタが応答しなくなっています。ラベルが出ていなければ、" + powerCycleOnly + "再送信してください。"
+	return head + "プリンタが応答しなくなっています。ラベルが出ていなければ、" + checkRoll + powerCycleOnly + "再送信してください。"
 }
 
 type probeResult struct {

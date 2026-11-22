@@ -233,3 +233,7 @@ APK SHA-256: `b6cb77afc7383e99d44d6e8fe346cc2974c3dabc40b9775de0d45f39ca3428fe`
 エミュレーターの縦画面で上部タブ、太字、マイク、長押し直行、初期値カード、ホームに戻る、画面内への収まりを確認。最終APKでも画面テストを再実行。
 本番ユーザーのログイン後切替、実機の日本語音声、読み上げ中の停止/再認識、長時間の認証更新は未検証。既存5施設は変更していない。
 画面証跡（模擬ユーザー）：screenshots/v0.3.1-home.png、screenshots/v0.3.1-defaults.png。
+
+配布 0.3.1: https://glwin.zapus-opah.ts.net:8445/index.html
+APK SHA-256: `8368cdee14809ebdd9688d2487ac5bc9492f0f856cbe85c888dc800d3c293ca2`
+配布ファイルはTailscale IPへ接続先を解決してHTTPS証明書検証付きで取得し、ハッシュ一致を確認。検証時WSLの通常DNSではMagicDNS名を引けなかったため、全体DNS設定は変更せず接続先を指定した。

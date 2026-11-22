@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {transform} from 'esbuild';
+const {code}=await transform(await readFile('src/localIntent.ts','utf8'),{loader:'ts',format:'esm'});
+const {localIntent}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+assert.deepEqual(localIntent('シカのオスで、個体番号001、重さは0.07キロです').patch,{species:'シカ',sex:'オス',individualNumber:'001',weight:'0.07'});
+assert.equal(localIntent('70グラム').patch.weight,'0.07');
+assert.equal(localIntent('個体0001').patch.individualNumber,'0001');
+for(const text of ['0.07','0.07kgかもしれない','シカじゃない','0.07kgと0.08kg','メスかオス','個体12と個体13'])assert.equal(localIntent(text),null,text);
+for(const text of ['はい','いいね','もういい','確定'])assert.ok(localIntent(text).question);
+assert.equal(localIntent('未入力').review,'missing');
+console.log('14 intent assertions passed');

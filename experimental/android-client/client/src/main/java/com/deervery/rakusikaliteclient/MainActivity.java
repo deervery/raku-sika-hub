@@ -59,7 +59,7 @@ public final class MainActivity extends ComponentActivity {
     private String webUrl, hubUrl;
     private TextView connection;
     private WorkspacePanes panes;
-    private AgentPanel agent;
+    private FaceAgentView agent;
     private Button workTab,agentTab;
     private volatile boolean agentMode;
     private int workspaceEpoch;
@@ -218,7 +218,7 @@ public final class MainActivity extends ComponentActivity {
         connection.setTextColor(StationStyle.MUTED);connection.setPadding(StationStyle.dp(this,22),0,StationStyle.dp(this,22),StationStyle.dp(this,8));root.addView(connection);
         connection.setOnClickListener(v->showDeviceSettings());
         web=new WebView(this);web.setId(R.id.work_web);web.setBackgroundColor(StationStyle.PAPER);
-        agent=new AgentPanel(this,new AgentPanel.Host(){
+        agent=new FaceAgentView(this,new FaceAgentView.Host(){
             public void microphonePermission(){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},AGENT_MICROPHONE);}
             public void openWork(String path){navigateWork(path);}
             public void weigh(java.util.function.Consumer<JSONObject> result){weighForAgent(result);}
@@ -310,7 +310,7 @@ public final class MainActivity extends ComponentActivity {
                     .setNegativeButton("戻る",null).setPositiveButton("変更する",(a,b)->showSetup()).show();break;
                 case 4:external(webUrl);break;
                 case 5:new AlertDialog.Builder(this).setTitle("アシスタント")
-                    .setMessage("端末内の日本語音声認識で個体番号・部位・重量の下書きを作成し、計量や業務画面への移動を操作できます。\n\n例：個体001、モモ、0.07キロ\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。音声モデルの対応状況は端末によって異なります。自由な雑談や複雑な分析には、まだ対応していません。顔を長押しすると、ボタンでも入力や計量ができます。")
+                    .setMessage("顔をタップして会話し、長押しで入力・作業メニューを開きます。既存の顔と確認カードをアプリ内に同梱し、端末内の日本語音声認識・計量・スキャナを利用します。\n\n例：個体001、0.07キロ、未入力\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。音声モデルの対応状況は端末によって異なります。Geminiを有効にすると、認識した文章と下書きを会話サービスへ送ります。音声データとAPIキーは送信しません。")
                     .setPositiveButton("閉じる",null).show();break;
             }
         }).setNegativeButton("閉じる",null).show();

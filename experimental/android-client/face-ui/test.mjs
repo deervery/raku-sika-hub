@@ -71,3 +71,20 @@ legacy({}, {},{message:()=>{},propose:patch=>legacyPatches.push(patch),review:()
 await tick();await tick();assert.deepEqual(legacyPatches,[{weight:'0.07'}]);assert.equal(legacyStates.at(-1),'off');
 for(const data of [{productQuantity:'-1kg'},{productQuantity:'1.2個'},{deadlineDate:'2026-02-29'},{individualNumber:'1'.repeat(16)}])assert.throws(()=>mergeLabelDraft(emptyLabelDraft(),{data}));
 console.log('Manual-edit cancellation, Android 12 fallback and invalid label rejection passed');
+
+const {individualData,productData,scanQuery,swipeDirection}=await bundled('src/catalog.ts');
+assert.equal(individualData({id:'i',individualNumber:'0001',species:'シカ'}).individualNumber,'0001');
+assert.equal(individualData({id:'i',individualNumber:'0002'}).species,'','old individual values are cleared');
+assert.equal(productData({id:'p',name:'ロース',defaultContentQuantity:'70',unit:'g'}).productQuantity,'70g');
+assert.equal(productData({id:'p',name:'ロース',defaultContentQuantity:70}).productQuantity,'','never invent units');
+assert.deepEqual(scanQuery('0001'),{query:'0001'});
+assert.deepEqual(scanQuery('https://rakusika.com/t/abc'),{id:'abc',trace:true});
+for(const url of ['https://evil.example/t/abc','https://rakusika.com.evil.test/t/abc','javascript:alert(1)','https://x@rakusika.com/t/abc'])assert.throws(()=>scanQuery(url));
+assert.equal(swipeDirection(-90,10),1);assert.equal(swipeDirection(90,10),-1);assert.equal(swipeDirection(10,90),0);
+const {editLabelDraft,restoreLabelDraft}=await bundled('src/lib/voice-guidance/stationOperations.ts');
+let partial=editLabelDraft({...emptyLabelDraft(),data:{deadlineDate:'2028-02-29',productQuantity:'70g'}},'deadlineDate','2028-02-');
+partial=editLabelDraft(partial,'productQuantity','70');assert.ok(labelIssues(partial).length);assert.equal(restoreLabelDraft(partial).data.productQuantity,'70');assert.equal(partial.data.deadlineDate,'2028-02-');
+const {interpretationInput}=await bundled('src/interpretationInput.ts');
+const input=interpretationInput('😀'.repeat(1000),{weight:'0.07',secret:'never'},{hunterName:Array.from({length:200},()=>({value:'名'.repeat(100),label:'名'.repeat(100)}))},Array.from({length:10},()=>({role:'user',text:'話'.repeat(400)})));
+assert.ok(Buffer.byteLength(JSON.stringify(input))<=12000);assert.equal(input.values.secret,undefined);assert.ok(input.options.hunterName.length<=10);
+console.log('Catalog mapping, QR allowlist, swipe, incomplete autosave and bounded Gemini context passed');

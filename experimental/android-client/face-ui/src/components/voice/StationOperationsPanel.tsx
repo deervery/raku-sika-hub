@@ -9,6 +9,9 @@ import {
 } from 'react';
 import { PLACEHOLDER_SCHEMA } from '@/lib/labels/placeholderSchema';
 import {fieldForLabel,labelGroups} from '../../lib/voice-guidance/labelEditor';
+import {CatalogPicker} from './CatalogPicker';
+import {individualData,productData,swipeDirection,scanQuery} from '../../catalog';
+import {editLabelDraft,restoreLabelDraft} from '../../lib/voice-guidance/stationOperations';
 import {LabelValueEditor} from './LabelValueEditor';
 import {
   emptyLabelDraft,
@@ -55,12 +58,14 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     ref,
   ) {
     const [operation, setOperation] = useState<StationOperation>('menu');
-    const [draft, setDraft] = useState<LabelDraft>(()=>{try{return devices?.draftStorageKey?mergeLabelDraft(emptyLabelDraft(),JSON.parse(localStorage.getItem(devices.draftStorageKey)||'{}')):emptyLabelDraft();}catch{return emptyLabelDraft();}});
+    const [draft, setDraft] = useState<LabelDraft>(()=>{try{return devices?.draftStorageKey?restoreLabelDraft(JSON.parse(localStorage.getItem(devices.draftStorageKey)||'{}')):emptyLabelDraft();}catch{return emptyLabelDraft();}});
     const [group,setGroup]=useState('');
     const [capacity,setCapacity]=useState(()=>window.innerHeight<720?2:4);
     useEffect(()=>{const resize=()=>setCapacity(window.innerHeight<720?2:4);window.addEventListener('resize',resize);return ()=>window.removeEventListener('resize',resize);},[]);
     const draftRef = useRef(draft);
     const [page, setPage] = useState(0);
+    const swipe=useRef<{x:number;y:number}|null>(null);
+    const [scanSeed,setScanSeed]=useState('');
     const [editing, setEditing] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const busyRef = useRef(false);
@@ -71,6 +76,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     const [error, setError] = useState('');
     const generation = useRef(0);
     const identity = useRef(devices?.identity);
+    useEffect(()=>{if(!active){generation.current++;busyRef.current=false;setBusy(false);}},[active]);
     useEffect(() => {
       const currentGeneration = generation;
       return () => {
@@ -135,6 +141,9 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
       if (busyRef.current || printLockedRef.current)
         throw new Error('先ほどの印刷結果を確認してから変更してください。');
       const next = mergeLabelDraft(draftRef.current, raw);
+      commit(next);
+    }
+    function commit(next:LabelDraft){
       draftRef.current = next;
       setDraft(next);
       if(devices?.draftStorageKey)localStorage.setItem(devices.draftStorageKey,JSON.stringify(next));
@@ -142,6 +151,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
       setError('');
     }
     function show(next: StationOperation) {
+      if(next==='devices')next='menu';
       if (busyRef.current) throw new Error('機器の応答を待っています。');
       setConfirm(null);
       setEditing(null);
@@ -153,7 +163,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
       }
       setOperation(next);
       onShow();
-      if (devices && ['weigh', 'scan', 'devices'].includes(next))
+      if (devices && ['weigh'].includes(next))
         void run(next === 'devices' ? 'health' : next === 'scan' ? 'scan' : 'weigh', next);
     }
     useImperativeHandle(ref, () => ({
@@ -164,7 +174,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         return {
           shown: next,
           mutationExecuted: false,
-          reading: !!devices && ['weigh', 'scan', 'devices'].includes(next),
+          reading: !!devices && ['weigh'].includes(next),
         };
       },
       prepare: (raw) => {
@@ -173,8 +183,11 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         const changedKeys=Object.keys((raw as {data?:object}).data||{});
         const unsupported=changedKeys.find(key=>!labelFields(next).includes(key as (ReturnType<typeof labelFields>)[number]));
         if(unsupported)throw new Error(`${fieldForLabel(unsupported,next).label}はこのラベルでは使いません。ラベルの種類を選び直してください。`);
-        update(raw);
+        const data=(raw as {data?:Record<string,string>}).data;
+        if(data?.individualNumber!==undefined&&data.individualNumber!==draftRef.current.data.individualNumber)update({...raw as object,data:{...individualData({id:'',individualNumber:data.individualNumber}),...data}});else update(raw);
         show('labels');
+        if(changedKeys.includes('individualNumber')){setScanSeed(data?.individualNumber||'');setEditing('individualNumber');}
+        else if(changedKeys.includes('productName'))setEditing('productName');
         const target=labelGroups(next).find(group=>group.keys.includes(changedKeys[0]));
         if(target){setGroup(target.id);setPage(Math.floor(target.keys.indexOf(changedKeys[0])/capacity));}
         return { shown: 'labels', executed: false, missing: labelIssues(draftRef.current) };
@@ -190,6 +203,10 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     const pageIndex=Math.min(page,Math.max(0,Math.ceil(groupKeys.length/fieldCapacity)-1));
     const shownFields=groupKeys.slice(pageIndex*fieldCapacity,pageIndex*fieldCapacity+fieldCapacity);
     const issues=labelIssues(draft);
+    const allGroups=[...groups.map(g=>g.id),'system'];
+    const advance=(direction:number)=>{if(!direction||editing||confirm)return;const max=Math.max(0,Math.ceil(groupKeys.length/fieldCapacity)-1);if(direction>0&&pageIndex<max)setPage(pageIndex+1);else if(direction<0&&pageIndex>0)setPage(pageIndex-1);else {const index=allGroups.indexOf(group==='system'?'system':currentGroup.id);const next=allGroups[index+direction];if(next){setGroup(next);setPage(0);}}};
+    async function scanLabel(camera:boolean){const ticket=++generation.current;setError('');onManualChange();try{await native('stop');const result=scanQuery((await native(camera?'cameraScan':'scan')).value);if(ticket!==generation.current)return;if('query'in result){setScanSeed(result.query);setEditing('individualNumber');}else {const row=(await native('catalog',{kind:result.trace?'trace':'individual',id:result.id})).item;if(ticket!==generation.current)return;update({template:'traceable',data:individualData(row)});show('labels');setGroup('individual');}}catch(e){if(ticket===generation.current)setError(e instanceof Error?e.message:'読み取れませんでした');}}
+
     const fieldFor=(key:string)=>fieldForLabel(key,draft);
     const edit = (key: string) => {
       if (!printLocked && !busy) {
@@ -207,8 +224,8 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
           <strong>{titles[operation]}</strong>
         </nav>
         {operation === 'menu' ? (
-          <div className={css.cards} data-count="5">
-            {(['receiving', 'labels', 'weigh', 'scan', 'devices'] as const).map((key) => (
+          <div className={css.cards} data-count="4">
+            {(['receiving', 'labels', 'weigh', 'scan'] as const).map((key) => (
               <button className={css.card} key={key} type="button" onClick={() => show(key)}>
                 <strong>{titles[key]}</strong>
               </button>
@@ -217,21 +234,25 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         ) : operation === 'labels' ? (
           <>
             <div className={css.operationToolbar}>
-              <button type="button" disabled={busy || printLocked} onClick={() => edit('template')}>
+              <button type="button" disabled={busy || printLocked} aria-haspopup="dialog" onClick={() => edit('template')}>
                 {LABEL_TEMPLATES[draft.template]}
               </button>
               <button type="button" disabled={busy || printLocked} onClick={() => edit('copies')}>
                 {draft.copies}枚
               </button>
+              <button type="button" aria-label="カメラスキャン" disabled={busy||printLocked} onClick={()=>void scanLabel(true)}>カメラ</button>
             </div>
-            <nav className={css.labelGroups} aria-label="ラベルの入力項目">
-              {groups.map(item=><button type="button" key={item.id} aria-pressed={group!=='system'&&currentGroup?.id===item.id} onClick={()=>{setGroup(item.id);setPage(0);}}>{item.label}</button>)}
-              <button type="button" aria-pressed={group==='system'} onClick={()=>{setGroup('system');setPage(0);}}>施設・確認</button>
+            <nav className={css.labelGroups} role="tablist" aria-label="ラベルの入力項目">
+              {groups.map(item=><button type="button" key={item.id} role="tab" aria-selected={group!=='system'&&currentGroup?.id===item.id} onClick={()=>{setGroup(item.id);setPage(0);}}>{item.label}</button>)}
+              <button type="button" role="tab" aria-selected={group==='system'} onClick={()=>{setGroup('system');setPage(0);}}>施設・確認</button>
             </nav>
             <div
               className={css.cards}
               data-count={group==='system'?1:shownFields.length}
-              aria-label="ラベルの印刷内容"
+              aria-label="ラベルの印刷内容" role="tabpanel"
+              onTouchStart={e=>{const t=e.touches[0];swipe.current={x:t.clientX,y:t.clientY};}}
+              onTouchEnd={e=>{const start=swipe.current;swipe.current=null;if(start){const t=e.changedTouches[0];advance(swipeDirection(t.clientX-start.x,t.clientY-start.y));}}}
+              onTouchCancel={()=>{swipe.current=null;}}
             >
               {group==='system'?<>
                 <div className={css.card}><span className={css.label}>施設情報・個体との対応</span><strong>業務画面で確認</strong></div>
@@ -254,15 +275,13 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
             <div className={css.operationToolbar}>
               {groupKeys.length > fieldCapacity && (
                 <>
-                  <button type="button" disabled={pageIndex === 0} onClick={() => setPage(pageIndex - 1)}>
+                  <button type="button" data-page="true" disabled={pageIndex === 0} onClick={() => setPage(pageIndex - 1)}>
                     前へ
                   </button>
-                  <span>
-                    {pageIndex + 1}/{Math.ceil(groupKeys.length / fieldCapacity)}
-                  </span>
+                  <span aria-label="ページ">{Array.from({length:Math.ceil(groupKeys.length/fieldCapacity)},(_,i)=>i===pageIndex?'●':'○').join(' ')}</span>
                   <button
                     type="button"
-                    disabled={(pageIndex + 1) * fieldCapacity >= groupKeys.length}
+                    data-page="true" disabled={(pageIndex + 1) * fieldCapacity >= groupKeys.length}
                     onClick={() => setPage(pageIndex + 1)}
                   >
                     次へ
@@ -380,20 +399,8 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
                   )}
                 </>
               )}
-              {operation === 'scan' &&
-                result?.scanValue &&
-                /^[A-Za-z0-9-]{1,32}$/.test(result.scanValue) && (
-                  <button
-                    type="button"
-                    disabled={busy || printLocked}
-                    onClick={() => {
-                      update({ template: 'carcass', data: { individualNumber: result.scanValue } });
-                      show('labels');
-                    }}
-                  >
-                    個体番号としてラベルへ
-                  </button>
-                )}
+              {operation==='scan'&&<><button type="button" disabled={busy} onClick={()=>void scanLabel(true)}>カメラスキャン</button>{result?.scanValue&&<button type="button" onClick={()=>{try{const value=scanQuery(result.scanValue!);if('query'in value){setScanSeed(value.query);setEditing('individualNumber');}else{void native('catalog',{kind:value.trace?'trace':'individual',id:value.id}).then(r=>{update({template:'traceable',data:individualData(r.item)});show('labels');}).catch(e=>setError(e.message));}}catch(e){setError(e instanceof Error?e.message:'コードを確認してください');}}}>個体データを読み取る</button>}</>}
+
             </div>
           </>
         )}
@@ -448,9 +455,14 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         )}
         {editing && (
           <div className={css.overlay}>
-            {editing==='productQuantity'||['receivingDate','deadlineDate'].includes(editing)?<LabelValueEditor
+            {editing==='individualNumber'||editing==='productName'?<CatalogPicker key={editing} kind={editing==='individualNumber'?'individuals':'products'} initial={editing==='individualNumber'?(scanSeed||draft.data.individualNumber||''):''}
+              onClose={()=>{setEditing(null);setScanSeed('');}}
+              onNumber={editing==='individualNumber'?value=>{commit({...draftRef.current,data:{...draftRef.current.data,...individualData({id:'',individualNumber:value})}});onManualChange();}:undefined}
+              onSelect={row=>{const data=editing==='individualNumber'?individualData(row):productData(row);let next=draftRef.current;for(const [key,value] of Object.entries(data))next=editLabelDraft(next,key,value);commit(next);onManualChange();setEditing(null);setScanSeed('');if(operation!=='labels'){show('labels');setGroup('individual');}}}
+            />:editing==='productQuantity'||['receivingDate','deadlineDate'].includes(editing)?<LabelValueEditor
               kind={editing==='productQuantity'?'quantity':'date'} label={fieldFor(editing).label} value={draft.data[editing]||''}
-              onClose={()=>setEditing(null)} onSave={value=>{const next=mergeLabelDraft(draftRef.current,{data:{[editing]:value}});const definition=PLACEHOLDER_SCHEMA[editing as keyof typeof PLACEHOLDER_SCHEMA];if(definition.charLimit&&value.length>definition.charLimit)throw new Error(`${definition.charLimit}文字以内で入力してください。`);update(next);onManualChange();setEditing(null);}}
+              onClose={()=>setEditing(null)} onSave={value=>{commit(editLabelDraft(draftRef.current,editing,value));onManualChange();}}
+
             />:<StationFieldEditor
               key={editing}
               fieldKey={editing}
@@ -464,15 +476,9 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
               }
               onClose={() => setEditing(null)}
               onSave={(value) => {
-                update(
-                  editing === 'template'
-                    ? { template: value }
-                    : editing === 'copies'
-                      ? { copies: Number(value) }
-                      : { data: { [editing]: value } },
-                );
+                commit(editLabelDraft(draftRef.current,editing,value));
                 onManualChange();
-                setEditing(null);
+                if(fieldFor(editing).type==='select')setEditing(null);
                 if(editing==='template'){setPage(0);setGroup('');}
               }}
             />}

@@ -570,3 +570,14 @@
 @media (prefers-reduced-motion:reduce) {.workspace * {animation:none!important;transition:none!important;}}
 
 [data-operation='labels'] .card[data-long='true'] strong {font-size:20px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+
+/* Tabs select a category; pager moves inside it; filled buttons perform actions. */
+.labelGroups {border-bottom:2px solid var(--station-border);gap:0;}
+.labelGroups button {background:var(--station-transparent);color:var(--station-muted);border-radius:0;border-bottom:3px solid var(--station-transparent);}
+.labelGroups button[aria-selected='true'] {background:var(--station-transparent);color:var(--station-ink);border-bottom-color:var(--station-primary);}
+[data-operation='labels'] .cards {touch-action:pan-y;}
+.pagination {display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.choices button small {display:block;font-size:15px;margin-top:6px;color:var(--station-muted);}
+
+.operationToolbar button[data-page='true'] {background:var(--station-transparent);color:var(--station-primary);padding:8px;}
+.operationToolbar button[aria-haspopup='dialog']:after {content:'⌄';margin-left:8px;}

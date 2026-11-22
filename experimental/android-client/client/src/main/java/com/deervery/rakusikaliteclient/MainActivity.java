@@ -51,7 +51,7 @@ import java.util.concurrent.Executors;
 
 /** Existing Lite UI, native local assistant and USB/HID peripherals in one workspace. */
 public final class MainActivity extends ComponentActivity {
-    private static final int MEDIA_PERMISSION = 71, FILE_PICKER = 72, AGENT_MICROPHONE=73;
+    private static final int MEDIA_PERMISSION = 71, FILE_PICKER = 72, AGENT_MICROPHONE=73, AGENT_CAMERA=74;
     private SharedPreferences settings;
     private WebView web;
     private PermissionRequest pendingMedia;
@@ -64,6 +64,8 @@ public final class MainActivity extends ComponentActivity {
     private volatile boolean agentMode;
     private int workspaceEpoch;
     private LiteSession liteSession;
+    private AlertDialog scanDialog;
+    private final ExecutorService catalogExecutor=Executors.newFixedThreadPool(2);
     private LiteSession pendingSession;
     private String pendingTokenFingerprint="";
     private int authAttempt;
@@ -233,6 +235,13 @@ public final class MainActivity extends ComponentActivity {
             public void microphonePermission(){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},AGENT_MICROPHONE);}
             public void openWork(String path){navigateWork(path);}
             public void weigh(java.util.function.Consumer<JSONObject> result){weighForAgent(result);}
+            public void catalog(JSONObject args,java.util.function.Consumer<JSONObject> reply){
+                final LiteSession session=liteSession;final int epoch=workspaceEpoch;
+                if(session==null||!session.valid())return;
+                catalogExecutor.submit(()->{JSONObject result;try{result=session.catalog(args);}catch(Exception e){result=jsonError(e.getMessage()==null?"候補を取得できません。":e.getMessage());}final JSONObject value=result;
+                    runOnUiThread(()->{if(visible&&agentMode&&epoch==workspaceEpoch&&liteSession!=null&&liteSession.valid()&&session.scope.equals(liteSession.scope))reply.accept(value);});});
+            }
+            public void camera(java.util.function.Consumer<JSONObject> reply){openCameraScanner(reply);}
             public JSONObject session(){
                 if(liteSession==null||!liteSession.valid())return new JSONObject();
                 try{return new JSONObject().put("scope",liteSession.scope).put("geminiEnabled",settings.getBoolean("geminiConsent:"+liteSession.scope,false));}catch(Exception e){return new JSONObject();}
@@ -500,7 +509,22 @@ public final class MainActivity extends ComponentActivity {
         }).show();
     }
     @Override protected void onResume(){super.onResume();visible=true;if(web!=null&&!agentMode){web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}if(agent!=null&&agentMode){showAgent(false);requestAssistant(true);}connectUsb();}
-    @Override protected void onPause(){visible=false;workspaceEpoch++;cancelAuthCheck();authClock.removeCallbacks(authRefresh);if(agent!=null)agent.suspend();usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();}
+    @Override protected void onPause(){visible=false;workspaceEpoch++;cancelAuthCheck();authClock.removeCallbacks(authRefresh);if(agent!=null)agent.suspend();usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();if(scanDialog!=null)scanDialog.dismiss();}
     @Override protected void onStop(){denyPendingMedia();super.onStop();}
-    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();authChecks.shutdownNow();checks.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();authChecks.shutdownNow();checks.shutdownNow();super.onDestroy();catalogExecutor.shutdownNow();}
+    private static JSONObject jsonError(String message){try{return new JSONObject().put("error",message);}catch(Exception e){return new JSONObject();}}
+    private void openCameraScanner(java.util.function.Consumer<JSONObject> reply){
+        if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){reply.accept(jsonError("カメラを許可してから、もう一度カメラスキャンを押してください。"));requestPermissions(new String[]{Manifest.permission.CAMERA},AGENT_CAMERA);return;}
+        if(scanDialog!=null)scanDialog.dismiss();
+        final boolean[] complete={false};
+        LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setBackgroundColor(StationStyle.PAPER);body.setPadding(20,20,20,20);
+        body.addView(StationStyle.text(this,"コードを枠内に映してください",22,true));
+        com.journeyapps.barcodescanner.BarcodeView camera=new com.journeyapps.barcodescanner.BarcodeView(this);
+        body.addView(camera,new LinearLayout.LayoutParams(-1,StationStyle.dp(this,360)));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("カメラスキャン").setView(body).setNegativeButton("閉じる",(d,w)->{}).create();scanDialog=dialog;
+        dialog.setOnDismissListener(d->{camera.pause();if(scanDialog==dialog)scanDialog=null;if(!complete[0]){complete[0]=true;reply.accept(jsonError("カメラスキャンを閉じました。"));}});
+        camera.decodeSingle(new com.journeyapps.barcodescanner.BarcodeCallback(){public void barcodeResult(com.journeyapps.barcodescanner.BarcodeResult result){if(complete[0])return;complete[0]=true;try{String text=result.getText();reply.accept(text!=null&&text.length()<=1000?new JSONObject().put("value",text):jsonError("コードを確認してください。"));}catch(Exception e){reply.accept(jsonError("読み取れませんでした。"));}dialog.dismiss();}});
+        camera.addStateListener(new com.journeyapps.barcodescanner.CameraPreview.StateListener(){public void previewSized(){}public void previewStarted(){}public void previewStopped(){}public void cameraClosed(){}public void cameraError(Exception e){if(!complete[0]){complete[0]=true;reply.accept(jsonError("カメラを開始できません。ほかのカメラアプリを閉じてください。"));}dialog.dismiss();}});
+        dialog.show();camera.resume();body.postDelayed(()->{if(dialog.isShowing())dialog.dismiss();},25000);
+    }
 }

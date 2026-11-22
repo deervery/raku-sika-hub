@@ -1,0 +1,553 @@
+.workspace {
+  height: 100dvh;
+  min-height: 560px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px;
+  color: #1e3a5f;
+  background: #f8fafc;
+  overflow: hidden;
+  gap: 12px;
+  font-family: inherit;
+}
+.workspace * {
+  box-sizing: border-box;
+}
+.workspace button {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.workspace button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.workspace button:focus-visible,
+.workspace input:focus-visible {
+  outline: 3px solid #6b8fc2;
+  outline-offset: 3px;
+}
+.faceButton {
+  flex: 0 0 33%;
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  transition:
+    flex-basis 0.6s,
+    min-height 0.6s;
+}
+.faceButton svg {
+  width: min(360px, 65vw);
+  color: #4a6fa5;
+  fill: currentColor;
+  transition: width 0.6s;
+}
+.cheek {
+  fill: #e8bfb1;
+  opacity: 0.7;
+}
+.eyes {
+  transform-origin: 160px 69px;
+  animation: blink 7s infinite;
+}
+.mouth {
+  transform-origin: 160px 113px;
+}
+.workspace[data-voice='speaking'] .mouth {
+  animation: talk 0.3s infinite alternate;
+}
+.workspace[data-board='true'] .faceButton {
+  flex-basis: 9%;
+  min-height: 65px;
+}
+.workspace[data-board='true'] .faceButton svg {
+  width: 130px;
+}
+.board {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: appear 0.4s ease;
+}
+.modes {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.modes button {
+  padding: 10px 22px;
+  border-radius: 30px;
+  background: #eaf0f8;
+  font-size: 18px;
+  font-weight: 700;
+}
+.modes button[aria-pressed='true'] {
+  background: #4a6fa5;
+  color: #fff;
+}
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  align-content: stretch;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.card {
+  flex: 1 1 var(--basis, 21%);
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 22px;
+  padding: clamp(12px, 2vw, 24px);
+  text-align: left;
+  background: #eaf0f8;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  animation: appear 0.4s ease;
+  transition:
+    flex-basis 0.5s,
+    padding 0.5s,
+    background 0.3s;
+}
+.label {
+  font-size: clamp(14px, 2.2vw, 20px);
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.label small {
+  display: inline-block;
+  font-size: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  margin-left: 7px;
+  padding: 1px 4px;
+  color: #4b5563;
+}
+.card strong {
+  font-size: clamp(23px, 3.8vw, 36px);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+  transition: font-size 0.5s;
+}
+.card strong small {
+  font-size: 0.5em;
+  margin-left: 5px;
+}
+.card[data-missing='true'] {
+  background: #f8fafc;
+  border-style: dashed;
+}
+.card[data-missing='true'] strong {
+  color: #6b7280;
+}
+.card[data-warning='true'] {
+  background: #fff0db;
+}
+.cards[data-count='1'] .card {
+  flex-basis: 100%;
+  align-items: center;
+  text-align: center;
+}
+.cards[data-count='1'] strong {
+  font-size: clamp(48px, 10vw, 88px);
+}
+.cards[data-count='1'] .label {
+  font-size: 26px;
+}
+.cards[data-count='2'] .card {
+  /* AI chooses the fields; layout keeps a pair readable as two full-width rows. */
+  flex-basis: 100%;
+  align-items: center;
+  text-align: center;
+}
+.cards[data-count='2'] strong {
+  font-size: clamp(32px, 6vw, 56px);
+}
+.cards:not([data-count='1']):not([data-count='2']) .card[data-long='true'] {
+  flex-basis: 46%;
+}
+.cards .card[data-long='true'] strong {
+  font-size: clamp(18px, 3vw, 30px);
+}
+.empty {
+  margin: auto;
+  font-size: 22px;
+  line-height: 1.7;
+}
+.boardFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.boardFooter button {
+  font-size: 14px;
+  font-weight: 650;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: #eaf0f8;
+}
+.boardFooter nav,
+.editor nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: auto;
+  font-variant-numeric: tabular-nums;
+}
+.chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 6px;
+  scroll-behavior: smooth;
+}
+.workspace[data-board='true'] .chat {
+  flex: 0 0 18%;
+  min-height: 95px;
+  max-height: 200px;
+}
+.bubble {
+  display: flex;
+  margin: 10px 0;
+  opacity: 1;
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
+}
+.bubble p {
+  max-width: 90%;
+  margin: 0;
+  padding: 17px 22px;
+  border-radius: 26px 26px 26px 6px;
+  background: #eaf0f8;
+  font-size: clamp(18px, 2.7vw, 25px);
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bubble[data-role='user'] {
+  justify-content: flex-end;
+}
+.bubble[data-role='user'] p {
+  background: #e1ebdf;
+  border-radius: 26px 26px 6px 26px;
+}
+.bubble[data-old='true'] {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-5px);
+}
+.chat[data-history='true'] .bubble[data-old='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 44px;
+  background: #eaf0f8;
+  flex-shrink: 0;
+  position: relative;
+}
+.controls button {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  color: #42634c;
+  background: none;
+  display: grid;
+  place-items: center;
+}
+.controls button[aria-pressed='true'] {
+  color: #fff;
+  background: #4a6fa5;
+}
+.controls svg {
+  width: 25px;
+  height: 25px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.status {
+  position: absolute;
+  left: 100%;
+  white-space: nowrap;
+  margin-left: 10px;
+  font-size: 13px;
+  color: #7a8871;
+}
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: #f8fafce8;
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 5;
+  animation: appear 0.25s ease;
+}
+.editor {
+  width: min(100%, 650px);
+  max-height: 100%;
+  overflow: auto;
+  background: #f1f5ed;
+  border: 1px solid #dae4d4;
+  border-radius: 30px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.editor header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.editor h2 {
+  font-size: 28px;
+  font-weight: 750;
+}
+.editor header button {
+  font-size: 30px;
+  width: 48px;
+  height: 48px;
+}
+.editor label {
+  font-size: 18px;
+  line-height: 1.6;
+}
+.editor input:not([type='checkbox']) {
+  width: 100%;
+  font-size: 26px;
+  padding: 12px;
+  background: white;
+  border: 1px solid #cbd9c4;
+  border-radius: 14px;
+}
+.editor input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  margin-right: 10px;
+}
+.editor button {
+  min-height: 50px;
+  border-radius: 16px;
+  padding: 12px 18px;
+  background: #e0ead9;
+  font-size: 20px;
+  font-weight: 700;
+}
+.editor button[aria-pressed='true'],
+.editor .primary {
+  background: #4a6fa5;
+  color: white;
+}
+.choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.choices button {
+  min-height: 72px;
+  overflow-wrap: anywhere;
+}
+.number {
+  text-align: center;
+  font-size: 50px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.number small {
+  font-size: 22px;
+  margin-left: 8px;
+}
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.keypad button {
+  font-size: 28px;
+  min-height: 65px;
+}
+.addPerson {
+  border-top: 1px solid #cbd9c4;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 21px;
+  font-weight: 650;
+}
+.nameQuery {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+}
+.operationHeader,
+.operationToolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.operationHeader strong {
+  font-size: 24px;
+  margin-right: auto;
+}
+.operationHeader button,
+.operationToolbar button,
+.operationReset {
+  padding: 12px 18px;
+  min-height: 48px;
+  background: #e1ebdf;
+  border-radius: 18px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.operationToolbar span,
+.operationHint {
+  font-size: 16px;
+  line-height: 1.5;
+}
+.operationHint[data-state='unknown'],
+.operationHint[data-state='error'] {
+  color: #9b4a27;
+}
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes blink {
+  0%,
+  44%,
+  48%,
+  100% {
+    transform: scaleY(1);
+  }
+  46% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes talk {
+  to {
+    transform: scaleY(1.5);
+  }
+}
+@media (max-width: 600px) {
+  .workspace {
+    padding: 14px 12px;
+    gap: 8px;
+  }
+  .cards {
+    gap: 8px;
+  }
+  .card {
+    flex-basis: max(var(--basis, 21%), 42%);
+    border-radius: 15px;
+    padding: 12px;
+    gap: 7px;
+  }
+  .card strong {
+    font-size: 23px;
+  }
+  .label {
+    font-size: 13px;
+  }
+  .modes button {
+    font-size: 15px;
+    padding: 8px 16px;
+  }
+  .boardFooter button {
+    font-size: 12px;
+    padding: 7px;
+  }
+  .bubble p {
+    font-size: 17px;
+    padding: 12px 16px;
+  }
+  .editor {
+    padding: 18px;
+    gap: 12px;
+  }
+  .editor h2 {
+    font-size: 24px;
+  }
+  .keypad button {
+    min-height: 48px;
+  }
+  .status {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Android workspace: the native navigation owns system safe areas. */
+.workspace {height:100dvh;min-height:0;box-sizing:border-box;padding:16px 20px;background:#f8fafc;font-family:system-ui,sans-serif;}
+.workspace button {font:inherit;color:inherit;border:0;min-height:48px;}
+.workspace button[aria-pressed="true"] {color:white;}
+.workspace[data-board="false"] .faceButton {flex:1;}
+.workspace[data-board="false"] .chat {flex:0 1 28%;}
+.controls {display:flex;flex:0 0 auto;justify-content:center;align-items:center;gap:10px;min-height:56px;}
+.controls button {display:flex;align-items:center;justify-content:center;gap:10px;width:auto;min-width:142px;min-height:56px;padding:12px 22px;border-radius:28px;background:#4a6fa5;color:white;font-weight:800;}
+.controls button[aria-pressed="true"] {background:#1e3a5f;}
+.controls svg {width:24px;height:24px;}
+.controls .status {font-size:15px;font-weight:700;}
+.faceButton {position:relative;}
+.faceHint {position:absolute;top:8px;left:50%;transform:translateX(-50%);width:max-content;max-width:94%;padding:12px 18px;background:white;border:1px solid #d1d5db;border-radius:22px;font-size:clamp(16px,2.4vw,21px);font-weight:800;box-shadow:0 3px 12px #1e3a5f0a;pointer-events:none;}
+.faceHint:after {content:'';position:absolute;bottom:-9px;left:50%;width:16px;height:16px;background:white;border-right:1px solid #d1d5db;border-bottom:1px solid #d1d5db;transform:rotate(45deg);}
+.workspace {font-weight:700;}
+.workspace button,.workspace input,.workspace select {font-weight:750;}
+.label {font-size:clamp(17px,2.4vw,23px);font-weight:800;}
+.label small {font-size:12px;font-weight:700;}
+.card strong {font-weight:800;}
+.bubble p {font-weight:700;}
+.editor label,.editor p,.operationHint {font-weight:700;}
+@media (max-height:650px) {.workspace {padding:10px 14px;gap:8px;}.workspace[data-board="true"] .faceButton {flex-basis:48px;min-height:48px;}.modes button {padding:8px 14px;}.card {padding:12px;gap:8px;}.label {font-size:17px;}.controls {min-height:52px;}}
+.workspace[data-board="true"] .chat {display:none;}
+.workspace[data-board="true"] .faceButton {flex:0 0 64px;}
+.cards[data-count="1"] .card,.cards[data-count="2"] .card {flex-basis:100%;}
+.workspace .card {border:1px solid #d1d5db;background:#fff;}
+.workspace .card[data-missing="true"] {border-style:dashed;background:#f8fafc;}
+.editor {max-height:94dvh;overflow:auto;}
+.boardFooter button {font-size:14px;font-weight:700;padding:8px;}
+@media (prefers-reduced-motion:reduce) {.workspace * {animation:none!important;transition:none!important;}}

@@ -1,0 +1,733 @@
+.shell {
+  min-height: 100dvh;
+  background: #fcfdfb;
+  color: #263e36;
+}
+.shellInner {
+  width: min(100%, 880px);
+  margin: 0 auto;
+}
+.console {
+  --ink: #28463b;
+  --muted: #6b786e;
+  height: 100dvh;
+  min-height: 620px;
+  color: var(--ink);
+  background: #fcfdfb;
+}
+.console *,
+.console *::before,
+.console *::after {
+  box-sizing: border-box;
+}
+.scene {
+  height: 100%;
+  view-transition-name: station-scene;
+}
+.conversation[data-populated='true'] .faceStage {
+  flex-basis: 13%;
+  min-height: 100px;
+}
+.conversation[data-populated='true'] .face {
+  width: 180px;
+}
+.faceStage,
+.face {
+  transition:
+    flex-basis 0.6s ease,
+    width 0.6s ease,
+    min-height 0.6s ease;
+}
+.growingBoard {
+  flex: 0 1 auto;
+  max-height: 48%;
+  overflow-y: auto;
+  padding: 4px;
+  scrollbar-width: thin;
+}
+.growingCards,
+.fullReviewCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.growingCards .reviewCard {
+  overflow: visible;
+  transition:
+    padding 0.55s ease,
+    background 0.35s ease;
+}
+.growingCards .reviewValue {
+  transition:
+    font-size 0.55s ease,
+    margin 0.55s ease;
+}
+.growingBoard[data-density='large'] .growingCards {
+  grid-template-columns: 1fr;
+}
+.growingBoard[data-density='large'] .reviewValue {
+  font-size: clamp(34px, 6vw, 56px);
+}
+.growingBoard[data-density='medium'] .reviewValue {
+  font-size: clamp(28px, 4.8vw, 40px);
+}
+.growingBoard[data-density='compact'] .reviewCard {
+  padding: 14px 18px;
+}
+.growingBoard[data-density='compact'] .reviewValue {
+  font-size: clamp(24px, 3.8vw, 32px);
+  margin-top: 6px;
+}
+.boardActions {
+  display: flex;
+  gap: 12px;
+  padding-top: 12px;
+}
+.boardActions button {
+  min-height: 44px;
+  font-size: 16px;
+}
+.fullReviewCards {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  grid-auto-rows: minmax(140px, auto);
+  align-content: start;
+  padding: 4px;
+  scrollbar-width: thin;
+}
+.fullReviewCards .reviewCard {
+  overflow: visible;
+}
+.console[data-voice='speaking'] .mouth {
+  animation: speaking 0.3s ease-in-out infinite alternate;
+}
+@keyframes speaking {
+  to {
+    transform: scaleY(1.6);
+  }
+}
+.console button,
+.console textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+.console button:focus-visible,
+.console input:focus-visible {
+  outline: 3px solid #71957b;
+  outline-offset: 5px;
+}
+.conversation {
+  animation: screenIn 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(24px, 4vw, 44px);
+}
+.faceStage {
+  display: grid;
+  place-items: center;
+  flex: 0 0 38%;
+  min-height: 170px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  border-radius: 32px;
+  cursor: pointer;
+}
+.face {
+  width: clamp(270px, 48vw, 390px);
+  max-width: 90%;
+  color: #365c48;
+  animation: breathe 6s ease-in-out infinite;
+}
+.eyes {
+  transform-origin: 160px 69px;
+  animation: blink 7s infinite;
+}
+.cheek {
+  opacity: 0.68;
+}
+.mouth {
+  transform-origin: 160px 113px;
+}
+.console[data-state='listening'] .eyes {
+  animation: none;
+}
+.console[data-state='listening'] .cheek {
+  opacity: 1;
+}
+.console[data-state='processing'] .eyes {
+  animation: thinking 1.8s ease-in-out infinite;
+}
+.chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #dce5db transparent;
+  padding: 10px 6px;
+}
+.assistantLine,
+.userLine {
+  display: flex;
+  margin: 12px 0 22px;
+  animation: bubbleIn 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.assistantLine {
+  justify-content: flex-start;
+}
+.userLine {
+  justify-content: flex-end;
+}
+.assistantLine > p,
+.userLine > p {
+  width: fit-content;
+  max-width: 90%;
+  padding: 23px 28px;
+  font-size: clamp(22px, 3.2vw, 29px);
+  font-weight: 600;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.assistantLine > p {
+  background: #edf2e8;
+  border-radius: 30px 30px 30px 7px;
+}
+.userLine > p {
+  background: #e1ebdf;
+  border-radius: 30px 30px 7px 30px;
+}
+.assistantLine:not(:last-child) > p,
+.userLine > p {
+  font-size: clamp(19px, 2.7vw, 24px);
+}
+.cursor {
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  margin-left: 4px;
+  background: #719177;
+  vertical-align: -0.1em;
+  animation: cursor 1s steps(2, start) infinite;
+}
+.composer {
+  flex-shrink: 0;
+  margin: 18px 0 4px auto;
+  width: min(100%, 620px);
+  padding: 18px 22px 14px;
+  border: 1px solid #dce5d8;
+  border-radius: 30px 30px 7px 30px;
+  background: #f1f5ed;
+}
+.composer:focus-within {
+  border-color: #7c9b80;
+  box-shadow: 0 0 0 3px #73947b0c;
+}
+.voiceControls {
+  flex-shrink: 0;
+  align-self: center;
+  margin: 20px 0 8px;
+  padding: 10px 18px;
+  border-radius: 48px;
+  background: #edf2e8;
+}
+.voiceControls .iconButton {
+  width: 60px;
+  height: 60px;
+}
+.voiceControls .iconButton[aria-pressed='true'] {
+  background: #365b45;
+  color: #fff;
+}
+.textarea {
+  width: 100%;
+  height: 66px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  resize: none;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.textarea::placeholder {
+  color: #8b9889;
+  font-weight: 400;
+}
+.bubbleActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.iconButton,
+.sendButton {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    transform 0.2s;
+}
+.iconButton {
+  color: #56725b;
+  background: transparent;
+}
+.iconButton:hover {
+  background: #dce7d7;
+}
+.sendButton {
+  margin-left: auto;
+  color: #fff;
+  background: #365b45;
+}
+.iconButton svg,
+.sendButton svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sendButton:hover:not(:disabled) {
+  background: #4a7054;
+  transform: translateY(-1px);
+}
+.console button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.settingsBubble {
+  margin: 20px 0;
+  padding: 28px;
+  border-radius: 28px 28px 28px 7px;
+  background: #edf2e8;
+  overflow-y: auto;
+}
+.settingsBubble h2 {
+  font-size: 24px;
+  font-weight: 700;
+}
+.settingsBubble label {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  line-height: 1.8;
+  font-size: 17px;
+  margin: 24px 0;
+}
+.settingsBubble input {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  accent-color: #456650;
+  margin-top: 5px;
+}
+.reviewScreen,
+.confirmation {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(24px, 5vw, 44px);
+  animation: screenIn 0.36s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.reviewHeader {
+  flex-shrink: 0;
+  padding: 10px 0 28px;
+}
+.reviewCaption {
+  color: var(--muted);
+  font-size: 17px;
+  font-weight: 600;
+}
+.reviewHeader h2 {
+  margin-top: 12px;
+  font-size: clamp(28px, 4.8vw, 38px);
+  line-height: 1.35;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+.reviewCards,
+.candidateCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+.reviewCards {
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+}
+.candidateCards {
+  grid-auto-rows: minmax(0, 1fr);
+}
+.reviewCard {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(18px, 3vw, 27px);
+  border: 1px solid #e0e6db;
+  border-radius: 24px;
+  background: #f0f4eb;
+  animation: cardIn 0.48s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  scrollbar-width: thin;
+}
+.reviewCard[data-candidate='true'] {
+  background: #f6f2e5;
+  border-color: #e7dfc9;
+}
+.reviewCard[data-missing='true'] {
+  background: #f6f6f1;
+  border-style: dashed;
+}
+.reviewCard[data-warning='true'] {
+  background: #fff2df;
+  border-color: #dcbd88;
+}
+.reviewLabel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: #63705c;
+  font-size: clamp(16px, 2.5vw, 20px);
+  line-height: 1.5;
+  font-weight: 600;
+}
+.reviewValue {
+  margin-top: 18px;
+  font-size: clamp(26px, 4.2vw, 36px);
+  font-weight: 750;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.reviewCard[data-missing='true'] .reviewValue {
+  color: #86907f;
+  font-size: clamp(24px, 3.8vw, 32px);
+}
+.unit {
+  margin-left: 7px;
+  font-size: 0.56em;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.required {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid #d3dccc;
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 1.6;
+  font-weight: 500;
+}
+.warning {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #92601e;
+  font-weight: 700;
+}
+.stale {
+  color: #986022;
+  margin-top: 12px;
+  font-size: 17px;
+}
+.reviewFooter {
+  flex-shrink: 0;
+  padding-top: 24px;
+}
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 20px;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.pageTotal {
+  color: #7b8874;
+  font-size: 16px;
+}
+.pageButton {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 44px;
+  border: 1px solid #dce3d5;
+  background: #f1f5ed;
+  border-radius: 14px;
+  cursor: pointer;
+}
+.pageButton:hover:not(:disabled) {
+  background: #e5edde;
+}
+.confirmActions {
+  display: flex;
+  gap: 14px;
+  width: 100%;
+}
+.primaryButton,
+.secondaryButton {
+  flex: 1;
+  min-height: 58px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 20px;
+  padding: 14px 16px;
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.primaryButton {
+  color: #fff;
+  background: #365a45;
+  border: 1px solid #365a45;
+}
+.secondaryButton {
+  color: #456650;
+  background: #f5f7f1;
+  border: 1px solid #d5dfcf;
+}
+.primaryButton:hover:not(:disabled) {
+  background: #4c7056;
+}
+.secondaryButton:hover:not(:disabled) {
+  background: #e8efdf;
+}
+.screenReader {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+:global(html):has(.scene)::view-transition {
+  pointer-events: none;
+}
+:global(html):has(.scene)::view-transition-old(station-scene) {
+  animation: sceneOut 0.2s ease-in both;
+}
+:global(html):has(.scene)::view-transition-new(station-scene) {
+  animation: screenIn 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+:global(html):has(.scene)::view-transition-group(station-scene) {
+  animation-duration: 0.35s;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+@keyframes blink {
+  0%,
+  44%,
+  48%,
+  100% {
+    transform: scaleY(1);
+  }
+  46% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes thinking {
+  0%,
+  100% {
+    transform: translateX(-4px);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+@keyframes cursor {
+  50% {
+    opacity: 0.15;
+  }
+}
+@keyframes bubbleIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes sceneOut {
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+@keyframes screenIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 600px) {
+  .conversation,
+  .reviewScreen,
+  .confirmation {
+    padding: 22px 18px;
+  }
+  .faceStage {
+    flex-basis: 32%;
+    min-height: 155px;
+  }
+  .face {
+    width: 280px;
+  }
+  .assistantLine > p,
+  .userLine > p {
+    padding: 17px 19px;
+    border-radius: 23px 23px 23px 6px;
+    font-size: 20px;
+  }
+  .userLine > p {
+    border-radius: 23px 23px 6px 23px;
+  }
+  .composer {
+    padding: 16px 18px 12px;
+    border-radius: 23px 23px 6px 23px;
+  }
+  .textarea {
+    font-size: 20px;
+    height: 60px;
+  }
+  .reviewHeader {
+    padding: 4px 0 20px;
+  }
+  .reviewCaption {
+    font-size: 13px;
+  }
+  .reviewHeader h2 {
+    margin-top: 9px;
+    font-size: 27px;
+  }
+  .reviewCards,
+  .candidateCards {
+    gap: 10px;
+  }
+  .reviewCard {
+    padding: 15px;
+    border-radius: 18px;
+  }
+  .reviewLabel {
+    font-size: 14px;
+    gap: 4px;
+  }
+  .reviewValue {
+    font-size: 25px;
+    margin-top: 13px;
+  }
+  .reviewCard[data-missing='true'] .reviewValue {
+    font-size: 23px;
+  }
+  .reviewFooter {
+    padding-top: 16px;
+  }
+  .pagination {
+    margin-bottom: 14px;
+  }
+  .confirmActions {
+    gap: 8px;
+  }
+  .primaryButton,
+  .secondaryButton {
+    font-size: 14px;
+    min-height: 54px;
+    padding: 12px 10px;
+    border-radius: 16px;
+  }
+  .settingsBubble {
+    padding: 20px;
+  }
+  .settingsBubble label {
+    font-size: 14px;
+  }
+}
+@media (max-height: 800px) and (min-width: 601px) {
+  .conversation,
+  .reviewScreen,
+  .confirmation {
+    padding: 22px 30px;
+  }
+  .faceStage {
+    flex-basis: 30%;
+  }
+  .reviewHeader {
+    padding-bottom: 15px;
+  }
+  .reviewHeader h2 {
+    font-size: 28px;
+    margin-top: 6px;
+  }
+  .reviewCaption {
+    font-size: 13px;
+  }
+  .reviewCard {
+    padding: 16px;
+  }
+  .reviewLabel {
+    font-size: 15px;
+  }
+  .reviewValue {
+    margin-top: 10px;
+    font-size: 26px;
+  }
+  .reviewFooter {
+    padding-top: 15px;
+  }
+  .pagination {
+    margin-bottom: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .console *,
+  .console *::before,
+  .console *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  :global(html):has(.scene)::view-transition-old(station-scene),
+  :global(html):has(.scene)::view-transition-new(station-scene) {
+    animation: none !important;
+  }
+}

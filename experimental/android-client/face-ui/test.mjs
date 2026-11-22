@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {transform,build} from 'esbuild';
+const {code}=await transform(await readFile('src/localIntent.ts','utf8'),{loader:'ts',format:'esm'});
+const {localIntent}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+assert.deepEqual(localIntent('シカのオスで、個体番号001、重さは0.07キロです').patch,{species:'シカ',sex:'オス',individualNumber:'001',weight:'0.07'});
+assert.equal(localIntent('70グラム').patch.weight,'0.07');
+assert.equal(localIntent('個体0001').patch.individualNumber,'0001');
+for(const text of ['0.07','0.07kgかもしれない','シカじゃない','0.07kgと0.08kg','メスかオス','個体12と個体13'])assert.equal(localIntent(text),null,text);
+for(const text of ['はい','いいね','もういい','確定'])assert.ok(localIntent(text).question);
+assert.equal(localIntent('未入力').review,'missing');
+console.log('14 intent assertions passed');
+const bundled=async(entry)=>{
+  const result=await build({entryPoints:[entry],bundle:true,write:false,format:'esm',platform:'node'});
+  return import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
+};
+const {draftValues,defaultFieldKeys}=await bundled('src/draftDefaults.ts');
+const form={fields:{species:{type:'select',defaultValue:'シカ'},health:{type:'select',defaultValue:'異常なし'},weight:{type:'number'},empty:{type:'text',defaultValue:'x'}}};
+assert.equal(draftValues(form,{}).species,'シカ');
+assert.equal(draftValues(form,{species:'クマ',empty:''}).species,'クマ');
+assert.equal(draftValues(form,{empty:''}).empty,'');
+assert.ok(defaultFieldKeys(form,{}).includes('health'));
+assert.ok(!defaultFieldKeys(form,{health:'異常なし'}).includes('health'));
+assert.ok(!defaultFieldKeys(form,{}).includes('weight'));
+const {createConversation}=await bundled('src/conversation.ts');
+const tick=()=>new Promise(r=>setTimeout(r,0));
+for(const phase of ['interpret','speak']){
+  const queue=[],calls=[],applied=[],states=[];
+  const native=async(op,args)=>{calls.push(op);if(['listen',phase].includes(op))return new Promise(resolve=>queue.push({op,resolve}));if(op==='interpret')return {question:'こんにちは'};return {};};
+  const connect=createConversation(native,()=>true);
+  const callbacks=id=>({message:()=>{},propose:p=>applied.push([id,p]),review:()=>{},state:s=>states.push([id,s]),error:e=>{throw new Error(e);}});
+  const old=connect({}, {},callbacks('old'));queue.shift().resolve({text:'こんにちは'});await tick();
+  assert.equal(queue[0].op,phase);const stale=queue.shift();old.stop();
+  const fresh=connect({}, {},callbacks('new'));queue.shift().resolve({text:'0.08kg'});await tick();
+  const before=states.length;stale.resolve(phase==='interpret'?{patch:{weight:'0.07'}}:{});await tick();
+  assert.deepEqual(applied,[['new',{weight:'0.08'}]]);
+  assert.equal(states.length,before,'late response must not change the new turn');
+  assert.ok(calls.indexOf('stop')<calls.lastIndexOf('listen'));
+  fresh.stop();
+}
+console.log('Defaults and interruption regression checks passed');

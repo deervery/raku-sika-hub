@@ -25,6 +25,10 @@ final class FaceAgentView extends WebView {
     private Consumer<JSONObject> listening,scanning,speaking;
     private AssistantApi.Call interpretation;
     private Future<?> inference;
+    private ContinuousVoice continuous;
+    private String voiceSession="";
+    private long voiceTurn;
+    private boolean duplexPlayback;
     private final ExecutorService api=Executors.newSingleThreadExecutor();
     FaceAgentView(Context context,Host host){
         super(context);this.host=host;setBackgroundColor(StationStyle.PAPER);
@@ -57,6 +61,7 @@ final class FaceAgentView extends WebView {
             for(Voice voice:voices)if("ja".equals(voice.getLocale().getLanguage())&&!voice.isNetworkConnectionRequired()){localTts=tts.setVoice(voice)==TextToSpeech.SUCCESS;break;}
         });
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener(){public void onStart(String id){}public void onDone(String id){post(()->finishSpeaking(id));}public void onError(String id){post(()->finishSpeaking(id));}});
+        tts.setAudioAttributes(new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build());
         loadUrl(ORIGIN+"/assets/face/index.html");
     }
     private String utterance="";
@@ -65,12 +70,16 @@ final class FaceAgentView extends WebView {
     private static JSONObject error(String message){return object("error",message);}
     private void dispatch(String op,JSONObject args,Consumer<JSONObject> reply){
         if(args==null)args=new JSONObject();
+        // Even a delayed bridge message must not restart an old answer after speech interruption.
+        if((op.equals("speak")||op.equals("interpret"))&&args.has("session")&&(!args.optString("session").equals(voiceSession)||args.optLong("turn",-1)!=voiceTurn)){reply.accept(error("古い応答を破棄しました。"));return;}
         switch(op){
+            case "voiceStart":startContinuous(args.optString("session"),reply);break;
+            case "voiceDiscard":if(!args.optString("session").equals(voiceSession)){reply.accept(new JSONObject());break;}voiceTurn=-1;stopPlayback();cancelInterpretation();reply.accept(new JSONObject());break;
             case "listen":listen(reply);break;
             case "stop":stopAudio();cancelInterpretation();reply.accept(new JSONObject());break;
             case "speak":
                 String text=args.optString("text");if(text.length()>400){reply.accept(error("応答が長すぎます。"));break;}
-                stopAudio();if(!localTts){reply.accept(new JSONObject());break;}
+                stopPlayback();if(!localTts||(continuous!=null&&!duplexPlayback)){reply.accept(new JSONObject());break;}
                 speaking=reply;utterance=UUID.randomUUID().toString();tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,utterance);break;
             case "weigh":host.weigh(reply);break;
             case "scan":
@@ -80,10 +89,36 @@ final class FaceAgentView extends WebView {
                 String path=args.optString("path");if(Arrays.asList("","/inventory/history","/reports/labels","/input/sales/new","/input/meat-inbound").contains(path)){reply.accept(new JSONObject());host.openWork(path);}else reply.accept(error("対応していない画面です。"));break;
             case "interpret":
                 if(!host.session().optBoolean("geminiEnabled")){reply.accept(error("音声・AI設定でGeminiの利用をオンにしてください。"));break;}
-                cancelInterpretation();final JSONObject input=args;final int token=generation;final AssistantApi.Call call=new AssistantApi.Call();interpretation=call;
+                cancelInterpretation();final JSONObject input=new JSONObject();
+                for(String key:new String[]{"text","values","options","history"})try{if(args.has(key))input.put(key,args.get(key));}catch(JSONException ignored){}
+                final int token=generation;final AssistantApi.Call call=new AssistantApi.Call();interpretation=call;
                 inference=api.submit(()->{JSONObject result=call.execute(input);post(()->{if(active&&generation==token&&interpretation==call&&!host.session().optString("scope").isEmpty()){interpretation=null;reply.accept(result);}});});break;
             default:reply.accept(error("対応していない操作です。"));
         }
+    }
+    private void voiceEvent(String session,String type,long turn,String text){
+        if(!active||!voiceSession.equals(session))return;
+        if(host.session().optString("scope").isEmpty()){stopAudio();cancelInterpretation();clearSession();host.openWork("");return;}
+        try{JSONObject event=new JSONObject().put("session",session).put("type",type).put("turn",turn).put("text",text);
+            evaluateJavascript("window.dispatchEvent(new CustomEvent('station-voice',{detail:"+event+"}))",null);
+        }catch(Exception ignored){}
+    }
+    private void startContinuous(String session,Consumer<JSONObject> reply){
+        stopAudio();cancelInterpretation();
+        if(!session.matches("[a-zA-Z0-9-]{1,80}")){reply.accept(error("会話を開始し直してください。"));return;}
+        if(getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){reply.accept(error("マイクを許可したら、顔をタップしてください。"));host.microphonePermission();return;}
+        if(Build.VERSION.SDK_INT>=31&&Build.VERSION.SDK_INT<33&&SpeechRecognizer.isOnDeviceRecognitionAvailable(getContext())){reply.accept(object("continuous",false));return;}
+        if(!ContinuousVoice.available(getContext())){reply.accept(error("自動割り込みにはAndroid 13以降と端末内の日本語音声モデルが必要です。"));return;}
+        voiceSession=session;voiceTurn=0;
+        continuous=new ContinuousVoice(getContext(),new ContinuousVoice.Listener(){
+            public void ready(boolean aec){if(!voiceSession.equals(session))return;duplexPlayback=aec;voiceEvent(session,"ready",0,aec?"echo-cancelled":"echo-unavailable");}
+            public void speech(long id){if(!voiceSession.equals(session))return;voiceTurn=id;stopPlayback();cancelInterpretation();voiceEvent(session,"speech",id,"");}
+            public void recognizing(long id){voiceEvent(session,"recognizing",id,"");}
+            public void text(long id,String text){if(voiceTurn==id)voiceEvent(session,"text",id,text);}
+            public void retry(long id,String message){if(voiceTurn==id)voiceEvent(session,"retry",id,message);}
+            public void failed(String message){if(!voiceSession.equals(session))return;voiceEvent(session,"error",voiceTurn,message);stopAudio();cancelInterpretation();}
+        });
+        continuous.start();reply.accept(object("continuous",true));
     }
     private void listen(Consumer<JSONObject> reply){
         stopAudio();cancelInterpretation();
@@ -100,7 +135,8 @@ final class FaceAgentView extends WebView {
         }catch(RuntimeException e){listening=null;releaseRecognizer();reply.accept(error("音声認識を開始できませんでした。"));}
     }
     private void releaseRecognizer(){if(speech!=null){speech.cancel();speech.destroy();speech=null;}}
-    private void stopAudio(){Consumer<JSONObject> a=listening,b=speaking;listening=null;speaking=null;utterance="";releaseRecognizer();if(tts!=null)tts.stop();if(a!=null)a.accept(error("音声入力を停止しました。"));if(b!=null)b.accept(new JSONObject());}
+    private void stopPlayback(){Consumer<JSONObject> b=speaking;speaking=null;utterance="";if(tts!=null)tts.stop();if(b!=null)b.accept(new JSONObject());}
+    private void stopAudio(){voiceSession="";if(continuous!=null){continuous.close();continuous=null;}Consumer<JSONObject> a=listening;listening=null;releaseRecognizer();stopPlayback();if(a!=null)a.accept(error("音声入力を停止しました。"));}
     void scan(String value){if(!active||scanning==null)return;Consumer<JSONObject> r=scanning;scanning=null;r.accept(object("value",value));}
     void activate(){if(host.session().optString("scope").isEmpty())return;active=true;onResume();evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}
     void refreshSession(){evaluateJavascript("window.dispatchEvent(new Event('station-session-refresh'))",null);}

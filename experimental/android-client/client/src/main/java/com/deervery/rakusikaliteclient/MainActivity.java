@@ -361,7 +361,7 @@ public final class MainActivity extends ComponentActivity {
                     .setMultiChoiceItems(new String[]{"認識した文章・下書きをGeminiへ送って会話する"},new boolean[]{settings.getBoolean("geminiConsent:"+liteSession.scope,false)},(dialog,which,checked)->{settings.edit().putBoolean("geminiConsent:"+liteSession.scope,checked).apply();if(agent!=null){agent.stopConversation();agent.refreshSession();}})
                     .setPositiveButton("閉じる",null).show();break;
                 case 6:new AlertDialog.Builder(this).setTitle("アシスタント")
-                    .setMessage("顔かマイクをタップして会話し、長押しで作業を選びます。読み上げ中に押すと停止して訂正を話せます。既存の顔と確認カードをアプリ内に同梱し、端末内の日本語音声認識・計量・スキャナを利用します。\n\n例：個体001、0.07キロ、未入力\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。音声モデルの対応状況は端末によって異なります。Geminiを有効にすると、認識した文章と下書きを会話サービスへ送ります。音声データとAPIキーは送信しません。")
+                    .setMessage("顔かマイクをタップして会話し、長押しで作業を選びます。会話中はマイクをオンに保ち、話し始めると自動で読み上げを止めて訂正を受け付けます。マイクを押すと会話を終了します。既存の顔と確認カードをアプリ内に同梱し、端末内の日本語音声認識・計量・スキャナを利用します。\n\n例：個体001、0.07キロ、未入力\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。自動割り込みはAndroid 13以降の対応する端末内日本語音声モデルが必要です。エコー抑制を利用できない端末では返答を画面に表示します。画面を閉じると録音は停止します。Geminiを有効にすると、認識した文章と下書きを会話サービスへ送ります。音声データとAPIキーは送信しません。")
                     .setPositiveButton("閉じる",null).show();break;
             }
         }).setNegativeButton("閉じる",null).show();

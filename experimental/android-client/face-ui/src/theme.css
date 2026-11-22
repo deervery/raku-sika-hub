@@ -1,0 +1,19 @@
+/* RakuSika Lite palette. Every assistant surface uses these same tokens. */
+:root {
+  --station-primary: #4a6fa5;
+  --station-ink: #1e3a5f;
+  --station-muted: #4b5563;
+  --station-paper: #f8fafc;
+  --station-surface: #ffffff;
+  --station-soft: #eaf0f8;
+  --station-user: #dbe6f5;
+  --station-border: #cbd5e1;
+  --station-focus: #6b8fc2;
+  --station-overlay: #f8fafce8;
+  --station-shadow: #1e3a5f0a;
+  --station-warning: #fff0db;
+  --station-warning-ink: #92400e;
+  --station-transparent: transparent;
+}
+html {color-scheme:light;background:var(--station-paper);color:var(--station-ink);}
+button,input,select {accent-color:var(--station-primary);}

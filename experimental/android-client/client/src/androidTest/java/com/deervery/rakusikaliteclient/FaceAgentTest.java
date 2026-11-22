@@ -20,6 +20,7 @@ public class FaceAgentTest {
         try(ActivityScenario<MainActivity> s=ActivityScenario.launch(MainActivity.class)){
             s.onActivity(a->{FaceAgentView v=new FaceAgentView(a,new FaceAgentView.Host(){
                 public void microphonePermission(){}public void openWork(String path){}
+                public JSONObject session(){try{return new JSONObject().put("scope","fixture:office");}catch(Exception e){throw new AssertionError(e);}}
                 public void weigh(java.util.function.Consumer<JSONObject> callback){reads.incrementAndGet();try{callback.accept(new JSONObject("{\"status\":\"ok\",\"stable\":true,\"value\":0.07,\"unit\":\"kg\"}"));}catch(Exception e){throw new AssertionError(e);}}
             });holder.set(v);a.setContentView(v);v.activate();});
             FaceAgentView v=holder.get();boolean loaded=false;

@@ -18,5 +18,7 @@
   "src/lib/labels/printerOptions.ts",
   "src/lib/constants/form-definitions.ts",
   "src/localIntent.ts",
+  "src/conversation.ts",
+  "src/draftDefaults.ts",
   "src/main.tsx"
 ]

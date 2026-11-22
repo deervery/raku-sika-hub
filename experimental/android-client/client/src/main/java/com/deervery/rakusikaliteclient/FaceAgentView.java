@@ -15,7 +15,7 @@ import java.util.function.Consumer;
 
 /** Bundled original face UI. Only the APK-owned main frame receives the narrow native API. */
 final class FaceAgentView extends WebView {
-    interface Host {void microphonePermission();void openWork(String path);void weigh(Consumer<JSONObject> callback);}
+    interface Host {void microphonePermission();void openWork(String path);void weigh(Consumer<JSONObject> callback);default JSONObject session(){return new JSONObject();}}
     static final String ORIGIN="https://appassets.androidplatform.net";
     private final Host host;
     private boolean active,localTts;
@@ -23,6 +23,8 @@ final class FaceAgentView extends WebView {
     private SpeechRecognizer speech;
     private TextToSpeech tts;
     private Consumer<JSONObject> listening,scanning,speaking;
+    private AssistantApi.Call interpretation;
+    private Future<?> inference;
     private final ExecutorService api=Executors.newSingleThreadExecutor();
     FaceAgentView(Context context,Host host){
         super(context);this.host=host;setBackgroundColor(StationStyle.PAPER);
@@ -43,9 +45,11 @@ final class FaceAgentView extends WebView {
                 if(!main||!ORIGIN.equals(origin.toString())||message.getData()==null||message.getData().length()>16000)return;
                 try{
                     JSONObject request=new JSONObject(message.getData());String id=request.getString("id");if(!id.matches("[0-9]{1,12}"))return;
-                    final int token=generation;Consumer<JSONObject> reply=value->{if(token!=generation||!active)return;try{proxy.postMessage(new JSONObject().put("id",id).put("value",value).toString());}catch(Exception ignored){}};
+                    final String op=request.getString("op");final int token=generation;Consumer<JSONObject> reply=value->{if(token!=generation||(!op.equals("session")&&(!active||host.session().optString("scope").isEmpty())))return;try{proxy.postMessage(new JSONObject().put("id",id).put("value",value).toString());}catch(Exception ignored){}};
+                    if(op.equals("session")){reply.accept(host.session());return;}
                     if(!active)return;
-                    dispatch(request.getString("op"),request.optJSONObject("args"),reply);
+                    if(host.session().optString("scope").isEmpty()){reply.accept(error("業務画面でログインしてください。"));clearSession();host.openWork("");return;}
+                    dispatch(op,request.optJSONObject("args"),reply);
                 }catch(Exception ignored){}
             });
         }
@@ -63,7 +67,7 @@ final class FaceAgentView extends WebView {
         if(args==null)args=new JSONObject();
         switch(op){
             case "listen":listen(reply);break;
-            case "stop":stopAudio();reply.accept(new JSONObject());break;
+            case "stop":stopAudio();cancelInterpretation();reply.accept(new JSONObject());break;
             case "speak":
                 String text=args.optString("text");if(text.length()>400){reply.accept(error("応答が長すぎます。"));break;}
                 stopAudio();if(!localTts){reply.accept(new JSONObject());break;}
@@ -71,17 +75,18 @@ final class FaceAgentView extends WebView {
             case "weigh":host.weigh(reply);break;
             case "scan":
                 if(scanning!=null)scanning.accept(error("新しい読取りを開始しました。"));scanning=reply;
-                postDelayed(()->{if(scanning==reply){scanning=null;reply.accept(error("スキャナを操作してください。機器・設定で読取り機を選べます。"));}},20000);break;
+                postDelayed(()->{if(scanning==reply){scanning=null;reply.accept(error("スキャナを操作してください。メニューの機器設定で読取り機を選べます。"));}},20000);break;
             case "work":
                 String path=args.optString("path");if(Arrays.asList("","/inventory/history","/reports/labels","/input/sales/new","/input/meat-inbound").contains(path)){reply.accept(new JSONObject());host.openWork(path);}else reply.accept(error("対応していない画面です。"));break;
             case "interpret":
-                final JSONObject input=args;final int token=generation;
-                api.submit(()->{JSONObject result=AssistantApi.interpret(input);post(()->{if(active&&generation==token)reply.accept(result);});});break;
+                if(!host.session().optBoolean("geminiEnabled")){reply.accept(error("音声・AI設定でGeminiの利用をオンにしてください。"));break;}
+                cancelInterpretation();final JSONObject input=args;final int token=generation;final AssistantApi.Call call=new AssistantApi.Call();interpretation=call;
+                inference=api.submit(()->{JSONObject result=call.execute(input);post(()->{if(active&&generation==token&&interpretation==call&&!host.session().optString("scope").isEmpty()){interpretation=null;reply.accept(result);}});});break;
             default:reply.accept(error("対応していない操作です。"));
         }
     }
     private void listen(Consumer<JSONObject> reply){
-        stopAudio();
+        stopAudio();cancelInterpretation();
         if(getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){reply.accept(error("マイクを許可したら、顔をタップしてください。"));host.microphonePermission();return;}
         if(Build.VERSION.SDK_INT<31||!SpeechRecognizer.isOnDeviceRecognitionAvailable(getContext())){reply.accept(error("端末内の日本語音声モデルが必要です。顔を長押しすると画面で入力できます。"));return;}
         listening=reply;final Consumer<JSONObject> current=reply;
@@ -97,7 +102,11 @@ final class FaceAgentView extends WebView {
     private void releaseRecognizer(){if(speech!=null){speech.cancel();speech.destroy();speech=null;}}
     private void stopAudio(){Consumer<JSONObject> a=listening,b=speaking;listening=null;speaking=null;utterance="";releaseRecognizer();if(tts!=null)tts.stop();if(a!=null)a.accept(error("音声入力を停止しました。"));if(b!=null)b.accept(new JSONObject());}
     void scan(String value){if(!active||scanning==null)return;Consumer<JSONObject> r=scanning;scanning=null;r.accept(object("value",value));}
-    void activate(){active=true;onResume();evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}
-    void suspend(){evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);generation++;active=false;stopAudio();scanning=null;onPause();}
+    void activate(){if(host.session().optString("scope").isEmpty())return;active=true;onResume();evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}
+    void refreshSession(){evaluateJavascript("window.dispatchEvent(new Event('station-session-refresh'))",null);}
+    void clearSession(){stopConversation();evaluateJavascript("window.dispatchEvent(new Event('station-session-cleared'))",null);}
+    void stopConversation(){stopAudio();cancelInterpretation();evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);}
+    private void cancelInterpretation(){if(interpretation!=null){interpretation.cancel();interpretation=null;}if(inference!=null){inference.cancel(true);inference=null;}}
+    void suspend(){evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);generation++;active=false;stopAudio();cancelInterpretation();scanning=null;onPause();}
     @Override public void destroy(){suspend();if(tts!=null)tts.shutdown();api.shutdownNow();super.destroy();}
 }

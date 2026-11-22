@@ -39,7 +39,13 @@ public class WorkspaceTest {
                 web.loadDataWithBaseURL("https://rakusika.com/fixture","<input id='draft' aria-label='draft'>","text/html","UTF-8","https://rakusika.com/fixture");
             });
             assertTrue(loaded.await(20,TimeUnit.SECONDS));
-            scenario.onActivity(a->{a.findViewById(R.id.tab_agent).performClick();assertEquals(View.VISIBLE,a.findViewById(R.id.agent_panel).getVisibility());});
+            scenario.onActivity(a->{
+                // Verified session fixture; production tab entry must always pass the server check.
+                try{java.lang.reflect.Field session=MainActivity.class.getDeclaredField("liteSession");session.setAccessible(true);session.set(a,new LiteSession("fixture:office",System.currentTimeMillis()+60000));
+                    java.lang.reflect.Method show=MainActivity.class.getDeclaredMethod("showAgent",boolean.class);show.setAccessible(true);show.invoke(a,true);
+                }catch(Exception e){throw new AssertionError(e);}
+                assertEquals(View.VISIBLE,a.findViewById(R.id.agent_panel).getVisibility());
+            });
             scenario.onActivity(a->{a.findViewById(R.id.tab_work).performClick();assertSame(holder.get(),a.findViewById(R.id.work_web));holder.get().evaluateJavascript("document.getElementById('draft').value+':'+window.counter",r->{result.set(r);done.countDown();});});
             assertTrue(done.await(10,TimeUnit.SECONDS));assertEquals("\"未保存の入力:7\"",result.get());
         }

@@ -63,6 +63,13 @@ public final class MainActivity extends ComponentActivity {
     private Button workTab,agentTab;
     private volatile boolean agentMode;
     private int workspaceEpoch;
+    private LiteSession liteSession;
+    private LiteSession pendingSession;
+    private String pendingTokenFingerprint="";
+    private int authAttempt;
+    private boolean authBusy,authOpening;
+    private final android.os.Handler authClock=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable authRefresh=()->{if(this.visible&&agentMode)requestAssistant(false);};
     private volatile boolean visible,usbMode,trustedPage;
     private UsbScale usbScale;
     private UsbScaleRoutes usbRoutes;
@@ -88,6 +95,7 @@ public final class MainActivity extends ComponentActivity {
         @Override public void onInputDeviceRemoved(int id){scannerBuffer.clear();}
         @Override public void onInputDeviceChanged(int id){scannerBuffer.clear();}
     };
+    private final ExecutorService authChecks=Executors.newSingleThreadExecutor();
     private final ExecutorService checks = Executors.newSingleThreadExecutor();
 
     @Override public void onCreate(Bundle state) {
@@ -148,7 +156,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(StationStyle.dp(this,24),0,StationStyle.dp(this,24),StationStyle.dp(this,8));parent.addView(input,lp);return input;
     }
     private void disposeWeb() {
-        workspaceEpoch++;
+        workspaceEpoch++;cancelAuthCheck();liteSession=null;authClock.removeCallbacksAndMessages(null);
         if(agent!=null){agent.destroy();agent=null;}panes=null;
         trustedPage=false;
         if(usbScale!=null)usbScale.disconnect();
@@ -211,24 +219,26 @@ public final class MainActivity extends ComponentActivity {
 
     private void openLite() {
         disposeWeb(); LinearLayout root=layout();
-        LinearLayout header=new LinearLayout(this);header.setGravity(android.view.Gravity.CENTER_VERTICAL);header.setPadding(StationStyle.dp(this,20),StationStyle.dp(this,10),StationStyle.dp(this,16),StationStyle.dp(this,10));root.addView(header);
-        TextView brand=StationStyle.text(this,"ラクシカ",22,true);header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
-        Button settingsButton=StationStyle.button(this,"機器・設定",false,this::showDeviceSettings);settingsButton.setTextSize(13);header.addView(settingsButton);
-        connection=StationStyle.text(this,usbMode?"USB計量器を使用":hubUrl.isEmpty()?"施設ハブ未設定":"施設ハブを設定済み",13,false);
-        connection.setTextColor(StationStyle.MUTED);connection.setPadding(StationStyle.dp(this,22),0,StationStyle.dp(this,22),StationStyle.dp(this,8));root.addView(connection);
-        connection.setOnClickListener(v->showDeviceSettings());
+        LinearLayout tabs=new LinearLayout(this);tabs.setGravity(android.view.Gravity.CENTER_VERTICAL);tabs.setBaselineAligned(false);
+        tabs.setPadding(StationStyle.dp(this,12),StationStyle.dp(this,8),StationStyle.dp(this,12),StationStyle.dp(this,8));root.addView(tabs);
+        Button menu=StationStyle.button(this,"☰",false,this::showDeviceSettings);menu.setContentDescription("メニュー・機器設定");menu.setTextSize(24);
+        tabs.addView(menu,new LinearLayout.LayoutParams(StationStyle.dp(this,56),StationStyle.dp(this,56)));
+        workTab=StationStyle.button(this,"業務",true,()->{cancelAuthCheck();showAgent(false);});workTab.setId(R.id.tab_work);
+        agentTab=StationStyle.button(this,"アシスタント",false,()->requestAssistant(true));agentTab.setId(R.id.tab_agent);
+        LinearLayout.LayoutParams workSize=new LinearLayout.LayoutParams(0,StationStyle.dp(this,56),1);workSize.setMargins(StationStyle.dp(this,8),0,StationStyle.dp(this,8),0);
+        tabs.addView(workTab,workSize);tabs.addView(agentTab,new LinearLayout.LayoutParams(0,StationStyle.dp(this,56),1.5f));agentMode=false;
+        connection=StationStyle.text(this,"機器はメニューから設定できます",16,true);
         web=new WebView(this);web.setId(R.id.work_web);web.setBackgroundColor(StationStyle.PAPER);
         agent=new FaceAgentView(this,new FaceAgentView.Host(){
             public void microphonePermission(){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},AGENT_MICROPHONE);}
             public void openWork(String path){navigateWork(path);}
             public void weigh(java.util.function.Consumer<JSONObject> result){weighForAgent(result);}
+            public JSONObject session(){
+                if(liteSession==null||!liteSession.valid())return new JSONObject();
+                try{return new JSONObject().put("scope",liteSession.scope).put("geminiEnabled",settings.getBoolean("geminiConsent:"+liteSession.scope,false));}catch(Exception e){return new JSONObject();}
+            }
         });agent.setId(R.id.agent_panel);
         panes=new WorkspacePanes(this,web,agent);root.addView(panes,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout tabs=new LinearLayout(this);tabs.setBaselineAligned(false);tabs.setPadding(StationStyle.dp(this,16),StationStyle.dp(this,10),StationStyle.dp(this,16),StationStyle.dp(this,10));root.addView(tabs);
-        workTab=StationStyle.button(this,"業務",true,()->showAgent(false));workTab.setId(R.id.tab_work);
-        agentTab=StationStyle.button(this,"アシスタント",false,()->showAgent(true));agentTab.setId(R.id.tab_agent);
-        LinearLayout.LayoutParams tabSize=new LinearLayout.LayoutParams(0,-2,1);tabSize.setMargins(0,0,StationStyle.dp(this,8),0);
-        tabs.addView(workTab,tabSize);tabs.addView(agentTab,new LinearLayout.LayoutParams(0,-2,1));agentMode=false;
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setAllowFileAccess(false);
@@ -241,13 +251,19 @@ public final class MainActivity extends ComponentActivity {
         String resolvedHub=hubUrl.isEmpty()&&usbMode?UsbScaleRoutes.LOCAL:hubUrl;
         String setupScript="if(window===window.top){window.__stationEdited=false;document.addEventListener('input',()=>window.__stationEdited=true,true);"+(resolvedHub.isEmpty()?"localStorage.removeItem('rakuSikaHubUrl');":"localStorage.setItem('rakuSikaHubUrl',"+JSONObject.quote(resolvedHub)+");")+"}";
         setupScript+=";if(window===window.top){"+WorkspaceScript.guard(resolvedHub.isEmpty()?"http://localhost:19800":resolvedHub)+"}";
+        if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
+            WebViewCompat.addWebMessageListener(web,"StationSession",Collections.singleton(EndpointPolicy.origin(webUrl)),(view,message,origin,main,reply)->{
+                if(!main||!EndpointPolicy.sameOrigin(webUrl,origin.toString())||!EndpointPolicy.sameOrigin(webUrl,view.getUrl())||message.getData()==null||message.getData().length()>16000)return;
+                try{receiveSession(new JSONObject(message.getData()));}catch(Exception ignored){}
+            });
+        }
         if(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(web,setupScript,Collections.singleton(EndpointPolicy.origin(webUrl)));
         } else {
             connection.setText("Android System WebViewを更新してください。設定適用前の誤接続を避けるため画面を開いていません。");return;
         }
         web.setWebViewClient(new WebViewClient(){
-            @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon){trustedPage=EndpointPolicy.sameOrigin(webUrl,url);}
+            @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon){trustedPage=EndpointPolicy.sameOrigin(webUrl,url);if(!trustedPage||android.net.Uri.parse(url).getPath().startsWith("/login"))lockAssistant();}
             @Override public android.webkit.WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request){
                 return usbMode?usbRoutes.intercept(request,hubUrl,webUrl,visible&&!agentMode&&trustedPage):null;
             }
@@ -257,8 +273,8 @@ public final class MainActivity extends ComponentActivity {
                 if("https".equals(request.getUrl().getScheme()))external(request.getUrl().toString());
                 return true;
             }
-            @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error){handler.cancel();connection.setText("HTTPS証明書を確認できないため接続を停止しました。");}
-            @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){if(request.isForMainFrame())connection.setText("画面に接続できません。Tailscaleと通信状態を確認してください。自動再送は行いません。");}
+            @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error){handler.cancel();lockAssistant();Toast.makeText(MainActivity.this,"HTTPS証明書を確認できないため接続を停止しました。",Toast.LENGTH_LONG).show();}
+            @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){if(request.isForMainFrame()){lockAssistant();Toast.makeText(MainActivity.this,"業務画面に接続できません。通信状態を確認してください。",Toast.LENGTH_LONG).show();}}
         });
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onPermissionRequest(PermissionRequest request){runOnUiThread(()->requestMedia(request));}
@@ -275,8 +291,39 @@ public final class MainActivity extends ComponentActivity {
         if(usbMode){connectUsb();showUsbStatus();}
     }
 
+    private void cancelAuthCheck(){authAttempt++;authBusy=false;pendingSession=null;pendingTokenFingerprint="";if(agentTab!=null)agentTab.setText("アシスタント");}
+    private void lockAssistant(){cancelAuthCheck();liteSession=null;authClock.removeCallbacksAndMessages(null);if(agent!=null)agent.clearSession();showAgent(false);}
+    private void requestAssistant(boolean opening){
+        if(authBusy||web==null||!visible)return;
+        if(!EndpointPolicy.sameOrigin(webUrl,web.getUrl())||!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
+            lockAssistant();Toast.makeText(this,"業務画面でログインしてください。",Toast.LENGTH_LONG).show();return;
+        }
+        authBusy=true;authOpening=opening;final int ticket=++authAttempt;agentTab.setText("確認中…");
+        web.evaluateJavascript(LiteSession.snapshotScript(ticket),null);
+        authClock.postDelayed(()->{if(authBusy&&authAttempt==ticket){lockAssistant();Toast.makeText(this,"ログインを確認できませんでした。業務画面と通信状態を確認してください。",Toast.LENGTH_LONG).show();}},10000);
+    }
+    private void receiveSession(JSONObject candidate){
+        final int ticket=candidate.optInt("ticket",-1);if(!authBusy||ticket!=authAttempt)return;
+        final String token=candidate.optString("token"),uid=candidate.optString("uid"),facility=candidate.optString("facility");
+        final boolean opening=authOpening;
+        if(candidate.optBoolean("confirm")){
+            if(pendingSession==null||!pendingSession.valid()||!pendingSession.scope.equals(uid+":"+facility)||!pendingTokenFingerprint.equals(LiteSession.fingerprint(token))){lockAssistant();return;}
+            liteSession=pendingSession;pendingSession=null;pendingTokenFingerprint="";authBusy=false;agentTab.setText("アシスタント");agent.refreshSession();if(opening)showAgent(true);
+            authClock.removeCallbacks(authRefresh);authClock.postDelayed(authRefresh,50000);return;
+        }
+        authChecks.submit(()->{
+            LiteSession verified=token.isEmpty()?null:LiteSession.verify(EndpointPolicy.origin(webUrl),token,uid,facility);
+            runOnUiThread(()->{
+                if(ticket!=authAttempt||!visible||isDestroyed())return;
+                if(verified==null){lockAssistant();Toast.makeText(this,"アシスタントを使うには、業務画面でログインしてください。",Toast.LENGTH_LONG).show();return;}
+                pendingSession=verified;pendingTokenFingerprint=LiteSession.fingerprint(token);
+                // Re-read current Lite identity after the network check; logout/account switches win.
+                web.evaluateJavascript(LiteSession.snapshotScript(ticket,true),null);
+            });
+        });
+    }
     private void showAgent(boolean value){
-        if(panes==null||agentMode==value)return;workspaceEpoch++;agentMode=value;
+        if(panes==null||agentMode==value)return;if(value&&(liteSession==null||!liteSession.valid()))return;workspaceEpoch++;agentMode=value;
         usbScale.disconnect();connectUsb();scannerBuffer.clear();
         denyPendingMedia();
         if(value){
@@ -300,17 +347,21 @@ public final class MainActivity extends ComponentActivity {
         });
     }
     private void showDeviceSettings(){
-        String[] choices={"計量器", "スキャナ", "施設ハブの接続確認", "接続先を変更", "ブラウザーで開く", "アシスタントについて"};
-        new AlertDialog.Builder(this).setTitle("機器と設定").setItems(choices,(d,i)->{
+        if(agentMode&&agent!=null)agent.stopConversation();
+        String[] choices={"計量器", "スキャナ", "施設ハブの接続確認", "接続先を変更", "ブラウザーで開く", "音声・AI設定", "アシスタントについて"};
+        new AlertDialog.Builder(this).setTitle("メニュー").setItems(choices,(d,i)->{
             switch(i){
                 case 0:chooseScale();break;
                 case 1:chooseScanner();break;
-                case 2:if(!hubUrl.isEmpty())probe(hubUrl,connection);else connection.setText("施設ハブ未設定 · USB計量器は直接接続できます");break;
+                case 2:TextView status=StationStyle.text(this,"",18,true);status.setPadding(32,24,32,24);new AlertDialog.Builder(this).setTitle("接続状態").setView(status).setPositiveButton("閉じる",null).show();if(!hubUrl.isEmpty())probe(hubUrl,status);else status.setText("USB計量器は直接接続できます。施設ハブを使う場合は接続先を設定してください。");break;
                 case 3:new AlertDialog.Builder(this).setTitle("接続先の変更").setMessage("画面を読み直します。編集中の内容を保存してから進んでください。")
                     .setNegativeButton("戻る",null).setPositiveButton("変更する",(a,b)->showSetup()).show();break;
                 case 4:external(webUrl);break;
-                case 5:new AlertDialog.Builder(this).setTitle("アシスタント")
-                    .setMessage("顔をタップして会話し、長押しで入力・作業メニューを開きます。既存の顔と確認カードをアプリ内に同梱し、端末内の日本語音声認識・計量・スキャナを利用します。\n\n例：個体001、0.07キロ、未入力\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。音声モデルの対応状況は端末によって異なります。Geminiを有効にすると、認識した文章と下書きを会話サービスへ送ります。音声データとAPIキーは送信しません。")
+                case 5:if(liteSession==null||!liteSession.valid()){Toast.makeText(this,"先に業務画面でログインし、アシスタントを開いてください。",Toast.LENGTH_LONG).show();break;}new AlertDialog.Builder(this).setTitle("音声・AI設定")
+                    .setMultiChoiceItems(new String[]{"認識した文章・下書きをGeminiへ送って会話する"},new boolean[]{settings.getBoolean("geminiConsent:"+liteSession.scope,false)},(dialog,which,checked)->{settings.edit().putBoolean("geminiConsent:"+liteSession.scope,checked).apply();if(agent!=null){agent.stopConversation();agent.refreshSession();}})
+                    .setPositiveButton("閉じる",null).show();break;
+                case 6:new AlertDialog.Builder(this).setTitle("アシスタント")
+                    .setMessage("顔かマイクをタップして会話し、長押しで作業を選びます。読み上げ中に押すと停止して訂正を話せます。既存の顔と確認カードをアプリ内に同梱し、端末内の日本語音声認識・計量・スキャナを利用します。\n\n例：個体001、0.07キロ、未入力\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。音声モデルの対応状況は端末によって異なります。Geminiを有効にすると、認識した文章と下書きを会話サービスへ送ります。音声データとAPIキーは送信しません。")
                     .setPositiveButton("閉じる",null).show();break;
             }
         }).setNegativeButton("閉じる",null).show();
@@ -320,7 +371,7 @@ public final class MainActivity extends ComponentActivity {
         checks.submit(()->{
             JSONObject result;
             if(usbMode)result=usbScale.command("Q");
-            else if(hubUrl.isEmpty())result=UsbScale.error("NOT_CONNECTED","機器・設定から計量器を接続してください。");
+            else if(hubUrl.isEmpty())result=UsbScale.error("NOT_CONNECTED","メニューの機器設定から計量器を接続してください。");
             else{
                 HttpURLConnection c=null;
                 try{
@@ -330,7 +381,7 @@ public final class MainActivity extends ComponentActivity {
                     java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();
                     try(java.io.InputStream in=stream){byte[] part=new byte[1024];int n;while((n=in.read(part))!=-1){if(bytes.size()+n>8192)throw new java.io.IOException();bytes.write(part,0,n);}}
                     result=new JSONObject(bytes.toString("UTF-8"));
-                }catch(Exception e){result=UsbScale.error("CONNECTION","計量器に接続できません。機器・設定を確認してください。");}
+                }catch(Exception e){result=UsbScale.error("CONNECTION","計量器に接続できません。メニューの機器設定を確認してください。");}
                 finally{if(c!=null)c.disconnect();}
             }
             JSONObject response=result;runOnUiThread(()->{if(!isDestroyed()&&visible&&agentMode&&token==workspaceEpoch)callback.accept(response);});
@@ -448,8 +499,8 @@ public final class MainActivity extends ComponentActivity {
             }catch(Exception e){Toast.makeText(this,"保存できませんでした",Toast.LENGTH_SHORT).show();}
         }).show();
     }
-    @Override protected void onResume(){super.onResume();visible=true;if(web!=null&&!agentMode){web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}if(agent!=null&&agentMode)agent.activate();connectUsb();}
-    @Override protected void onPause(){visible=false;workspaceEpoch++;if(agent!=null)agent.suspend();usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();}
+    @Override protected void onResume(){super.onResume();visible=true;if(web!=null&&!agentMode){web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}if(agent!=null&&agentMode){showAgent(false);requestAssistant(true);}connectUsb();}
+    @Override protected void onPause(){visible=false;workspaceEpoch++;cancelAuthCheck();authClock.removeCallbacks(authRefresh);if(agent!=null)agent.suspend();usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();}
     @Override protected void onStop(){denyPendingMedia();super.onStop();}
-    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();checks.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();authChecks.shutdownNow();checks.shutdownNow();super.onDestroy();}
 }

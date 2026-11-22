@@ -30,6 +30,7 @@ export function VoiceStation({
   form,
   values,
   enteredKeys,
+  defaultKeys = [],
   options = {},
   onApply,
   onReview,
@@ -42,6 +43,7 @@ export function VoiceStation({
   form: FormDefinition;
   values: Record<string, unknown>;
   enteredKeys?: string[];
+  defaultKeys?: string[];
   options?: ChoiceOverrides;
   onApply: (patch: InputPatch, base: Record<string, unknown>) => void;
   onReview: () => void;
@@ -66,8 +68,7 @@ export function VoiceStation({
   const operationPanel = useRef<StationOperationsHandle>(null);
   const [page, setPage] = useState(0);
   const [editor, setEditor] = useState<{ key: string; query?: string } | null>(null);
-  const [consent, setConsent] = useState(true);
-  const [settings, setSettings] = useState(false);
+  const suppressFaceClick = useRef(0);
   const [voice, setVoice] = useState('off');
   const [history, setHistory] = useState(false);
   const historyRef = useRef(false);
@@ -96,7 +97,7 @@ export function VoiceStation({
   useEffect(() => {
     const resize = () => {
       const columns = window.innerWidth <= 600 ? 2 : 4;
-      const rows = Math.max(1, Math.floor((window.innerHeight - 250) / 105));
+      const rows = Math.max(1, Math.floor((window.innerHeight - 320) / 110));
       setPageUnits(Math.max(columns, Math.min(12, rows * columns)));
     };
     resize();
@@ -251,20 +252,16 @@ export function VoiceStation({
       );
     return unresolved ? openChoices(unresolved) : { ok: true };
   }
-  function start() {
-    if (disabled || voice !== 'off') return;
+  function start(interrupt = false) {
+    if (disabled || (voice !== 'off' && !interrupt)) return;
+    const ticket = ++generation.current;
     session.current?.stop();
     session.current = null;
-    if (!consent) {
-      setSettings(true);
-      return;
-    }
-    const ticket = ++generation.current;
     const base = current.current.values;
     const definition = current.current.form;
     const orderBase = counter.current + 1;
     try {
-      session.current = connect(displayValues, current.current.options, {
+      session.current = connect(Object.fromEntries(Object.entries(displayValues).filter(([key]) => !defaultKeys.includes(key) || key in pendingRef.current)), current.current.options, {
         state: (state) => {
           if (ticket === generation.current) {
             setVoice(state);
@@ -338,6 +335,15 @@ export function VoiceStation({
       say('音声を開始できませんでした。アプリを開き直してください。');
     }
   }
+  function voiceAction() {
+    if (voice === 'listening') stop();
+    else start(true); // One tap cancels playback/inference and immediately accepts the correction.
+  }
+  function chooseWork() {
+    stop();
+    try {operationPanel.current?.show({operation:'menu'});}
+    catch (error) {say(error instanceof Error ? error.message : '作業を選んでください。');}
+  }
   function manual(key: string, value: unknown) {
     const state = current.current;
     if (state.disabled) throw new Error('今は変更できません。');
@@ -377,10 +383,11 @@ export function VoiceStation({
       <button
         className={css.faceButton}
         type="button"
-        aria-label="顔をタップして話す。長押しで入力・作業メニュー"
-        onClick={() => (voice === 'off' ? start() : stop())}
-        onContextMenu={(event) => {event.preventDefault(); setSettings(true);}}
+        aria-label="顔を押すと会話、長押しで作業を選ぶ"
+        onClick={() => {if(Date.now() > suppressFaceClick.current) voiceAction();}}
+        onContextMenu={(event) => {event.preventDefault(); suppressFaceClick.current=Date.now()+900; chooseWork();}}
       >
+        {!board && !operationVisible && <span className={css.faceHint}>私の顔を押したり、長押ししてね</span>}
         <svg viewBox="0 0 320 180" role="img" aria-label="案内する表情">
           <g className={css.eyes}>
             <ellipse cx="108" cy="69" rx="11" ry="16" />
@@ -441,6 +448,7 @@ export function VoiceStation({
                   <span className={css.label}>
                     {field.label}
                     {field.required && <small>必須</small>}
+                    {defaultKeys.includes(key) && !(key in pending) && <small>初期値</small>}
                   </span>
                   <strong>
                     {value}
@@ -482,7 +490,7 @@ export function VoiceStation({
               </nav>
             )}
             <button type="button" onClick={() => setBoard(false)}>
-              顔に戻る
+              ホームに戻る
             </button>
             <button type="button" onClick={finish} disabled={disabled}>
               下書きを保存
@@ -520,39 +528,16 @@ export function VoiceStation({
       <div className={css.controls}>
         <button
           type="button"
-          aria-label={voice === 'off' ? 'マイクで話す' : '聞取りを止める'}
+          aria-label={voice === 'speaking' || voice === 'connecting' ? '割り込んで話す' : voice === 'listening' ? '聞取りを止める' : 'マイクで話す'}
           aria-pressed={voice !== 'off'}
           disabled={disabled}
-          onClick={() => (voice === 'off' ? start() : stop())}
+          onClick={voiceAction}
         >
           <svg viewBox="0 0 24 24">
             <rect x="9" y="2" width="6" height="13" rx="3" />
             <path d="M5 10v2a7 7 0 0014 0v-2M12 19v3m-4 0h8" />
           </svg>
-        </button>
-        <button type="button" aria-label="下書きを確認" onClick={() => changeMode('all')}>
-          <svg viewBox="0 0 24 24">
-            <rect x="5" y="4" width="14" height="17" rx="3" />
-            <path d="M9 4V2h6v2M9 10h6M9 15h6" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          aria-label="作業を選ぶ"
-          onClick={() => {
-            try {
-              operationPanel.current?.show({ operation: 'menu' });
-            } catch (error) {
-              say(error instanceof Error ? error.message : '作業を確認してください');
-            }
-          }}
-        >
-          <svg viewBox="0 0 24 24">
-            <rect x="3" y="3" width="7" height="7" rx="2" />
-            <rect x="14" y="3" width="7" height="7" rx="2" />
-            <rect x="3" y="14" width="7" height="7" rx="2" />
-            <rect x="14" y="14" width="7" height="7" rx="2" />
-          </svg>
+          <span>{voice === 'speaking' || voice === 'connecting' ? '割り込んで話す' : voice === 'listening' ? '聞取りを止める' : '話す'}</span>
         </button>
         <span className={css.status} role="status">
           {voice === 'connecting'
@@ -564,30 +549,6 @@ export function VoiceStation({
                 : '聞いています'}
         </span>
       </div>
-      {settings && (
-        <div className={css.overlay}>
-          <div className={css.editor} role="dialog" aria-modal="true" aria-label="音声・AIの設定">
-            <h2>会話と作業</h2>
-            <button type="button" onClick={() => {setSettings(false);changeMode('all');}}>入力内容を見る</button>
-            <button type="button" onClick={() => {setSettings(false);operationPanel.current?.show({operation:'menu'});}}>作業を選ぶ</button>
-            <label><input type="checkbox" defaultChecked={localStorage.getItem('gemini-consent') === '1'} onChange={(e) => {localStorage.setItem('gemini-consent',e.target.checked?'1':'0');stop();}}/>曖昧な依頼と雑談は、認識した文章をGeminiに送って会話する</label>
-            <label>
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => {
-                  if (!e.target.checked) stop();
-                  setConsent(e.target.checked);
-                }}
-              />
-              端末内の日本語音声認識を使う
-            </label>
-            <button type="button" onClick={() => setSettings(false)}>
-              会話に戻る
-            </button>
-          </div>
-        </div>
-      )}
       {editor && (
         <div className={css.overlay}>
           <StationFieldEditor

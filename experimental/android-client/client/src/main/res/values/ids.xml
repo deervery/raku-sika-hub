@@ -1,0 +1,6 @@
+<resources>
+    <item name="work_web" type="id" />
+    <item name="tab_work" type="id" />
+    <item name="tab_agent" type="id" />
+    <item name="agent_panel" type="id" />
+</resources>

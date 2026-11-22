@@ -49,15 +49,20 @@ import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Existing Lite UI + facility Hub client. No Gemini key or native device bridge. */
+/** Existing Lite UI, native local assistant and USB/HID peripherals in one workspace. */
 public final class MainActivity extends ComponentActivity {
-    private static final int MEDIA_PERMISSION = 71, FILE_PICKER = 72;
+    private static final int MEDIA_PERMISSION = 71, FILE_PICKER = 72, AGENT_MICROPHONE=73;
     private SharedPreferences settings;
     private WebView web;
     private PermissionRequest pendingMedia;
     private ValueCallback<Uri[]> pendingFile;
     private String webUrl, hubUrl;
     private TextView connection;
+    private WorkspacePanes panes;
+    private AgentPanel agent;
+    private Button workTab,agentTab;
+    private volatile boolean agentMode;
+    private int workspaceEpoch;
     private volatile boolean visible,usbMode,trustedPage;
     private UsbScale usbScale;
     private UsbScaleRoutes usbRoutes;
@@ -89,7 +94,8 @@ public final class MainActivity extends ComponentActivity {
         super.onCreate(state);
         getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){
             @Override public void handleOnBackPressed(){
-                if(web!=null&&web.canGoBack())web.goBack();
+                if(agentMode&&panes!=null)showAgent(false);
+                else if(web!=null&&web.canGoBack())web.goBack();
                 else {setEnabled(false);getOnBackPressedDispatcher().onBackPressed();setEnabled(true);}
             }
         });
@@ -117,7 +123,7 @@ public final class MainActivity extends ComponentActivity {
             }
         };
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xfff4f8f5);
+        root.setBackgroundColor(StationStyle.PAPER);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
@@ -128,18 +134,22 @@ public final class MainActivity extends ComponentActivity {
         setContentView(root); return root;
     }
     private Button button(LinearLayout parent, String text, Runnable action) {
-        Button b = new Button(this); b.setText(text); b.setAllCaps(false); b.setMinHeight(52);
-        b.setOnClickListener(v -> action.run()); parent.addView(b); return b;
+        Button b=StationStyle.button(this,text,false,action);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(StationStyle.dp(this,20),StationStyle.dp(this,6),StationStyle.dp(this,20),StationStyle.dp(this,6));
+        parent.addView(b,lp);return b;
     }
     private TextView label(LinearLayout parent, String text, int size) {
-        TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setPadding(20,16,20,12);parent.addView(view);return view;
+        TextView view=StationStyle.text(this,text,size,size>=22);view.setPadding(StationStyle.dp(this,24),StationStyle.dp(this,12),StationStyle.dp(this,24),StationStyle.dp(this,8));parent.addView(view);return view;
     }
     private EditText input(LinearLayout parent, String value) {
         EditText input = new EditText(this); input.setSingleLine(true); input.setText(value);
         input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        input.setTextSize(18);parent.addView(input);return input;
+        input.setTextSize(17);input.setTextColor(StationStyle.INK);input.setPadding(StationStyle.dp(this,16),StationStyle.dp(this,16),StationStyle.dp(this,16),StationStyle.dp(this,16));input.setBackground(StationStyle.shape(this,StationStyle.WHITE,16));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(StationStyle.dp(this,24),0,StationStyle.dp(this,24),StationStyle.dp(this,8));parent.addView(input,lp);return input;
     }
     private void disposeWeb() {
+        workspaceEpoch++;
+        if(agent!=null){agent.destroy();agent=null;}panes=null;
         trustedPage=false;
         if(usbScale!=null)usbScale.disconnect();
         denyPendingMedia();
@@ -151,18 +161,19 @@ public final class MainActivity extends ComponentActivity {
         android.widget.ScrollView scroll=new android.widget.ScrollView(this);
         frame.addView(scroll,new LinearLayout.LayoutParams(-1,-1));
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);scroll.addView(root);
-        label(root,"ラクシカライト Android",28);
-        label(root,"既存の画面・アカウントを利用します。ハブのプリンタ・スキャナ・計量器を施設単位で接続します。",17);
-        label(root,"ライトのURL",18); EditText site=input(root,webUrl);
-        label(root,"施設ハブのHTTPS URL（未設定でも画面は開けます）",18); EditText hub=input(root,hubUrl);
-        button(root,"検証用officeハブを選ぶ",()->hub.setText("https://raku-sika-hub-office.zapus-opah.ts.net"));
-        label(root,"Tailscaleをオンにしてください。印刷先が変わるため、施設のハブURLを確認して保存します。",16);
+        label(root,"ラクシカステーション",28);
+        label(root,"施設につなぐ",23);
+        label(root,"いつものアカウントと、施設の機器を使えます。",17);
+        label(root,"業務画面",15); EditText site=input(root,webUrl);
+        label(root,"施設ハブのHTTPS URL",15); EditText hub=input(root,hubUrl);
+        button(root,"officeの接続先を入力",()->hub.setText("https://raku-sika-hub-office.zapus-opah.ts.net"));
+        label(root,"施設ハブを使う場合はTailscaleをオンにしてください。USB計量器だけを使う場合は、ハブを空欄にできます。",15);
         TextView result=label(root,"",16);
         button(root,"接続を確認（印刷しません）",()-> {
             try { String target=EndpointPolicy.hub(hub.getText().toString()); if(target.isEmpty())throw new IllegalArgumentException("ハブURLを入力してください。");probe(target,result); }
             catch(IllegalArgumentException e){result.setText(e.getMessage());}
         });
-        button(root,"この接続先でライトを開く",()-> {
+        button(root,"この施設で始める",()-> {
             try {
                 String nextWeb=EndpointPolicy.web(site.getText().toString());
                 String nextHub=EndpointPolicy.hub(hub.getText().toString());
@@ -200,21 +211,24 @@ public final class MainActivity extends ComponentActivity {
 
     private void openLite() {
         disposeWeb(); LinearLayout root=layout();
-        LinearLayout toolbar=new LinearLayout(this);root.addView(toolbar);
-        button(toolbar,"ホーム",()-> web.loadUrl(webUrl));
-        button(toolbar,"接続設定",()->new AlertDialog.Builder(this).setMessage("編集中の内容があれば保存してから接続設定へ進んでください。")
-            .setNegativeButton("戻る",null).setPositiveButton("設定へ",(d,w)->showSetup()).show());
-        button(toolbar,"ブラウザー",()->external(webUrl));
-        button(toolbar,"スキャナ",this::chooseScanner);
-        button(toolbar,"計量器",this::chooseScale);
-        for(int i=0;i<toolbar.getChildCount();i++){
-            Button item=(Button)toolbar.getChildAt(i);
-            item.setTextSize(12);item.setMinWidth(0);item.setMinimumWidth(0);
-            item.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));
-        }
-        connection=label(root,hubUrl.isEmpty()?"ハブ未設定 · 印刷/計量には接続設定が必要です":"施設ハブ: "+hubUrl,13);
-        connection.setOnClickListener(v->{if(!hubUrl.isEmpty())probe(hubUrl,connection);});
-        web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout header=new LinearLayout(this);header.setGravity(android.view.Gravity.CENTER_VERTICAL);header.setPadding(StationStyle.dp(this,20),StationStyle.dp(this,10),StationStyle.dp(this,16),StationStyle.dp(this,10));root.addView(header);
+        TextView brand=StationStyle.text(this,"ラクシカ",22,true);header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
+        Button settingsButton=StationStyle.button(this,"機器・設定",false,this::showDeviceSettings);settingsButton.setTextSize(13);header.addView(settingsButton);
+        connection=StationStyle.text(this,usbMode?"USB計量器を使用":hubUrl.isEmpty()?"施設ハブ未設定":"施設ハブを設定済み",13,false);
+        connection.setTextColor(StationStyle.MUTED);connection.setPadding(StationStyle.dp(this,22),0,StationStyle.dp(this,22),StationStyle.dp(this,8));root.addView(connection);
+        connection.setOnClickListener(v->showDeviceSettings());
+        web=new WebView(this);web.setId(R.id.work_web);web.setBackgroundColor(StationStyle.PAPER);
+        agent=new AgentPanel(this,new AgentPanel.Host(){
+            public void microphonePermission(){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},AGENT_MICROPHONE);}
+            public void openWork(String path){navigateWork(path);}
+            public void weigh(java.util.function.Consumer<JSONObject> result){weighForAgent(result);}
+        });agent.setId(R.id.agent_panel);
+        panes=new WorkspacePanes(this,web,agent);root.addView(panes,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout tabs=new LinearLayout(this);tabs.setBaselineAligned(false);tabs.setPadding(StationStyle.dp(this,16),StationStyle.dp(this,10),StationStyle.dp(this,16),StationStyle.dp(this,10));root.addView(tabs);
+        workTab=StationStyle.button(this,"業務",true,()->showAgent(false));workTab.setId(R.id.tab_work);
+        agentTab=StationStyle.button(this,"アシスタント",false,()->showAgent(true));agentTab.setId(R.id.tab_agent);
+        LinearLayout.LayoutParams tabSize=new LinearLayout.LayoutParams(0,-2,1);tabSize.setMargins(0,0,StationStyle.dp(this,8),0);
+        tabs.addView(workTab,tabSize);tabs.addView(agentTab,new LinearLayout.LayoutParams(0,-2,1));agentMode=false;
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setAllowFileAccess(false);
@@ -225,7 +239,8 @@ public final class MainActivity extends ComponentActivity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         String resolvedHub=hubUrl.isEmpty()&&usbMode?UsbScaleRoutes.LOCAL:hubUrl;
-        String setupScript="if(window===window.top){"+(resolvedHub.isEmpty()?"localStorage.removeItem('rakuSikaHubUrl');":"localStorage.setItem('rakuSikaHubUrl',"+JSONObject.quote(resolvedHub)+");")+"}";
+        String setupScript="if(window===window.top){window.__stationEdited=false;document.addEventListener('input',()=>window.__stationEdited=true,true);"+(resolvedHub.isEmpty()?"localStorage.removeItem('rakuSikaHubUrl');":"localStorage.setItem('rakuSikaHubUrl',"+JSONObject.quote(resolvedHub)+");")+"}";
+        setupScript+=";if(window===window.top){"+WorkspaceScript.guard(resolvedHub.isEmpty()?"http://localhost:19800":resolvedHub)+"}";
         if(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(web,setupScript,Collections.singleton(EndpointPolicy.origin(webUrl)));
         } else {
@@ -234,7 +249,7 @@ public final class MainActivity extends ComponentActivity {
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon){trustedPage=EndpointPolicy.sameOrigin(webUrl,url);}
             @Override public android.webkit.WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request){
-                return usbMode?usbRoutes.intercept(request,hubUrl,webUrl,visible&&trustedPage):null;
+                return usbMode?usbRoutes.intercept(request,hubUrl,webUrl,visible&&!agentMode&&trustedPage):null;
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
                 if(!request.isForMainFrame())return false;
@@ -258,6 +273,68 @@ public final class MainActivity extends ComponentActivity {
         web.setDownloadListener((url,userAgent,disposition,mime,length)->download(url,userAgent,disposition,mime));
         web.loadUrl(webUrl);
         if(usbMode){connectUsb();showUsbStatus();}
+    }
+
+    private void showAgent(boolean value){
+        if(panes==null||agentMode==value)return;workspaceEpoch++;agentMode=value;
+        usbScale.disconnect();connectUsb();scannerBuffer.clear();
+        denyPendingMedia();
+        if(value){
+            web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'));document.activeElement?.blur()",null);web.onPause();agent.activate();
+            ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(web.getWindowToken(),0);
+        }else{agent.suspend();web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}
+        panes.showAgent(value);
+        workTab.setSelected(!value);agentTab.setSelected(value);
+        workTab.setBackground(StationStyle.shape(this,value?StationStyle.SOFT:StationStyle.ACCENT,18));workTab.setTextColor(value?StationStyle.INK:StationStyle.WHITE);
+        agentTab.setBackground(StationStyle.shape(this,value?StationStyle.ACCENT:StationStyle.SOFT,18));agentTab.setTextColor(value?StationStyle.WHITE:StationStyle.INK);
+    }
+    private void navigateWork(String path){
+        if(path.isEmpty()){showAgent(false);return;}
+        if(!java.util.Arrays.asList("/inventory/history","/reports/labels","/input/sales/new","/input/meat-inbound").contains(path))return;
+        web.evaluateJavascript("Boolean(window.__stationEdited)",dirty->{
+            if(isDestroyed()||web==null)return;
+            Runnable go=()->{showAgent(false);web.loadUrl(EndpointPolicy.origin(webUrl)+path);};
+            if("true".equals(dirty))new AlertDialog.Builder(this).setTitle("編集中の業務があります")
+                .setMessage("いまの画面に戻って保存するか、別の業務へ移動できます。")
+                .setNegativeButton("いまの業務に戻る",(d,w)->showAgent(false)).setPositiveButton("別の業務へ",(d,w)->go.run()).show();else go.run();
+        });
+    }
+    private void showDeviceSettings(){
+        String[] choices={"計量器", "スキャナ", "施設ハブの接続確認", "接続先を変更", "ブラウザーで開く", "アシスタントについて"};
+        new AlertDialog.Builder(this).setTitle("機器と設定").setItems(choices,(d,i)->{
+            switch(i){
+                case 0:chooseScale();break;
+                case 1:chooseScanner();break;
+                case 2:if(!hubUrl.isEmpty())probe(hubUrl,connection);else connection.setText("施設ハブ未設定 · USB計量器は直接接続できます");break;
+                case 3:new AlertDialog.Builder(this).setTitle("接続先の変更").setMessage("画面を読み直します。編集中の内容を保存してから進んでください。")
+                    .setNegativeButton("戻る",null).setPositiveButton("変更する",(a,b)->showSetup()).show();break;
+                case 4:external(webUrl);break;
+                case 5:new AlertDialog.Builder(this).setTitle("アシスタント")
+                    .setMessage("端末内の日本語音声認識で個体番号・部位・重量の下書きを作成し、計量や業務画面への移動を操作できます。\n\n例：個体001、モモ、0.07キロ\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。音声モデルの対応状況は端末によって異なります。自由な雑談や複雑な分析には、まだ対応していません。顔を長押しすると、ボタンでも入力や計量ができます。")
+                    .setPositiveButton("閉じる",null).show();break;
+            }
+        }).setNegativeButton("閉じる",null).show();
+    }
+    private void weighForAgent(java.util.function.Consumer<JSONObject> callback){
+        int token=workspaceEpoch;
+        checks.submit(()->{
+            JSONObject result;
+            if(usbMode)result=usbScale.command("Q");
+            else if(hubUrl.isEmpty())result=UsbScale.error("NOT_CONNECTED","機器・設定から計量器を接続してください。");
+            else{
+                HttpURLConnection c=null;
+                try{
+                    c=(HttpURLConnection)new URL(hubUrl+"/scale/weigh").openConnection();c.setRequestMethod("POST");c.setConnectTimeout(3000);c.setReadTimeout(10000);c.setInstanceFollowRedirects(false);
+                    int status=c.getResponseCode();java.io.InputStream stream=status==200?c.getInputStream():c.getErrorStream();
+                    if(stream==null)throw new java.io.IOException();
+                    java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();
+                    try(java.io.InputStream in=stream){byte[] part=new byte[1024];int n;while((n=in.read(part))!=-1){if(bytes.size()+n>8192)throw new java.io.IOException();bytes.write(part,0,n);}}
+                    result=new JSONObject(bytes.toString("UTF-8"));
+                }catch(Exception e){result=UsbScale.error("CONNECTION","計量器に接続できません。機器・設定を確認してください。");}
+                finally{if(c!=null)c.disconnect();}
+            }
+            JSONObject response=result;runOnUiThread(()->{if(!isDestroyed()&&visible&&agentMode&&token==workspaceEpoch)callback.accept(response);});
+        });
     }
 
     private void showUsbStatus(){if(connection!=null&&usbMode)connection.setText("USB計量器: "+usbScale.status());}
@@ -304,7 +381,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void requestMedia(PermissionRequest request) {
-        if(!visible||!EndpointPolicy.sameOrigin(webUrl,request.getOrigin().toString())){request.deny();return;}
+        if(!visible||agentMode||!EndpointPolicy.sameOrigin(webUrl,request.getOrigin().toString())){request.deny();return;}
         List<String> permissions=new ArrayList<>();
         for(String resource:request.getResources()){
             String permission;
@@ -337,7 +414,7 @@ public final class MainActivity extends ComponentActivity {
                 if(event.isCtrlPressed()||event.isAltPressed()||event.isMetaPressed())scannerBuffer.clear();
                 else {
                     String scan=scannerBuffer.accept(event.getUnicodeChar(),event.getKeyCode()==KeyEvent.KEYCODE_ENTER||event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER,event.getEventTime());
-                    if(scan!=null)ScannerDelivery.deliver(web,webUrl,scan);
+                    if(scan!=null){if(agentMode&&agent!=null)agent.scan(scan);else ScannerDelivery.deliver(web,webUrl,scan);}
                 }
             }
             return true;
@@ -371,8 +448,8 @@ public final class MainActivity extends ComponentActivity {
             }catch(Exception e){Toast.makeText(this,"保存できませんでした",Toast.LENGTH_SHORT).show();}
         }).show();
     }
-    @Override protected void onResume(){super.onResume();visible=true;if(web!=null)web.onResume();connectUsb();}
-    @Override protected void onPause(){visible=false;usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();}
+    @Override protected void onResume(){super.onResume();visible=true;if(web!=null&&!agentMode){web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}if(agent!=null&&agentMode)agent.activate();connectUsb();}
+    @Override protected void onPause(){visible=false;workspaceEpoch++;if(agent!=null)agent.suspend();usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();}
     @Override protected void onStop(){denyPendingMedia();super.onStop();}
     @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();checks.shutdownNow();super.onDestroy();}
 }

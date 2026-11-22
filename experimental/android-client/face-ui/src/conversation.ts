@@ -1,4 +1,5 @@
 import type {startRealtime} from './lib/voice-guidance/realtimeClient';
+import {interpretationInput} from './interpretationInput';
 import {localIntent} from './localIntent';
 import {labelIntent} from './lib/voice-guidance/labelEditor';
 export type VoiceEvent={session:string;type:'ready'|'speech'|'recognizing'|'text'|'retry'|'error';turn:number;text:string};
@@ -21,7 +22,7 @@ export function createConversation(native:(op:string,args?:Record<string,unknown
       try{
         const route=localIntent(text);
         let result=c.context?.().operation==='labels'&&!route?.operation&&route?.navigate===undefined?labelIntent(text):route;
-        if(!result&&cloudAllowed())result=await native('interpret',{text,values:currentValues,options,history:conversation.slice(-6),...(continuousMode?{session,turn:id}:{})});
+        if(!result&&cloudAllowed())result=await native('interpret',{...interpretationInput(text,currentValues,options,conversation),...(continuousMode?{session,turn:id}:{})});
         if(!live(id))return;
         result??={question:'項目と値を一つずつ教えてください。顔を長押しすると、画面でも入力できます。'};
         if(result.label){const response:any=c.label?.(result.label);if(response?.missing?.length)result.question=response.missing[0];}

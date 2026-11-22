@@ -7,6 +7,7 @@ import android.util.Base64;
 /** Ephemeral ID token is checked by the existing read-only Lite API, never by a UI cookie alone. */
 final class LiteSession {
     final String scope;
+    private String origin="",token="",facility="";
     final long expiresAt;
     LiteSession(String scope,long expiresAt){this.scope=scope;this.expiresAt=expiresAt;}
     boolean valid(){return !scope.isEmpty()&&System.currentTimeMillis()<expiresAt;}
@@ -23,9 +24,13 @@ final class LiteSession {
             if(!uid.equals(claims.optString("sub")))return null;
             long expiry=Math.min(claims.getLong("exp")*1000,System.currentTimeMillis()+65000);
             if(expiry<=System.currentTimeMillis())return null;
-            return new LiteSession(uid+":"+facility,expiry);
+            LiteSession session=new LiteSession(uid+":"+facility,expiry);session.origin=origin;session.token=token;session.facility=facility;return session;
         }catch(Exception ignored){return null;}
         finally{if(c!=null)c.disconnect();}
+    }
+    JSONObject catalog(JSONObject args) throws Exception {
+        if(!valid()||token.isEmpty())throw new Exception("ログイン状態を確認してください。");
+        return CatalogApi.read(origin,token,facility,args);
     }
     static String fingerprint(String token){try{return Base64.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP);}catch(Exception e){return "";}}
     static String snapshotScript(int ticket){return snapshotScript(ticket,false);}

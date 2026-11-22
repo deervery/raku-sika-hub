@@ -15,6 +15,7 @@ import {
   validateManualPatch,
   type ReviewMode,
 } from '@/lib/voice-guidance/stationUi';
+import {swipeDirection} from '../../catalog';
 import { receivingReviewValue } from './ReceivingReview';
 import { StationFieldEditor } from './StationFieldEditor';
 import css from './VoiceWorkspace.module.css';
@@ -68,6 +69,7 @@ export function VoiceStation({
   const operationShown=useRef(false);
   const operationPanel = useRef<StationOperationsHandle>(null);
   const [page, setPage] = useState(0);
+  const swipe=useRef<{x:number;y:number}|null>(null);
   const [editor, setEditor] = useState<{ key: string; query?: string } | null>(null);
   const suppressFaceClick = useRef(0);
   const [voice, setVoice] = useState('off');
@@ -159,8 +161,10 @@ export function VoiceStation({
   useEffect(() => {
     if (!historyRef.current && chat.current) chat.current.scrollTop = chat.current.scrollHeight;
   }, [lines]);
+  const ownSave=useRef(false);
   const sessionBase = useRef(values);
   useEffect(() => {
+    if(ownSave.current&&sessionBase.current!==values&&!disabled){ownSave.current=false;sessionBase.current=values;return;}
     if (sessionBase.current !== values || disabled) {
       generation.current++;
       session.current?.stop();
@@ -260,7 +264,6 @@ export function VoiceStation({
     const ticket = ++generation.current;
     session.current?.stop();
     session.current = null;
-    const base = current.current.values;
     const definition = current.current.form;
     const orderBase = counter.current + 1;
     try {
@@ -295,7 +298,7 @@ export function VoiceStation({
         propose: (raw) => {
           if (
             ticket !== generation.current ||
-            base !== current.current.values ||
+            (sessionBase.current !== current.current.values && !ownSave.current) ||
             definition !== current.current.form
           )
             throw new Error('入力が変わりました。');
@@ -353,12 +356,12 @@ export function VoiceStation({
     if (state.disabled) throw new Error('今は変更できません。');
     const patch = validateManualPatch(
       { [key]: value },
-      state.form,
+      {...state.form,fields:{...state.form.fields,[key]:{...state.form.fields[key],digits:undefined}}},
       { ...state.values, ...pendingRef.current },
       state.options,
     );
     storePatch(patch);
-    setEditor(null);
+    if(onManualPatch){ownSave.current=true;onManualPatch(patch,state.values);}
     session.current?.inform(patch);
   }
   const latest = {
@@ -437,7 +440,10 @@ export function VoiceStation({
               </button>
             ))}
           </nav>
-          <div className={css.cards} data-count={entries.length} aria-label="下書きの内容">
+          <div className={css.cards} data-count={entries.length} aria-label="下書きの内容"
+            onTouchStart={e=>{const t=e.touches[0];swipe.current={x:t.clientX,y:t.clientY};}}
+            onTouchEnd={e=>{const start=swipe.current;swipe.current=null;if(start){const t=e.changedTouches[0];const direction=swipeDirection(t.clientX-start.x,t.clientY-start.y);if(direction)setPage(Math.max(0,Math.min(pages.length-1,pageIndex+direction)));}}}
+            onTouchCancel={()=>{swipe.current=null;}}>
             {entries.map(([key, field]) => {
               const value = receivingReviewValue(field, displayValues[key], combinedOptions[key]);
               const wide = value.length > 12 || field.label.length > 14;
@@ -558,7 +564,7 @@ export function VoiceStation({
       {editor && (
         <div className={css.overlay}>
           <StationFieldEditor
-            key={`${editor.key}-${editor.query ?? ''}-${JSON.stringify(merged[editor.key])}`}
+            key={`${editor.key}-${editor.query ?? ''}`}
             fieldKey={editor.key}
             field={form.fields[editor.key]}
             value={merged[editor.key]}

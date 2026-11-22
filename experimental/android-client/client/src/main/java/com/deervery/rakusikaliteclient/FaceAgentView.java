@@ -15,7 +15,7 @@ import java.util.function.Consumer;
 
 /** Bundled original face UI. Only the APK-owned main frame receives the narrow native API. */
 final class FaceAgentView extends WebView {
-    interface Host {void microphonePermission();void openWork(String path);void weigh(Consumer<JSONObject> callback);default JSONObject session(){return new JSONObject();}}
+    interface Host {void microphonePermission();void openWork(String path);void weigh(Consumer<JSONObject> callback);default void catalog(JSONObject args,Consumer<JSONObject> callback){callback.accept(error("候補を取得できません。"));}default void camera(Consumer<JSONObject> callback){callback.accept(error("カメラを利用できません。"));}default JSONObject session(){return new JSONObject();}}
     static final String ORIGIN="https://appassets.androidplatform.net";
     private final Host host;
     private boolean active,localTts;
@@ -81,6 +81,8 @@ final class FaceAgentView extends WebView {
                 String text=args.optString("text");if(text.length()>400){reply.accept(error("応答が長すぎます。"));break;}
                 stopPlayback();if(!localTts||(continuous!=null&&!duplexPlayback)){reply.accept(new JSONObject());break;}
                 speaking=reply;utterance=UUID.randomUUID().toString();tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,utterance);break;
+            case "catalog":host.catalog(args,reply);break;
+            case "cameraScan":stopAudio();cancelInterpretation();host.camera(reply);break;
             case "weigh":host.weigh(reply);break;
             case "scan":
                 if(scanning!=null)scanning.accept(error("新しい読取りを開始しました。"));scanning=reply;

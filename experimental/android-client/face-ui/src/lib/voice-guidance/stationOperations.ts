@@ -46,7 +46,7 @@ export const LABEL_INPUT_KEYS = [
   'isHeatedMeatProducts',
 ] as const;
 export type LabelDraft = { template: TemplateKey; copies: number; data: Record<string, string> };
-export const emptyLabelDraft = (): LabelDraft => ({ template: 'carcass', copies: 1, data: {} });
+export const emptyLabelDraft = (): LabelDraft => ({ template: 'traceable', copies: 1, data: {} });
 export type DeviceResult = {
   state: 'done' | 'pending' | 'unknown' | 'error';
   message: string;
@@ -274,4 +274,21 @@ export function createHubDevices(
       };
     },
   };
+}
+
+/** Editable drafts retain incomplete values; only labelIssues/confirmation may authorize output. */
+export function editLabelDraft(previous:LabelDraft,key:string,value:unknown):LabelDraft {
+  if(key==='template')return mergeLabelDraft(previous,{template:value});
+  if(key==='copies') {const n=Number(value);if(!Number.isSafeInteger(n)||n<0)throw new Error('枚数を確認してください');return {...previous,copies:n};}
+  if(!LABEL_INPUT_KEYS.includes(key as any)||typeof value!=='string'||value.length>500)throw new Error('入力を確認してください');
+  const data={...previous.data,[key]:value};
+  if(key==='storageTemperature'){if(value==='-18℃以下')data.deadlineLabel='賞味期限';else if(['4℃以下','10℃以下'].includes(value))data.deadlineLabel='消費期限';}
+  return {...previous,data};
+}
+export function restoreLabelDraft(raw:any):LabelDraft {
+  let draft=emptyLabelDraft();if(!raw||typeof raw!=='object')return draft;
+  if(raw.template)draft=editLabelDraft(draft,'template',raw.template);
+  if(raw.copies!==undefined)draft=editLabelDraft(draft,'copies',raw.copies);
+  for(const [key,value] of Object.entries(raw.data||{}))draft=editLabelDraft(draft,key,value);
+  return draft;
 }

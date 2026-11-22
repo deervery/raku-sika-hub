@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { FormField } from '@/types/forms';
 import { fieldChoices, rankChoices } from '@/lib/voice-guidance/stationUi';
 import type { ChoiceOverrides } from '@/lib/voice-guidance/receivingInput';
@@ -40,6 +40,8 @@ export function StationFieldEditor({
       setError(e instanceof Error ? e.message : '入力を確認してください');
     }
   };
+  const first=useRef(true);const saveRef=useRef(save);saveRef.current=save;
+  useEffect(()=>{if(first.current){first.current=false;return;}saveRef.current(draft);},[draft]);
   return (
     <div className={css.editor} role="dialog" aria-modal="true" aria-label={`${field.label}を編集`}>
       <header>
@@ -108,11 +110,7 @@ export function StationFieldEditor({
               </button>
             </nav>
           )}
-          {field.type === 'checkbox' && (
-            <button type="button" className={css.primary} onClick={() => save(selected)}>
-              この内容にする
-            </button>
-          )}
+
         </>
       ) : field.type === 'checkbox' ? (
         <div className={css.choices}>
@@ -140,7 +138,7 @@ export function StationFieldEditor({
               '7',
               '8',
               '9',
-              field.type === 'number' ? '.' : '00',
+              field.type === 'number' && fieldKey!=='copies' ? '.' : '00',
               '0',
               '⌫',
             ].map((key) => (
@@ -161,9 +159,6 @@ export function StationFieldEditor({
               </button>
             ))}
           </div>
-          <button type="button" className={css.primary} onClick={() => save(String(draft))}>
-            この値にする
-          </button>
         </>
       ) : (
         (textMode || !['select', 'radio'].includes(field.type)) && (
@@ -179,9 +174,6 @@ export function StationFieldEditor({
               maxLength={1000}
               onChange={(e) => setDraft(e.target.value)}
             />
-            <button type="button" className={css.primary} onClick={() => save(String(draft))}>
-              この内容にする
-            </button>
           </>
         )
       )}

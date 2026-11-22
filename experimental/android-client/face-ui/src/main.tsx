@@ -11,12 +11,14 @@ import type {StationDevices} from './lib/voice-guidance/stationOperations';
 let cloudEnabled=false;
 function App({scope}:{scope:string}){
   const storageKey='receiving-draft:v031:'+encodeURIComponent(scope);
+  // One-time default change preserves the previous draft's values and copy count.
+  useState(()=>{const key='label-draft:v032:'+encodeURIComponent(scope),flag='label-default:v033:'+encodeURIComponent(scope);if(!localStorage.getItem(flag)){try{const old=JSON.parse(localStorage.getItem(key)||'{}');if(old&&typeof old==='object'&&!Array.isArray(old))localStorage.setItem(key,JSON.stringify({...old,template:'traceable'}));localStorage.setItem(flag,'1');}catch{}}return true;});
   const [overrides,setOverrides]=useState<Record<string,unknown>>(()=>{try{const stored=JSON.parse(localStorage.getItem(storageKey)||'{}');return stored&&typeof stored==='object'&&!Array.isArray(stored)?stored:{};}catch{return {};}});
   const values=useMemo(()=>draftValues(RECEIVING_FORM,overrides),[overrides]);
   const defaults=useMemo(()=>defaultFieldKeys(RECEIVING_FORM,overrides),[overrides]);
   const connect=useMemo(()=>createConversation(native,()=>cloudEnabled,subscribeVoice),[scope]);
   const save=(patch:Record<string,unknown>)=>setOverrides(previous=>{const next={...previous,...patch};localStorage.setItem(storageKey,JSON.stringify(next));return next;});
-  const unavailable=async()=>({state:'error' as const,message:'この操作は「業務」画面から行ってください。'});
+  const unavailable=async()=>({state:'error' as const,message:'この遠隔操作には対応していません。機器本体で操作してください。'});
   const devices:StationDevices={identity:'android-native:'+scope,draftStorageKey:'label-draft:v032:'+encodeURIComponent(scope),printer:'施設のプリンタ',labelUnavailable:'業務ラベルは「業務」画面で、ログインと施設設定を確認して印刷してください。',printLabel:unavailable,testPrint:unavailable,tare:unavailable,zero:unavailable,
     weigh:async()=>{const r=await native('weigh');if(r.status!=='ok'||!r.stable)return {state:'error',message:r.message||'重量が安定していません。'};const v=Number(r.value)/(r.unit==='g'?1000:1);if(!['kg','g'].includes(r.unit)||!Number.isFinite(v)||v<0)return {state:'error',message:'重量を確認してください。'};return {state:'done',message:'計量器から読み取りました。',weightKg:v,cards:[{label:'重量',value:v+' kg'}]};},
     scan:async()=>{const {value}=await native('scan');return {state:'done',message:'読み取りました。',scanValue:value,cards:[{label:'コード',value}]};},health:unavailable};

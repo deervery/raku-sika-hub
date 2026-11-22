@@ -126,3 +126,38 @@ BluetoothスキャナはOS設定でHID接続し、アプリ上部の「スキャ
 本アプリは既存の業務データに接続する。検証施設/対象を選び、登録・印刷は内容確認後に操作する。
 このAPKは検証用debug署名で、WebViewデバッグが有効。本番配布では署名・バージョン管理・debug無効化を別途行う。
 配布ディレクトリにはAPKと説明ページだけを置く。秘密ファイル・ソースツリーは公開しない。公開取消はglwinで `sudo tailscale serve --https=8445 off`。
+
+## v0.2.0：既存USBモジュールからAndroidへ直結
+
+Bluetooth部品を買い足す前に、現在のUSBモジュールを利用する構成を優先する。
+購入メールでHVW-02CBJAを確認：2026-03-03発送分2個、2026-06-16注文分4個（税抜単価7,941円）。
+2月にはHVW-02BCWPJA（mini-B）とA–mini-Bケーブルの注文記録もあるため、混同しない。
+購入履歴は手元・officeへの割当を保証するものではないが、officeではFTDI VID0403/PID6015のUSB機器も確認されている。
+
+- HVW-02CBJA：通常のUSB Type-B。USB-C–Bデータケーブル、またはUSB-C OTG（Aメス）＋既存A–Bケーブル。
+- HVW-02BCWPJA：USB mini-B。ケーブル端子が異なる。
+- USB-C端子の存在だけでホスト動作を保証しない。AndroidのUSBホスト対応と、実機での列挙・許可・通信を確認する。
+- 充電専用ケーブルは不可。常設で充電を続ける場合はPD給電とUSBデータを同時利用できるドックを別途実機確認する。
+
+根拠：[A&D補足説明書](https://www.aandd.co.jp/pdf_storage/tech_doc/balance/t_hvw-02cbja_hvw-02bcwpja_hosoku.pdf)、[Android USBホスト](https://developer.android.com/develop/connectivity/usb/host)。
+メーカー説明はPC向けで、Android動作保証の表明ではない。
+
+実装：usb-serial-for-android 3.11.0のFTDIドライバーを利用し、VID0403/PID6015を明示選択する。MITライセンスをAPKのassetsへ同梱。
+USB許可はOSのダイアログで取得。通信は既存ハブと同じ2400 baud・7ビット・even parity・1 stop bit。
+Qで計量、Tで風袋、Rでゼロ。風袋・ゼロは対応するACKを受けたときだけ成功とし、応答不明時の自動再送はしない。
+各問い合わせ前に残データを破棄し、分割フレームを再構成する。USはweighing/未確定、OL・破損・タイムアウトはエラー。
+抜線・背景移行・接続変更で処理世代を無効化し、処理中の古い応答を破棄する。USB選択中に別のHub計量器へ自動フォールバックしない。
+
+既存Liteのfetch契約（/health、/scale/weigh、/scale/tare、/scale/zero）をAndroid WebViewのリクエスト処理で接続する。
+対象は設定済みHubのURLに限定し、信頼したLiteのOriginと前景画面を確認する。印刷・スキャナのリクエストは従来のHubへ送る。
+Hub未設定でもUSB計量の模擬テストは成功。USBモードでもWeb側NEXT_PUBLIC_HUB_URLが固定されている配布物は互換性確認が必要。
+任意のJavaScriptInterfaceは追加していない。本番Webのコードと既存施設の設定は変更していない。
+
+操作：アプリ上部「計量器」→「AndroidのUSBへ直結する」→画面再読込みの確認→機器選択→USB利用を許可。
+「USBで試しに計量する」は読取りだけで業務登録しない。確認後は既存フォームの計量操作を使う。
+通信エラー後はケーブル・計量器設定を確認して機器を選び直す。アプリ再起動後も対象機器を明示選択する。
+
+検証：Java単体17件（USB関連8件追加）、Android連携4件（USB関連2件追加）成功。
+WebViewから既存fetch契約で模擬デバイスの0.07kg・安定を取得し、未許可Origin/背景状態/誤メソッドを拒否することを確認。
+旧重量の破棄、分割受信、不安定値、過負荷、破損、長大フレーム、抜線途中の応答破棄、ACK照合と再送しないことをテスト。
+assembleDebug/lintDebug成功。これは実USBの電気接続・ドライバー実通信成功を意味しない。Pixel/LAVIE＋実計量器での検証は未実施。

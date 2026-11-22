@@ -5,6 +5,13 @@ import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.app.PendingIntent;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
+import androidx.core.content.ContextCompat;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.net.http.SslError;
@@ -51,7 +58,24 @@ public final class MainActivity extends ComponentActivity {
     private ValueCallback<Uri[]> pendingFile;
     private String webUrl, hubUrl;
     private TextView connection;
-    private boolean visible;
+    private volatile boolean visible,usbMode,trustedPage;
+    private UsbScale usbScale;
+    private UsbScaleRoutes usbRoutes;
+    private UsbDevice selectedScale;
+    private final String usbPermission="com.deervery.rakusikaliteclient.USB_PERMISSION";
+    private final BroadcastReceiver usbReceiver=new BroadcastReceiver(){
+        @Override public void onReceive(Context context,Intent intent){
+            UsbDevice device=intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            if(UsbManager.ACTION_USB_DEVICE_DETACHED.equals(intent.getAction())){
+                if(selectedScale!=null&&device!=null&&device.getDeviceId()==selectedScale.getDeviceId()){
+                    selectedScale=null;usbScale.disconnect();showUsbStatus();
+                }
+            }else if(usbPermission.equals(intent.getAction())&&selectedScale!=null&&device!=null&&device.getDeviceId()==selectedScale.getDeviceId()){
+                if(intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED,false)&&visible&&usbMode)connectUsb();
+                else showUsbStatus();
+            }
+        }
+    };
     private final ScannerBuffer scannerBuffer=new ScannerBuffer();
     private String scannerDescriptor="";
     private final InputManager.InputDeviceListener inputListener=new InputManager.InputDeviceListener(){
@@ -71,6 +95,14 @@ public final class MainActivity extends ComponentActivity {
         });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         settings = getSharedPreferences("lite-client", MODE_PRIVATE);
+        usbMode=settings.getBoolean("usbScale",false);
+        usbScale=new UsbScale(this);
+        usbRoutes=new UsbScaleRoutes(new UsbScaleRoutes.Device(){
+            public boolean connected(){return usbScale.connected();}
+            public JSONObject command(String command){return usbScale.command(command);}
+        });
+        IntentFilter usbFilter=new IntentFilter(usbPermission);usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        ContextCompat.registerReceiver(this,usbReceiver,usbFilter,ContextCompat.RECEIVER_NOT_EXPORTED);
         webUrl = settings.getString("web", "https://rakusika.com/home");
         hubUrl = settings.getString("hub", "");
         scannerDescriptor=settings.getString("scanner","");
@@ -108,6 +140,8 @@ public final class MainActivity extends ComponentActivity {
         input.setTextSize(18);parent.addView(input);return input;
     }
     private void disposeWeb() {
+        trustedPage=false;
+        if(usbScale!=null)usbScale.disconnect();
         denyPendingMedia();
         if (pendingFile != null) { pendingFile.onReceiveValue(null); pendingFile=null; }
         if (web != null) { web.stopLoading(); web.destroy(); web=null; }
@@ -172,6 +206,7 @@ public final class MainActivity extends ComponentActivity {
             .setNegativeButton("戻る",null).setPositiveButton("設定へ",(d,w)->showSetup()).show());
         button(toolbar,"ブラウザー",()->external(webUrl));
         button(toolbar,"スキャナ",this::chooseScanner);
+        button(toolbar,"計量器",this::chooseScale);
         for(int i=0;i<toolbar.getChildCount();i++){
             Button item=(Button)toolbar.getChildAt(i);
             item.setTextSize(12);item.setMinWidth(0);item.setMinimumWidth(0);
@@ -189,13 +224,18 @@ public final class MainActivity extends ComponentActivity {
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
-        String setupScript="if(window===window.top){"+(hubUrl.isEmpty()?"localStorage.removeItem('rakuSikaHubUrl');":"localStorage.setItem('rakuSikaHubUrl',"+JSONObject.quote(hubUrl)+");")+"}";
+        String resolvedHub=hubUrl.isEmpty()&&usbMode?UsbScaleRoutes.LOCAL:hubUrl;
+        String setupScript="if(window===window.top){"+(resolvedHub.isEmpty()?"localStorage.removeItem('rakuSikaHubUrl');":"localStorage.setItem('rakuSikaHubUrl',"+JSONObject.quote(resolvedHub)+");")+"}";
         if(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(web,setupScript,Collections.singleton(EndpointPolicy.origin(webUrl)));
         } else {
             connection.setText("Android System WebViewを更新してください。設定適用前の誤接続を避けるため画面を開いていません。");return;
         }
         web.setWebViewClient(new WebViewClient(){
+            @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon){trustedPage=EndpointPolicy.sameOrigin(webUrl,url);}
+            @Override public android.webkit.WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request){
+                return usbMode?usbRoutes.intercept(request,hubUrl,webUrl,visible&&trustedPage):null;
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
                 if(!request.isForMainFrame())return false;
                 if(EndpointPolicy.sameOrigin(webUrl,request.getUrl().toString()))return false;
@@ -217,6 +257,50 @@ public final class MainActivity extends ComponentActivity {
         });
         web.setDownloadListener((url,userAgent,disposition,mime,length)->download(url,userAgent,disposition,mime));
         web.loadUrl(webUrl);
+        if(usbMode){connectUsb();showUsbStatus();}
+    }
+
+    private void showUsbStatus(){if(connection!=null&&usbMode)connection.setText("USB計量器: "+usbScale.status());}
+    private void connectUsb(){
+        if(usbMode&&visible&&selectedScale!=null&&((UsbManager)getSystemService(USB_SERVICE)).hasPermission(selectedScale))
+            usbScale.open(selectedScale,()->runOnUiThread(()->{if(!isDestroyed())showUsbStatus();}));
+    }
+    private void chooseScale(){
+        new AlertDialog.Builder(this).setTitle("計量器の接続")
+            .setItems(new String[]{"AndroidのUSBへ直結する","施設ハブの計量器を使う","USBで試しに計量する（登録しません）"},(d,index)->{
+                if(index==2){
+                    if(!usbMode){Toast.makeText(this,"先にUSB直結を選んでください",Toast.LENGTH_LONG).show();return;}
+                    checks.submit(()->{JSONObject result=usbScale.command("Q");runOnUiThread(()->{
+                        if(isDestroyed())return;showUsbStatus();new AlertDialog.Builder(this).setTitle("USB計量結果")
+                            .setMessage(result.optString("status").equals("error")?result.optString("message"):usbScale.status()).setPositiveButton("閉じる",null).show();
+                    });});return;
+                }
+                new AlertDialog.Builder(this).setTitle("計量器を切り替えますか？")
+                    .setMessage("画面を読み直します。編集中の内容を保存してから切り替えてください。USBが切れても、別の計量器へ自動切替はしません。")
+                    .setNegativeButton("戻る",null).setPositiveButton("切り替える",(dialog,which)->{
+                        usbScale.disconnect();selectedScale=null;usbMode=index==0;
+                        settings.edit().putBoolean("usbScale",usbMode).apply();openLite();
+                        if(usbMode)selectUsbDevice();
+                    }).show();
+            }).setNegativeButton("閉じる",null).show();
+    }
+    private void selectUsbDevice(){
+        UsbManager manager=(UsbManager)getSystemService(USB_SERVICE);
+        List<UsbDevice> devices=new ArrayList<>();List<String> names=new ArrayList<>();
+        for(UsbDevice device:manager.getDeviceList().values())if(UsbScale.supported(device)){
+            devices.add(device);names.add((device.getProductName()==null?"A&D USB / FTDI":device.getProductName())+" · "+device.getDeviceName());
+        }
+        if(devices.isEmpty()){
+            new AlertDialog.Builder(this).setTitle("USB計量器が見つかりません")
+                .setMessage("計量器の電源を入れ、USB-C–Bのデータケーブル、またはUSB-C OTG変換＋既存A–Bケーブルで接続してください。接続後もう一度USB直結を選んでください。")
+                .setPositiveButton("閉じる",null).show();return;
+        }
+        new AlertDialog.Builder(this).setTitle("接続した計量器を選択")
+            .setItems(names.toArray(new String[0]),(d,index)->{
+                selectedScale=devices.get(index);
+                if(manager.hasPermission(selectedScale))connectUsb();
+                else manager.requestPermission(selectedScale,PendingIntent.getBroadcast(this,0,new Intent(usbPermission).setPackage(getPackageName()),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE));
+            }).setNegativeButton("戻る",null).show();
     }
 
     private void requestMedia(PermissionRequest request) {
@@ -287,8 +371,8 @@ public final class MainActivity extends ComponentActivity {
             }catch(Exception e){Toast.makeText(this,"保存できませんでした",Toast.LENGTH_SHORT).show();}
         }).show();
     }
-    @Override protected void onResume(){super.onResume();visible=true;if(web!=null)web.onResume();}
-    @Override protected void onPause(){visible=false;scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();}
+    @Override protected void onResume(){super.onResume();visible=true;if(web!=null)web.onResume();connectUsb();}
+    @Override protected void onPause(){visible=false;usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();}
     @Override protected void onStop(){denyPendingMedia();super.onStop();}
-    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);disposeWeb();checks.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();checks.shutdownNow();super.onDestroy();}
 }

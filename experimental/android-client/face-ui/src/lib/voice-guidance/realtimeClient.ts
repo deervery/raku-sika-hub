@@ -12,6 +12,7 @@ export function microphoneError(error: unknown) {
 }
 
 type Callbacks = {
+  context?: () => {operation:string};
   message: (id: string, role: 'user' | 'assistant', text: string, order?: number) => void;
   propose: (raw: unknown) => unknown;
   review: (raw?: unknown) => unknown;

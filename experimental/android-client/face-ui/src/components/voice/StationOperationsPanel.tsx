@@ -8,7 +8,8 @@ import {
   useState,
 } from 'react';
 import { PLACEHOLDER_SCHEMA } from '@/lib/labels/placeholderSchema';
-import { type FormField } from '@/types/forms';
+import {fieldForLabel,labelGroups} from '../../lib/voice-guidance/labelEditor';
+import {LabelValueEditor} from './LabelValueEditor';
 import {
   emptyLabelDraft,
   labelFields,
@@ -26,6 +27,7 @@ import css from './VoiceWorkspace.module.css';
 import {native} from '../../bridge';
 
 export type StationOperationsHandle = {
+  context: () => {operation:string};
   show: (raw: unknown) => object;
   prepare: (raw: unknown) => object;
 };
@@ -36,6 +38,7 @@ type Props = {
   onReceiving: () => void;
   onResult: (result: DeviceResult) => void;
   onWeight: (value: string) => void;
+  onManualChange: () => void;
 };
 const titles = {
   receiving: '搬入入力',
@@ -48,11 +51,14 @@ const titles = {
 
 export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>(
   function StationOperationsPanel(
-    { active, devices, onShow, onReceiving, onResult, onWeight },
+    { active, devices, onShow, onReceiving, onResult, onWeight, onManualChange },
     ref,
   ) {
     const [operation, setOperation] = useState<StationOperation>('menu');
-    const [draft, setDraft] = useState<LabelDraft>(emptyLabelDraft);
+    const [draft, setDraft] = useState<LabelDraft>(()=>{try{return devices?.draftStorageKey?mergeLabelDraft(emptyLabelDraft(),JSON.parse(localStorage.getItem(devices.draftStorageKey)||'{}')):emptyLabelDraft();}catch{return emptyLabelDraft();}});
+    const [group,setGroup]=useState('');
+    const [capacity,setCapacity]=useState(()=>window.innerHeight<720?2:4);
+    useEffect(()=>{const resize=()=>setCapacity(window.innerHeight<720?2:4);window.addEventListener('resize',resize);return ()=>window.removeEventListener('resize',resize);},[]);
     const draftRef = useRef(draft);
     const [page, setPage] = useState(0);
     const [editing, setEditing] = useState<string | null>(null);
@@ -131,6 +137,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
       const next = mergeLabelDraft(draftRef.current, raw);
       draftRef.current = next;
       setDraft(next);
+      if(devices?.draftStorageKey)localStorage.setItem(devices.draftStorageKey,JSON.stringify(next));
       setConfirm(null);
       setError('');
     }
@@ -150,6 +157,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         void run(next === 'devices' ? 'health' : next === 'scan' ? 'scan' : 'weigh', next);
     }
     useImperativeHandle(ref, () => ({
+      context:()=>({operation}),
       show: (raw) => {
         const next = readOperation(raw);
         show(next);
@@ -160,45 +168,29 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         };
       },
       prepare: (raw) => {
+        if(editing)throw new Error('画面の入力を保存するか閉じてから、訂正を教えてください。');
+        const next=mergeLabelDraft(draftRef.current,raw);
+        const changedKeys=Object.keys((raw as {data?:object}).data||{});
+        const unsupported=changedKeys.find(key=>!labelFields(next).includes(key as (ReturnType<typeof labelFields>)[number]));
+        if(unsupported)throw new Error(`${fieldForLabel(unsupported,next).label}はこのラベルでは使いません。ラベルの種類を選び直してください。`);
         update(raw);
         show('labels');
+        const target=labelGroups(next).find(group=>group.keys.includes(changedKeys[0]));
+        if(target){setGroup(target.id);setPage(Math.floor(target.keys.indexOf(changedKeys[0])/capacity));}
         return { shown: 'labels', executed: false, missing: labelIssues(draftRef.current) };
       },
     }));
     if (!active) return null;
     const result = results[operation];
     const fields = labelFields(draft);
-    const shownFields = fields.slice(page * 6, page * 6 + 6);
-    const issues = labelIssues(draft);
-    const fieldFor = (key: string): FormField => ({
-      label:
-        key === 'copies'
-          ? '枚数'
-          : key === 'template'
-            ? 'ラベルの種類'
-            : (PLACEHOLDER_SCHEMA[key as keyof typeof PLACEHOLDER_SCHEMA]?.label ?? key),
-      type:
-        key === 'copies'
-          ? 'number'
-          : ['receivingDate', 'deadlineDate'].includes(key)
-            ? 'date'
-            : ['template', 'species', 'sex', 'storageTemperature'].includes(key)
-              ? 'select'
-              : 'text',
-      required: true,
-      order: 0,
-      options:
-        key === 'template'
-          ? Object.entries(LABEL_TEMPLATES).map(([value, label]) => `${value}:${label}`)
-          : key === 'species'
-            ? ['シカ', 'クマ', 'イノシシ']
-            : key === 'sex'
-              ? ['オス', 'メス']
-              : key === 'storageTemperature'
-                ? ['-18℃以下', '4℃以下', '10℃以下']
-                : undefined,
-      selectValueLabel: key === 'template',
-    });
+    const groups=labelGroups(draft);
+    const currentGroup=groups.find(item=>item.id===group)||groups[0];
+    const groupKeys=group==='system'?[]:currentGroup?.keys||[];
+    const fieldCapacity=groupKeys.some(key=>(draft.data[key]?.length||0)>12)?Math.max(1,capacity/2):capacity;
+    const pageIndex=Math.min(page,Math.max(0,Math.ceil(groupKeys.length/fieldCapacity)-1));
+    const shownFields=groupKeys.slice(pageIndex*fieldCapacity,pageIndex*fieldCapacity+fieldCapacity);
+    const issues=labelIssues(draft);
+    const fieldFor=(key:string)=>fieldForLabel(key,draft);
     const edit = (key: string) => {
       if (!printLocked && !busy) {
         setConfirm(null);
@@ -210,15 +202,9 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
       setConfirm(value);
     };
     return (
-      <div className={css.board} aria-label="現場の作業">
+      <div className={css.board} data-operation={operation} aria-label="現場の作業">
         <nav className={css.operationHeader}>
           <strong>{titles[operation]}</strong>
-          <button type="button" disabled={busy} onClick={() => show('menu')}>
-            作業を選ぶ
-          </button>
-          <button type="button" disabled={busy} onClick={onReceiving}>
-            搬入入力へ
-          </button>
         </nav>
         {operation === 'menu' ? (
           <div className={css.cards} data-count="5">
@@ -237,14 +223,19 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
               <button type="button" disabled={busy || printLocked} onClick={() => edit('copies')}>
                 {draft.copies}枚
               </button>
-              <span>{devices?.printer ?? '機器未設定'}</span>
             </div>
+            <nav className={css.labelGroups} aria-label="ラベルの入力項目">
+              {groups.map(item=><button type="button" key={item.id} aria-pressed={group!=='system'&&currentGroup?.id===item.id} onClick={()=>{setGroup(item.id);setPage(0);}}>{item.label}</button>)}
+              <button type="button" aria-pressed={group==='system'} onClick={()=>{setGroup('system');setPage(0);}}>施設・確認</button>
+            </nav>
             <div
               className={css.cards}
-              data-count={shownFields.length}
+              data-count={group==='system'?1:shownFields.length}
               aria-label="ラベルの印刷内容"
             >
-              {shownFields.map((key) => (
+              {group==='system'?<>
+                <div className={css.card}><span className={css.label}>施設情報・個体との対応</span><strong>業務画面で確認</strong></div>
+              </>:shownFields.map((key) => (
                 <button
                   type="button"
                   key={key}
@@ -254,24 +245,25 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
                   data-long={(draft.data[key]?.length ?? 0) > 12}
                   onClick={() => edit(key)}
                 >
-                  <span className={css.label}>{PLACEHOLDER_SCHEMA[key].label}</span>
+                  <span className={css.label}>{fieldFor(key).label}<small>{fieldFor(key).required?'必須':'任意'}</small></span>
                   <strong>{draft.data[key] || '未入力'}</strong>
+
                 </button>
               ))}
             </div>
             <div className={css.operationToolbar}>
-              {fields.length > 6 && (
+              {groupKeys.length > fieldCapacity && (
                 <>
-                  <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}>
+                  <button type="button" disabled={pageIndex === 0} onClick={() => setPage(pageIndex - 1)}>
                     前へ
                   </button>
                   <span>
-                    {page + 1}/{Math.ceil(fields.length / 6)}
+                    {pageIndex + 1}/{Math.ceil(groupKeys.length / fieldCapacity)}
                   </span>
                   <button
                     type="button"
-                    disabled={(page + 1) * 6 >= fields.length}
-                    onClick={() => setPage(page + 1)}
+                    disabled={(pageIndex + 1) * fieldCapacity >= groupKeys.length}
+                    onClick={() => setPage(pageIndex + 1)}
                   >
                     次へ
                   </button>
@@ -280,17 +272,18 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
               <button
                 type="button"
                 disabled={
-                  !devices || busy || printLocked || !!devices.labelUnavailable || !!issues.length
+                  busy || printLocked || !!issues.length
                 }
                 onClick={() => requestConfirm('print')}
               >
-                印刷内容を確認
+                入力内容を確認
               </button>
-              <button type="button" disabled={busy} onClick={() => void native('work',{path:'/reports/labels'})}>業務のラベル画面を開く</button>
+              {group==='system'&&<button type="button" disabled={busy} onClick={() => void native('work',{path:'/reports/labels'})}>業務のラベル画面を開く</button>}
             </div>
             {!printLocked && (
               <p className={css.operationHint}>
-                {devices?.labelUnavailable || issues.slice(0, 2).join('。')}
+                {group==='system'?devices?.labelUnavailable:issues.length?`確認が必要な項目：${issues.length}件`:'入力内容を確認できます'}
+                {group==='system'&&<span className={css.secondaryHint}>下書きは端末に保存します。業務画面への自動転記はありません。</span>}
               </p>
             )}
             {printLocked && !busy && (
@@ -438,13 +431,14 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
                     : '計量器に載っている物を確認してください。'}
               </p>
               <p>{devices?.printer}</p>
+              {confirm==='print'&&devices?.labelUnavailable&&<p>下書きはこの端末に保存されています。業務画面への自動転記はないため、登録済みの記録と照合して印刷してください。</p>}
               <button
                 type="button"
                 disabled={busy}
                 className={css.primary}
-                onClick={() => void run(confirm)}
+                onClick={() => {if(confirm==='print'&&devices?.labelUnavailable){void native('work',{path:'/reports/labels'});}else void run(confirm);}}
               >
-                この内容で実行する
+                {confirm==='print'&&devices?.labelUnavailable?'業務画面で印刷する':'この内容で実行する'}
               </button>
               <button type="button" onClick={() => setConfirm(null)}>
                 戻る
@@ -454,7 +448,10 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         )}
         {editing && (
           <div className={css.overlay}>
-            <StationFieldEditor
+            {editing==='productQuantity'||['receivingDate','deadlineDate'].includes(editing)?<LabelValueEditor
+              kind={editing==='productQuantity'?'quantity':'date'} label={fieldFor(editing).label} value={draft.data[editing]||''}
+              onClose={()=>setEditing(null)} onSave={value=>{const next=mergeLabelDraft(draftRef.current,{data:{[editing]:value}});const definition=PLACEHOLDER_SCHEMA[editing as keyof typeof PLACEHOLDER_SCHEMA];if(definition.charLimit&&value.length>definition.charLimit)throw new Error(`${definition.charLimit}文字以内で入力してください。`);update(next);onManualChange();setEditing(null);}}
+            />:<StationFieldEditor
               key={editing}
               fieldKey={editing}
               field={fieldFor(editing)}
@@ -474,10 +471,11 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
                       ? { copies: Number(value) }
                       : { data: { [editing]: value } },
                 );
+                onManualChange();
                 setEditing(null);
-                setPage(0);
+                if(editing==='template'){setPage(0);setGroup('');}
               }}
-            />
+            />}
           </div>
         )}
       </div>

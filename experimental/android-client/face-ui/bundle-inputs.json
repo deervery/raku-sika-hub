@@ -1,4 +1,5 @@
 [
+  "src/theme.css",
   "src/lib/forms/fieldValidation.ts",
   "src/lib/forms/inputMapping.ts",
   "src/lib/forms/formRuntime.ts",
@@ -12,6 +13,8 @@
   "src/lib/labels/placeholderSchema.ts",
   "src/lib/labels/validateLabelData.ts",
   "src/lib/voice-guidance/stationOperations.ts",
+  "src/lib/voice-guidance/labelEditor.ts",
+  "src/components/voice/LabelValueEditor.tsx",
   "src/bridge.ts",
   "src/components/voice/StationOperationsPanel.tsx",
   "src/components/voice/VoiceStation.tsx",

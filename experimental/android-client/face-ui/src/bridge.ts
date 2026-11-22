@@ -11,3 +11,5 @@ export function native(op:string,args:Record<string,unknown>={}) {
   });
 }
 window.addEventListener('station-pause',()=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error('画面を切り替えました。'));}pending.clear();});
+
+export function subscribeVoice(receive:(event:import('./conversation').VoiceEvent)=>void){const listener=(event:Event)=>receive((event as CustomEvent).detail);window.addEventListener('station-voice',listener);return ()=>window.removeEventListener('station-voice',listener);}

@@ -29,8 +29,9 @@ export function StationFieldEditor({
   const [page, setPage] = useState(0);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
+  const [textMode,setTextMode]=useState(fieldKey==='individualNumber'&&/[A-Za-z-]/.test(String(value??'')));
   const choices = rankChoices(name, fieldChoices(field, options));
-  const numeric = field.type === 'number' || fieldKey === 'individualNumber' || !!field.digits;
+  const numeric = !textMode&&(field.type === 'number' || fieldKey === 'individualNumber' || !!field.digits);
   const selected = Array.isArray(draft) ? draft : [];
   const save = (next: unknown) => {
     try {
@@ -47,6 +48,8 @@ export function StationFieldEditor({
           ×
         </button>
       </header>
+      {fieldKey==='individualNumber'&&<button type="button" onClick={()=>setTextMode(!textMode)}>{textMode?'数字ボタンで入力':'英字・ハイフンを入力'}</button>}
+      {['nutritionUnit','storageTemperature'].includes(fieldKey)&&<button type="button" onClick={()=>setTextMode(!textMode)}>{textMode?'選択肢から選ぶ':'その他の表記を入力'}</button>}
       {fieldKey === 'hunterName' && (
         <label className={css.nameQuery}>
           名前
@@ -61,7 +64,7 @@ export function StationFieldEditor({
           />
         </label>
       )}
-      {choices.length > 0 ? (
+      {choices.length > 0 && !textMode ? (
         <>
           {name && <p>近い候補</p>}
           <div className={css.choices}>
@@ -163,7 +166,7 @@ export function StationFieldEditor({
           </button>
         </>
       ) : (
-        !['select', 'radio'].includes(field.type) && (
+        (textMode || !['select', 'radio'].includes(field.type)) && (
           <>
             <input
               aria-label={field.label}

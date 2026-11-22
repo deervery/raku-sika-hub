@@ -65,6 +65,7 @@ export function VoiceStation({
   const [focus, setFocus] = useState<string[] | undefined>();
   const [board, setBoard] = useState(false);
   const [operationVisible, setOperationVisible] = useState(false);
+  const operationShown=useRef(false);
   const operationPanel = useRef<StationOperationsHandle>(null);
   const [page, setPage] = useState(0);
   const [editor, setEditor] = useState<{ key: string; query?: string } | null>(null);
@@ -173,6 +174,7 @@ export function VoiceStation({
     }
   }, [values, disabled]);
   function changeMode(next: ReviewMode, fields?: string[]) {
+    operationShown.current=false;
     setOperationVisible(false);
     setMode(next);
     setFocus(fields);
@@ -181,6 +183,7 @@ export function VoiceStation({
     setEditor(null);
   }
   function storePatch(patch: Record<string, unknown>) {
+    operationShown.current=false;
     setOperationVisible(false);
     pendingRef.current = { ...pendingRef.current, ...patch };
     setPending(pendingRef.current);
@@ -262,6 +265,7 @@ export function VoiceStation({
     const orderBase = counter.current + 1;
     try {
       session.current = connect(Object.fromEntries(Object.entries(displayValues).filter(([key]) => !defaultKeys.includes(key) || key in pendingRef.current)), current.current.options, {
+        context:()=>operationShown.current?(operationPanel.current?.context()||{operation:'menu'}):{operation:'receiving'},
         state: (state) => {
           if (ticket === generation.current) {
             setVoice(state);
@@ -336,11 +340,11 @@ export function VoiceStation({
     }
   }
   function voiceAction() {
-    if (voice === 'listening') stop();
-    else start(true); // One tap cancels playback/inference and immediately accepts the correction.
+    if (voice !== 'off') stop();
+    else start(); // Speech itself interrupts; the visible mic always ends capture.
   }
   function chooseWork() {
-    stop();
+    session.current?.inform({});
     try {operationPanel.current?.show({operation:'menu'});}
     catch (error) {say(error instanceof Error ? error.message : '作業を選んでください。');}
   }
@@ -410,10 +414,12 @@ export function VoiceStation({
         active={operationVisible}
         devices={devices}
         onShow={() => {
+          operationShown.current=true;
           setOperationVisible(true);
           setEditor(null);
         }}
         onReceiving={() => changeMode('filled')}
+        onManualChange={()=>session.current?.inform({})}
         onWeight={(value) => manual('weight', value)}
         onResult={(result) => session.current?.inform({ deviceResult: result })}
       />
@@ -528,7 +534,7 @@ export function VoiceStation({
       <div className={css.controls}>
         <button
           type="button"
-          aria-label={voice === 'speaking' || voice === 'connecting' ? '割り込んで話す' : voice === 'listening' ? '聞取りを止める' : 'マイクで話す'}
+          aria-label={voice !== 'off' ? 'マイクをオフにする' : 'マイクで話す'}
           aria-pressed={voice !== 'off'}
           disabled={disabled}
           onClick={voiceAction}
@@ -537,11 +543,11 @@ export function VoiceStation({
             <rect x="9" y="2" width="6" height="13" rx="3" />
             <path d="M5 10v2a7 7 0 0014 0v-2M12 19v3m-4 0h8" />
           </svg>
-          <span>{voice === 'speaking' || voice === 'connecting' ? '割り込んで話す' : voice === 'listening' ? '聞取りを止める' : '話す'}</span>
+          <span>{voice !== 'off' ? 'マイク ON' : '話す'}</span>
         </button>
         <span className={css.status} role="status">
           {voice === 'connecting'
-            ? '接続中…'
+            ? '考えています…'
             : voice === 'off'
               ? ''
               : voice === 'speaking'

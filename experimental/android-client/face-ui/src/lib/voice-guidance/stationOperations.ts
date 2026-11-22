@@ -4,6 +4,7 @@ import {
   getTemplatePlaceholders,
   type PlaceholderName,
 } from '@/lib/labels/placeholderSchema';
+import {validDate,validQuantity} from './labelEditor';
 import { validateLabelData } from '@/lib/labels/validateLabelData';
 
 export const STATION_OPERATIONS = [
@@ -27,6 +28,7 @@ export const LABEL_INPUT_KEYS = [
   'productName',
   'productQuantity',
   'deadlineDate',
+  'deadlineLabel',
   'storageTemperature',
   'individualNumber',
   'captureLocation',
@@ -41,6 +43,7 @@ export const LABEL_INPUT_KEYS = [
   'carbohydratesQuantity',
   'saltEquivalentQuantity',
   'attentionText',
+  'isHeatedMeatProducts',
 ] as const;
 export type LabelDraft = { template: TemplateKey; copies: number; data: Record<string, string> };
 export const emptyLabelDraft = (): LabelDraft => ({ template: 'carcass', copies: 1, data: {} });
@@ -53,6 +56,7 @@ export type DeviceResult = {
 };
 export type StationDevices = {
   identity: string;
+  draftStorageKey?: string;
   printer: string;
   labelUnavailable?: string;
   printLabel: (draft: LabelDraft) => Promise<DeviceResult>;
@@ -98,12 +102,25 @@ export function mergeLabelDraft(previous: LabelDraft, raw: unknown): LabelDraft 
       value.length > 500
     )
       throw new Error('ラベルに使える項目を確認してください。');
-    data[key] = value.trim();
+    const clean=value.trim();
+    const metadata=PLACEHOLDER_SCHEMA[key as PlaceholderName];
+    if(metadata.charLimit>0&&clean.length>metadata.charLimit)throw new Error(`${metadata.label}は${metadata.charLimit}文字以内で入力してください。`);
+    if(clean&&['receivingDate','deadlineDate'].includes(key)&&!validDate(clean))throw new Error(`${metadata.label}は実在する年月日を選んでください。`);
+    if(clean&&key==='productQuantity'&&!validQuantity(clean))throw new Error('内容量は正の数値と単位を選んでください（個・包・袋は整数）。');
+    if(clean&&key==='individualNumber'&&!/^[A-Za-z0-9-]{1,15}$/.test(clean))throw new Error('個体番号は15文字以内の英数字・ハイフンで入力してください。');
+    data[key] = clean;
+    if(key==='storageTemperature'){
+      if(clean==='-18℃以下')data.deadlineLabel='賞味期限';
+      else if(['4℃以下','10℃以下'].includes(clean))data.deadlineLabel='消費期限';
+    }
   }
   return { template: template as TemplateKey, copies, data };
 }
 export function labelFields(draft: LabelDraft) {
-  return getTemplatePlaceholders(draft.template).filter((key) =>
+  const fields = [...getTemplatePlaceholders(draft.template)];
+  // Existing Lite requires receivingDate as traceable input even though it is not printed.
+  if(draft.template==='traceable')fields.push('receivingDate');
+  return fields.filter((key) =>
     LABEL_INPUT_KEYS.includes(key as (typeof LABEL_INPUT_KEYS)[number]),
   );
 }
@@ -118,6 +135,16 @@ export function labelIssues(draft: LabelDraft) {
     );
   if (!Number.isInteger(draft.copies) || draft.copies < 1 || draft.copies > 30)
     errors.push('枚数は1〜30枚で指定してください');
+  for(const key of labelFields(draft)){
+    const value=draft.data[key]||'';
+    if(['receivingDate','deadlineDate'].includes(key)&&value&&!validDate(value))errors.push(`${PLACEHOLDER_SCHEMA[key].label}は実在する年月日を選んでください`);
+    if(key==='productQuantity'&&value&&!validQuantity(value))errors.push('内容量は正の数値と単位を選んでください（個・包・袋は整数）');
+    if(key==='individualNumber'&&value&&!/^[A-Za-z0-9-]{1,15}$/.test(value))errors.push('個体番号は15文字以内の英数字・ハイフンで入力してください');
+    if(key==='species'&&value&&!['シカ','クマ','イノシシ','アライグマ'].includes(value))errors.push('獣種を選び直してください');
+    if(key==='sex'&&value&&!['オス','メス'].includes(value))errors.push('性別を選び直してください');
+    if(key==='deadlineLabel'&&value&&!['賞味期限','消費期限'].includes(value))errors.push('期限区分を選び直してください');
+  }
+  if(draft.template==='traceable'&&!draft.data.receivingDate)errors.push('搬入日を入力してください');
   return errors;
 }
 /** An HTTP acknowledgement does not prove that a physical label came out. */

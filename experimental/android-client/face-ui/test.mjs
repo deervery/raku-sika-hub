@@ -25,17 +25,49 @@ assert.ok(!defaultFieldKeys(form,{}).includes('weight'));
 const {createConversation}=await bundled('src/conversation.ts');
 const tick=()=>new Promise(r=>setTimeout(r,0));
 for(const phase of ['interpret','speak']){
-  const queue=[],calls=[],applied=[],states=[];
-  const native=async(op,args)=>{calls.push(op);if(['listen',phase].includes(op))return new Promise(resolve=>queue.push({op,resolve}));if(op==='interpret')return {question:'こんにちは'};return {};};
-  const connect=createConversation(native,()=>true);
-  const callbacks=id=>({message:()=>{},propose:p=>applied.push([id,p]),review:()=>{},state:s=>states.push([id,s]),error:e=>{throw new Error(e);}});
-  const old=connect({}, {},callbacks('old'));queue.shift().resolve({text:'こんにちは'});await tick();
-  assert.equal(queue[0].op,phase);const stale=queue.shift();old.stop();
-  const fresh=connect({}, {},callbacks('new'));queue.shift().resolve({text:'0.08kg'});await tick();
-  const before=states.length;stale.resolve(phase==='interpret'?{patch:{weight:'0.07'}}:{});await tick();
-  assert.deepEqual(applied,[['new',{weight:'0.08'}]]);
+  const pending=[],calls=[],applied=[],states=[],messages=[];let session='',receive=()=>{},unsubscribed=false;
+  const native=async(op,args)=>{calls.push(op);if(op==='voiceStart'){session=args.session;return {continuous:true};}if(op===phase)return new Promise(resolve=>pending.push(resolve));if(op==='interpret')return {question:'こんにちは'};return {};};
+  const connect=createConversation(native,()=>true,fn=>{receive=fn;return ()=>{unsubscribed=true;};});
+  const callbacks={message:(...args)=>messages.push(args),propose:p=>applied.push(p),review:()=>{},state:s=>states.push(s),error:e=>{throw new Error(e);}};
+  const voice=connect({}, {},callbacks);
+  const send=(type,turn,text='')=>receive({session,type,turn,text});
+  send('ready',0);send('speech',1);send('text',1,'こんにちは');await tick();
+  assert.equal(pending.length,1,phase);const stale=pending.shift();
+  voice.inform({});voice.inform({}); // Repeated manual edits must not suppress the next speech turn.
+  send('speech',2);send('text',2,'0.08kg');await tick();
+  assert.deepEqual(applied,[{weight:'0.08'}]);
+  const before=states.length;stale(phase==='interpret'?{patch:{weight:'0.07'}}:{});await tick();
   assert.equal(states.length,before,'late response must not change the new turn');
-  assert.ok(calls.indexOf('stop')<calls.lastIndexOf('listen'));
-  fresh.stop();
+  send('speech',3);send('text',3,'個体番号0001');await tick();
+  assert.equal(applied[1].individualNumber,'0001');
+  assert.equal(calls.filter(op=>op==='voiceStart').length,1,'one microphone session across turns');
+  assert.ok(messages.every((msg,i)=>!i||msg[3]>messages[i-1][3]),'bubbles keep chronological order');
+  voice.stop();assert.ok(unsubscribed);const count=applied.length;
+  send('speech',4);send('text',4,'1kg');await tick();assert.equal(applied.length,count);
 }
-console.log('Defaults and interruption regression checks passed');
+const {labelGroups,fieldForLabel,validDate,validQuantity,labelIntent}=await bundled('src/lib/voice-guidance/labelEditor.ts');
+const {labelFields,emptyLabelDraft,mergeLabelDraft,labelIssues,LABEL_TEMPLATES,LABEL_INPUT_KEYS}=await bundled('src/lib/voice-guidance/stationOperations.ts');
+for(const template of Object.keys(LABEL_TEMPLATES)){
+  const draft={...emptyLabelDraft(),template};
+  assert.deepEqual(labelGroups(draft).flatMap(g=>g.keys).sort(),labelFields(draft).sort(),template+' must expose every operator field exactly once');
+}
+assert.equal(validDate('2028-02-29'),true);assert.equal(validDate('2026-02-29'),false);assert.equal(validDate('2026-04-31'),false);assert.equal(validDate('2026-11'),false);
+for(const value of ['0.07kg','70g','2個','3袋','2包'])assert.equal(validQuantity(value),true,value);
+for(const value of ['0kg','-1kg','1.5袋','1','NaNkg'])assert.equal(validQuantity(value),false,value);
+assert.ok(labelFields({...emptyLabelDraft(),template:'traceable'}).includes('receivingDate'));
+assert.ok(labelFields({...emptyLabelDraft(),template:'processed'}).includes('isHeatedMeatProducts'));
+assert.equal(fieldForLabel('attentionText',emptyLabelDraft()).required,false);
+assert.equal(mergeLabelDraft(emptyLabelDraft(),{data:{individualNumber:'0001'}}).data.individualNumber,'0001');
+assert.deepEqual(labelIntent('内容量は70グラムです'),{label:{data:{productQuantity:'70g'}}});
+assert.deepEqual(labelIntent('消費期限は2026年12月3日'),{label:{data:{deadlineDate:'2026-12-03',deadlineLabel:'消費期限'}}});
+assert.ok(labelIntent('印刷して').question,'speech alone must not execute printing');
+// The palette is centralized, including the formerly green review/operations styles.
+for(const file of ['src/components/voice/Station.module.css','src/components/voice/VoiceWorkspace.module.css'])assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(/i.test(await readFile(file,'utf8')),false,file);
+console.log('Continuous turns, interruption, label field coverage, units/dates and theme checks passed');
+
+const legacyStates=[],legacyPatches=[];
+const legacy=createConversation(async op=>op==='voiceStart'?{continuous:false}:op==='listen'?{text:'0.07kg'}:{},()=>false,()=>()=>{});
+legacy({}, {},{message:()=>{},propose:patch=>legacyPatches.push(patch),review:()=>{},state:s=>legacyStates.push(s),error:e=>{throw new Error(e);}});
+await tick();await tick();assert.deepEqual(legacyPatches,[{weight:'0.07'}]);assert.equal(legacyStates.at(-1),'off');
+for(const data of [{productQuantity:'-1kg'},{productQuantity:'1.2個'},{deadlineDate:'2026-02-29'},{individualNumber:'1'.repeat(16)}])assert.throws(()=>mergeLabelDraft(emptyLabelDraft(),{data}));
+console.log('Manual-edit cancellation, Android 12 fallback and invalid label rejection passed');

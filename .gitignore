@@ -3,3 +3,4 @@ logs/
 config.json
 *:Zone.Identifier
 _scratch/
+.station-lab/

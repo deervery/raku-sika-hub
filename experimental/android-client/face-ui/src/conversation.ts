@@ -1,3 +1,4 @@
+import {businessIntent} from './businessIntent';
 import type {startRealtime} from './lib/voice-guidance/realtimeClient';
 import {interpretationInput} from './interpretationInput';
 import {localIntent} from './localIntent';
@@ -20,16 +21,17 @@ export function createConversation(native:(op:string,args?:Record<string,unknown
       if(!live(id))return;
       c.message('user-'+id,'user',text,++order);c.state('connecting');
       try{
-        const route=localIntent(text);
+        const context=c.context?.();
+        const route=(context?.fields?businessIntent(text,context.fields):null)||localIntent(text);
         let result=c.context?.().operation==='labels'&&!route?.operation&&route?.navigate===undefined?labelIntent(text):route;
-        if(!result&&cloudAllowed())result=await native('interpret',{...interpretationInput(text,currentValues,options,conversation),...(continuousMode?{session,turn:id}:{})});
+        if(!result&&cloudAllowed()&&!context?.operation.startsWith('business:'))result=await native('interpret',{...interpretationInput(text,currentValues,options,conversation),...(continuousMode?{session,turn:id}:{})});
         if(!live(id))return;
-        result??={question:'項目と値を一つずつ教えてください。顔を長押しすると、画面でも入力できます。'};
+        result??={question:'項目と値を一つずつ教えてください。メニューから画面でも入力できます。'};
         if(result.label){const response:any=c.label?.(result.label);if(response?.missing?.length)result.question=response.missing[0];}
         if(result.patch&&Object.keys(result.patch).length){const response:any=c.propose(result.patch);if(response?.question)result.question=response.question;Object.assign(currentValues,result.patch);}
         if(result.review)c.review({mode:result.review});
         if(result.operation)c.operation?.({operation:result.operation});
-        if(result.navigate!==undefined){await native('work',{path:result.navigate});stop();return;}
+        if(result.navigate!==undefined)c.operation?.({operation:'menu'});
         conversation.push({role:'user',text:text.slice(0,400)});
         if(result.question){
           conversation.push({role:'assistant',text:result.question});

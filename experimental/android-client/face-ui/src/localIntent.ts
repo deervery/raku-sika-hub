@@ -2,16 +2,20 @@
 export function localIntent(text:string):any {
   const s=text.normalize('NFKC').replace(/[。!！\s]/g,'');
   if(/^(はい|いいね|もういい|確定)$/.test(s))return {question:'入力内容の確認、会話の終了、どちらにしますか？'};
-  if(/^(スキャンして出庫|読み取って出庫|出庫)$/.test(s))return {navigate:'/input/meat-outbound'};
+  if(/^(スキャンして出庫|読み取って出庫|出庫)$/.test(s))return {operation:'outbound'};
   if(/^(搬入入力|搬入登録)$/.test(s))return {operation:'receiving'};
   if(/^(スキャンして印刷|読み取って印刷)$/.test(s))return {operation:'scan'};
   if(/^(計量して登録|量って登録|計量|量って|計って|重量を確認)$/.test(s))return {operation:'weigh'};
-  if(/^(スキャン|コードを読む)$/.test(s))return {operation:'menu',question:'出庫とラベル印刷、どちらに進みますか？'};
+  if(/^(スキャン|コードを読む)$/.test(s))return {operation:'scan'};
+  if(/^(在庫登録|入庫)$/.test(s))return {operation:'inventory'};
+  if(/^(定期報告|日報|週報|月報)$/.test(s))return {operation:'reports'};
+  if(/^(設定|機器設定)$/.test(s))return {operation:'settings'};
+  if(/^(ホーム|メニュー|作業を選ぶ)$/.test(s))return {operation:'menu'};
   if(/^(ラベル|ラベル印刷)$/.test(s))return {operation:'labels'};
   if(/^(確認|入力内容|入力済み)$/.test(s))return {review:'filled'};
   if(/^(未入力|残りの項目)$/.test(s))return {review:'missing'};
   if(/^(一覧|全部の項目)$/.test(s))return {review:'all'};
-  if(/^(業務に戻る|業務画面)$/.test(s))return {navigate:''};
+  if(/^(業務に戻る|業務画面)$/.test(s))return {operation:'menu'};
   if(/^(違う|ではない|じゃない|以外|かも|多分|たぶん)/.test(s)||/ではなく|じゃなく|ではない|かもしれ|それとも|または/.test(s))return null;
   const patch:Record<string,string>={};let conflict=false;
   const put=(key:string,value:string)=>{if(key in patch&&patch[key]!==value)conflict=true;patch[key]=value;return '';};

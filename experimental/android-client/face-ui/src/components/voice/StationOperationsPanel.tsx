@@ -1,3 +1,4 @@
+import {BusinessForm,type BusinessHandle} from './BusinessForm';
 'use client';
 import {
   forwardRef,
@@ -30,7 +31,8 @@ import css from './VoiceWorkspace.module.css';
 import {native} from '../../bridge';
 
 export type StationOperationsHandle = {
-  context: () => {operation:string};
+  context: () => {operation:string;fields?:Record<string,{label:string;type:string}>};
+  form: (raw:unknown)=>object;
   back:()=>boolean;
   show: (raw: unknown) => object;
   prepare: (raw: unknown) => object;
@@ -39,28 +41,32 @@ type Props = {
   active: boolean;
   devices?: StationDevices;
   onShow: () => void;
+  onHome: (home:boolean)=>void;
   onReceiving: () => void;
   onResult: (result: DeviceResult) => void;
   onWeight: (value: string) => void;
   onManualChange: () => void;
 };
 const titles = {
-  receiving: '搬入入力',
+  receiving: '搬入登録',
+  inventory:'在庫登録',reports:'定期報告',settings:'設定',outbound:'スキャンして出庫',
   labels: 'ラベル印刷',
   weigh: '計量して登録',
-  scan: 'スキャンして印刷',
+  scan: 'スキャン',
   devices: '機器状態',
   menu: '作業を選ぶ',
 };
 
 export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>(
   function StationOperationsPanel(
-    { active, devices, onShow, onReceiving, onResult, onWeight, onManualChange },
+    { active, devices, onShow, onHome, onReceiving, onResult, onWeight, onManualChange },
     ref,
   ) {
     const [operation, setOperation] = useState<StationOperation>('menu');
     const [draft, setDraft] = useState<LabelDraft>(()=>{try{return devices?.draftStorageKey?restoreLabelDraft(JSON.parse(localStorage.getItem(devices.draftStorageKey)||'{}')):emptyLabelDraft();}catch{return emptyLabelDraft();}});
     const [group,setGroup]=useState('');
+    const [business,setBusiness]=useState('');
+    const businessRef=useRef<BusinessHandle>(null);
     const [capacity,setCapacity]=useState(()=>window.innerHeight<720?2:4);
     useEffect(()=>{const resize=()=>setCapacity(window.innerHeight<720?2:4);window.addEventListener('resize',resize);return ()=>window.removeEventListener('resize',resize);},[]);
     const draftRef = useRef(draft);
@@ -71,8 +77,9 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     const [busy, setBusy] = useState(false);
     const busyRef = useRef(false);
     const [results, setResults] = useState<Partial<Record<StationOperation, DeviceResult>>>({});
-    const [printLocked, setPrintLocked] = useState(false);
-    const printLockedRef = useRef(false);
+    const printReceiptKey=(devices?.draftStorageKey||'label')+':print-dispatched';
+    const [printLocked, setPrintLocked] = useState(()=>!!localStorage.getItem(printReceiptKey));
+    const printLockedRef = useRef(printLocked);
     const [confirm, setConfirm] = useState<'print' | 'test' | 'tare' | 'zero' | null>(null);
     const [error, setError] = useState('');
     const [facility,setFacility]=useState<Record<string,string>>({});
@@ -113,6 +120,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
       setError('');
       setConfirm(null);
       if (isPrint) {
+        localStorage.setItem(printReceiptKey,JSON.stringify({state:'unknown',draft:draftRef.current}));
         printLockedRef.current = true;
         setPrintLocked(true);
       }
@@ -123,7 +131,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
       try {
         result =
           action === 'print'
-            ? await devices.printLabel({ ...draftRef.current, data: { ...draftRef.current.data } })
+            ? await devices.printLabel({ ...draftRef.current, data: { ...draftRef.current.data } },facility)
             : action === 'test'
               ? await devices.testPrint()
               : await devices[action]();
@@ -156,8 +164,9 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     }
     function show(next: StationOperation) {
       if(next==='devices')next='menu';
-      if(next==='weigh'){void native('work',{path:'/input/meat-inbound'}).catch(e=>setError(e.message));return;}
-      if(next==='scan'){setOperation('labels');setConfirm(null);setPage(0);setGroup('individual');setEditing('individualNumber');onShow();return;}
+      if(next==='weigh'){next='inventory';setBusiness('meat');}else setBusiness(next==='outbound'?'outbound':'');
+      onHome(next==='menu');
+
       if (busyRef.current) throw new Error('機器の応答を待っています。');
       setConfirm(null);
       setEditing(null);
@@ -173,8 +182,9 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
         void run(next === 'devices' ? 'health' : next === 'scan' ? 'scan' : 'weigh', next);
     }
     useImperativeHandle(ref, () => ({
-      context:()=>({operation}),
-      back:()=>{if(editing){setEditing(null);return true;}if(confirm){setConfirm(null);return true;}if(operation!=='menu'){show('menu');return true;}return false;},
+      context:()=>businessRef.current?.context()||({operation}),
+      form:(raw)=>{if(!businessRef.current)throw Error('入力する作業を選んでください。');return businessRef.current.patch(raw);},
+      back:()=>{if(business){setBusiness('');return true;}if(editing){setEditing(null);return true;}if(confirm){setConfirm(null);return true;}if(operation!=='menu'){show('menu');return true;}return false;},
       show: (raw) => {
         const next = readOperation(raw);
         show(next);
@@ -227,19 +237,18 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     };
     return (
       <div className={css.board} data-operation={operation} aria-label="現場の作業">
-        <nav className={css.operationHeader}>
-          <strong>{titles[operation]}</strong>
-        </nav>
-        {operation === 'menu' ? (
-          <div className={css.cards} data-count="5">
-            {(['receiving', 'labels', 'weigh', 'scan'] as const).map((key) => (
-              <button className={css.card} key={key} type="button" onClick={() => show(key)}>
-                <strong>{titles[key]}</strong>
-              </button>
-            ))}
-            <button type="button" className={css.card} onClick={()=>void native('work',{path:'/input/meat-outbound'}).catch(e=>setError(e.message))}><strong>スキャンして出庫</strong></button>
-          </div>
-        ) : operation === 'labels' ? (
+        {!business&&<nav className={css.operationHeader}>
+          {operation!=='menu'&&<button type="button" onClick={()=>show('menu')}>ホーム</button>}<strong>{titles[operation]}</strong>
+        </nav>}
+        {business?<BusinessForm ref={businessRef} key={business} kind={business} scope={devices?.identity||''} onClose={()=>{setBusiness('');if(operation==='outbound')show('scan');}}/>:operation === 'menu' ? (
+          <><div className={css.cards} data-count="4">
+            {(['receiving','labels','inventory','scan'] as const).map(key=><button className={css.card} key={key} type="button" onClick={()=>show(key)}><strong>{titles[key]}</strong></button>)}
+          </div><nav className={css.workflowActions}><button type="button" onClick={()=>show('reports')}>定期報告</button><button type="button" onClick={()=>show('settings')}>設定</button></nav></>
+        ) : operation==='inventory'?<div className={css.cards} data-count="3">{[['meat','精肉'],['processed','加工品'],['pet','ペットフード']].map(([key,label])=><button type="button" className={css.card} key={key} onClick={()=>setBusiness(key)}><strong>{label}</strong></button>)}</div>
+        : operation==='reports'?<div className={css.cards} data-count="3">{[['daily','日報'],['weekly','週報'],['monthly','月報']].map(([key,label])=><button type="button" className={css.card} key={key} onClick={()=>setBusiness(key)}><strong>{label}</strong></button>)}</div>
+        : operation==='settings'?<div className={css.cards} data-count="2"><button type="button" className={css.card} onClick={()=>void native('settings')}><strong>機器・音声・接続設定</strong></button><button type="button" className={css.card} onClick={()=>{setFacilityError('');void native('catalog',{kind:'facility'}).then(r=>setFacility(r.item)).catch(e=>setFacilityError(e.message));}}><strong>施設情報を確認</strong>{Object.values(facility).map((value,i)=><small key={i}>{value}</small>)}{facilityError&&<small>{facilityError}</small>}</button></div>
+        : operation==='scan'?<div className={css.cards} data-count="2"><button type="button" className={css.card} onClick={()=>setBusiness('outbound')}><strong>スキャンして出庫</strong></button><button type="button" className={css.card} onClick={()=>{show('labels');setGroup('individual');setEditing('individualNumber');}}><strong>スキャンして印刷</strong></button></div>
+        : operation === 'labels' ? (
           <>
             <div className={css.operationToolbar}>
               <button type="button" disabled={busy || printLocked} aria-haspopup="dialog" onClick={() => edit('template')}>
@@ -315,6 +324,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
                 type="button"
                 className={css.operationReset}
                 onClick={() => {
+                  localStorage.removeItem(printReceiptKey);
                   printLockedRef.current = false;
                   setPrintLocked(false);
                   setResults((previous) => ({ ...previous, labels: undefined }));
@@ -435,17 +445,17 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
               {confirm==='print'?<>
                 <div className={css.confirmFields}>{fields.map(key=><button type="button" key={key} onClick={()=>{setConfirm(null);setEditing(key);}}><span>{fieldFor(key).label}</span><strong>{draft.data[key]||'未入力'}</strong></button>)}</div>
                 {!!issues.length&&<p role="status">未入力・確認が必要な項目があります。項目を押して編集できます。</p>}
-                <section className={css.facilitySummary}><h3>印刷元の施設</h3>{Object.entries(facility).map(([key,value])=><p key={key}>{value}</p>)}{!Object.keys(facility).length&&<p>{facilityError||'施設情報を読み取り中…'}</p>}<button type="button" onClick={()=>void native('work',{path:'/input/settings/facility'})}>施設情報を編集する</button></section>
+                <section className={css.facilitySummary}><h3>印刷元の施設</h3>{Object.entries(facility).map(([key,value])=><p key={key}>{value}</p>)}{!Object.keys(facility).length&&<p>{facilityError||'施設情報を読み取り中…'}</p>}<button type="button" onClick={()=>{setConfirm(null);show('settings');}}>設定を開く</button></section>
               </>:<p>計量器に載っている物を確認してください。</p>}
               <p>{devices?.printer}</p>
-              {confirm==='print'&&devices?.labelUnavailable&&<p>下書きはこの端末に保存されています。業務画面への自動転記はないため、登録済みの記録と照合して印刷してください。</p>}
+              {confirm==='print'&&devices?.labelUnavailable&&<p>{devices.labelUnavailable}</p>}
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy||(confirm==='print'&&(!!devices?.labelUnavailable||!Object.keys(facility).length||!!issues.length))}
                 className={css.primary}
-                onClick={() => {if(confirm==='print'&&devices?.labelUnavailable){void native('work',{path:'/reports/labels'});}else void run(confirm);}}
+                onClick={() => {void run(confirm);}}
               >
-                {confirm==='print'&&devices?.labelUnavailable?'業務画面で印刷する':'この内容で実行する'}
+                この内容で実行する
               </button>
               <button type="button" onClick={() => setConfirm(null)}>
                 戻る

@@ -613,3 +613,30 @@
 .confirmFields span {font-size:14px;}
 .confirmFields strong {font-size:20px;}
 .facilitySummary {padding:12px;border:1px solid var(--station-border);border-radius:16px;}
+
+/* Assistant home: actions share the conversation surface; only the home menu fades. */
+.clearField{display:flex;align-items:center;gap:6px;min-width:0;width:100%;}
+.clearField>input,.clearField>output{flex:1;min-width:0;width:0;}
+.clearField>button{flex:0 0 48px;font-size:26px;color:var(--station-primary);background:var(--station-soft);border-radius:12px;}
+.clearField>button:disabled{opacity:.35;}
+.workspace .controls .faceButton,.workspace .controls .faceButton[aria-pressed='true']{border:0;background:transparent;box-shadow:none;}
+.workspace .controls .faceButton[aria-pressed='true'] svg{color:var(--station-primary);}
+.workspace[data-home='true'] [data-operation='menu']{transition:opacity .28s ease,transform .28s ease,flex-basis .28s ease;flex:1;min-height:0;}
+.workspace[data-home='true'][data-chatting='true'] [data-operation='menu']{opacity:0;transform:translateY(-12px);pointer-events:none;visibility:hidden;flex:0 0 0;max-height:0;overflow:hidden;}
+.workspace[data-home='true'] .chat{flex:0 1 20%;}
+.workspace[data-home='true'][data-chatting='true'] .chat{flex:1;}
+.workspace[data-home='true'] .faceHint{display:none;}
+.workflowPages{display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;}
+.workflowPages .cards{min-height:0;}
+.workflowActions{display:flex;gap:8px;flex-wrap:wrap;}
+.workflowActions button{padding:10px 16px;border-radius:14px;background:var(--station-soft);}
+.workflowReview{overflow:auto;min-height:0;flex:1;}
+
+.workspace .controls {background:var(--station-transparent);border:0;box-shadow:none;}
+
+.workspace[data-home='true'] [data-operation='menu']{max-height:75vh;transition:opacity .24s ease,transform .28s ease,max-height .28s ease,flex-basis .28s ease,visibility 0s;}
+.workspace[data-home='true'][data-chatting='true'] [data-operation='menu']{max-height:0;transition:opacity .24s ease,transform .28s ease,max-height .28s ease,flex-basis .28s ease,visibility 0s .28s;}
+
+.workflowActions{flex-shrink:0;}
+.workflowPages>p{flex-shrink:0;margin:0;font-size:16px;}
+.workflowPages .card{min-height:0;}

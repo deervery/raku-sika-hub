@@ -102,4 +102,33 @@ assert.equal(initial.unstableGait_hunter,'異常なし','summary does not confir
 assert.equal(labelOptional('species','シカ'),true);assert.equal(labelOptional('weight','70'),false);assert.equal(labelOptional('sex',''),false);
 console.log('Receiving empty fields, grouped health checks and semantic labels passed');
 
-assert.equal(localIntent('計量して登録').operation,'weigh');assert.equal(localIntent('スキャンして出庫').navigate,'/input/meat-outbound');assert.equal(localIntent('スキャンして印刷').operation,'scan');assert.equal(localIntent('スキャン').operation,'menu');
+assert.equal(localIntent('計量して登録').operation,'weigh');assert.equal(localIntent('スキャンして出庫').operation,'outbound');assert.equal(localIntent('スキャンして印刷').operation,'scan');assert.equal(localIntent('スキャン').operation,'scan');
+
+const {DurableBusiness}=await bundled('src/durableBusiness.ts');
+const memory=new Map();const store={getItem:k=>memory.get(k)??null,setItem:(k,v)=>memory.set(k,v),removeItem:k=>memory.delete(k)};
+let sends=[],fail=true;
+const api=async(op,args)=>{sends.push(structuredClone(args));if(fail)throw Error('timeout');return {ok:true,data:{id:'record-1'}};};
+const receipt=new DurableBusiness(store,'one',api),data={quantity:'0.07',productId:'p'};
+await assert.rejects(()=>receipt.start('meat',data));data.quantity='2';
+assert.equal(receipt.read().data.quantity,'0.07');assert.throws(()=>receipt.next());
+await assert.rejects(()=>receipt.start('meat',{quantity:'9'}));assert.equal(sends.length,1);
+fail=false;const restored=new DurableBusiness(store,'one',api);await restored.recover();
+assert.equal(sends[0].requestId,sends[1].requestId);assert.deepEqual(sends[0].data,sends[1].data);
+await restored.recover();assert.equal(sends.length,2);restored.next();assert.equal(restored.read(),null);
+const brokenStore={...store,setItem:()=>{throw Error('disk full');}};
+await assert.rejects(()=>new DurableBusiness(brokenStore,'other',api).start('weekly',{}));assert.equal(sends.length,2);
+for(const name of ['StationOperationsPanel.tsx','BusinessForm.tsx'])assert.ok(!(await readFile('src/components/voice/'+name,'utf8')).includes("native('work'"));
+console.log('Durable registration: process restart, ambiguous timeout, immutable confirmation and storage failure passed');
+
+const {businessIntent}=await bundled('src/businessIntent.ts');
+const reportFields={recorder:{label:'記録者',type:'text'},temperature:{label:'温度',type:'number'},productId:{label:'製品',type:'text'}};
+assert.deepEqual(businessIntent('記録者は田中です',reportFields),{patch:{recorder:'田中'}});
+assert.deepEqual(businessIntent('温度は-18です',reportFields),{patch:{temperature:'-18'}});
+assert.equal(businessIntent('はい',reportFields),null);
+assert.ok(businessIntent('製品はロース',reportFields).question);
+console.log('Form-specific voice input never approves or chooses master IDs');
+
+const {productFamilyMatches}=await bundled('src/catalog.ts');
+assert.equal(productFamilyMatches({id:'p',isTraceable:true},'meat'),true);
+assert.equal(productFamilyMatches({id:'p',isTraceable:false,productType:'ペットフード'},'processed'),false);
+assert.equal(productFamilyMatches({id:'p',isTraceable:false,productType:'ペットフード'},'pet'),true);

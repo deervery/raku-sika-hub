@@ -1,3 +1,4 @@
+import {ClearField} from './ClearField';
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import type { FormField } from '@/types/forms';
@@ -55,7 +56,7 @@ export function StationFieldEditor({
       {fieldKey === 'hunterName' && (
         <label className={css.nameQuery}>
           名前
-          <input
+          <ClearField label="捕獲者の名前" empty={!name} onClear={()=>{setName('');setPage(0);}}><input
             aria-label="捕獲者の名前"
             value={name}
             maxLength={100}
@@ -63,7 +64,7 @@ export function StationFieldEditor({
               setName(e.target.value);
               setPage(0);
             }}
-          />
+          /></ClearField>
         </label>
       )}
       {choices.length > 0 && !textMode ? (
@@ -123,10 +124,11 @@ export function StationFieldEditor({
         </div>
       ) : numeric ? (
         <>
-          <output className={css.number}>
+          <ClearField label={field.label} empty={!String(draft)} onClear={()=>setDraft('')}><output className={css.number}>
             {String(draft) || '—'}
             <small>{field.suffix}</small>
-          </output>
+          </output></ClearField>
+          {field.type==='number'&&field.suffix==='℃'&&<button type="button" onClick={()=>setDraft(previous=>String(previous).startsWith('-')?String(previous).slice(1):'-'+String(previous))}>＋ / −</button>}
           <div className={css.keypad}>
             {[
               '1',
@@ -163,7 +165,7 @@ export function StationFieldEditor({
       ) : (
         (textMode || !['select', 'radio'].includes(field.type)) && (
           <>
-            <input
+            <ClearField label={field.label} empty={!String(draft)} onClear={()=>setDraft('')}><input
               aria-label={field.label}
               type={
                 ['date', 'datetime-local', 'time', 'month', 'week'].includes(field.type)
@@ -173,7 +175,7 @@ export function StationFieldEditor({
               value={String(draft)}
               maxLength={1000}
               onChange={(e) => setDraft(e.target.value)}
-            />
+            /></ClearField>
           </>
         )
       )}

@@ -15,6 +15,8 @@ import {
   validateManualPatch,
   type ReviewMode,
 } from '@/lib/voice-guidance/stationUi';
+import {receivingEntries,healthEntries,healthSummary,labelOptional,HEALTH_GROUP} from '../../receivingLayout';
+import {HealthEditor} from './HealthEditor';
 import {swipeDirection} from '../../catalog';
 import { receivingReviewValue } from './ReceivingReview';
 import { StationFieldEditor } from './StationFieldEditor';
@@ -62,7 +64,7 @@ export function VoiceStation({
   useLayoutEffect(() => {
     current.current = { form, values, options: combinedOptions, disabled };
   }, [form, values, combinedOptions, disabled]);
-  const [mode, setMode] = useState<ReviewMode>('filled');
+  const [mode, setMode] = useState<ReviewMode>('all');
   const [focus, setFocus] = useState<string[] | undefined>();
   const [board, setBoard] = useState(false);
   const [operationVisible, setOperationVisible] = useState(false);
@@ -90,17 +92,13 @@ export function VoiceStation({
       merged[key],
     ]),
   );
-  const allEntries = reviewEntries(form, merged, 'all', focus).filter(
-    ([key]) =>
-      mode === 'all' ||
-      (mode === 'missing' ? missingValue(displayValues[key]) : !missingValue(displayValues[key])),
-  );
+  const allEntries=receivingEntries(form,displayValues,mode,focus);
   // Keep primary information on one viewport; overflow uses explicit pages instead of tiny text.
   const [pageUnits, setPageUnits] = useState(12);
   useEffect(() => {
     const resize = () => {
       const columns = window.innerWidth <= 600 ? 2 : 4;
-      const rows = Math.max(1, Math.floor((window.innerHeight - 320) / 110));
+      const rows = Math.max(1, Math.floor((window.innerHeight - 210) / 100));
       setPageUnits(Math.max(columns, Math.min(12, rows * columns)));
     };
     resize();
@@ -346,6 +344,11 @@ export function VoiceStation({
     if (voice !== 'off') stop();
     else start(); // Speech itself interrupts; the visible mic always ends capture.
   }
+  useEffect(()=>{
+    const host=window as Window & {stationBack?:()=>boolean};
+    host.stationBack=()=>{if(editor){setEditor(null);return true;}if(operationVisible){if(operationPanel.current?.back())return true;setOperationVisible(false);operationShown.current=false;setBoard(false);return true;}if(board){setBoard(false);return true;}return false;};
+    return()=>{delete host.stationBack;};
+  },[editor,operationVisible,board]);
   function chooseWork() {
     session.current?.inform({});
     try {operationPanel.current?.show({operation:'menu'});}
@@ -387,31 +390,6 @@ export function VoiceStation({
       data-voice={voice}
       aria-label="会話で搬入入力"
     >
-      <button
-        className={css.faceButton}
-        type="button"
-        aria-label="顔を押すと会話、長押しで作業を選ぶ"
-        onClick={() => {if(Date.now() > suppressFaceClick.current) voiceAction();}}
-        onContextMenu={(event) => {event.preventDefault(); suppressFaceClick.current=Date.now()+900; chooseWork();}}
-      >
-        {!board && !operationVisible && <span className={css.faceHint}>私の顔を押したり、長押ししてね</span>}
-        <svg viewBox="0 0 320 180" role="img" aria-label="案内する表情">
-          <g className={css.eyes}>
-            <ellipse cx="108" cy="69" rx="11" ry="16" />
-            <ellipse cx="212" cy="69" rx="11" ry="16" />
-          </g>
-          <ellipse className={css.cheek} cx="67" cy="104" rx="21" ry="9" />
-          <ellipse className={css.cheek} cx="253" cy="104" rx="21" ry="9" />
-          <path
-            className={css.mouth}
-            d="M142 109Q160 129 178 109"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="6"
-            strokeLinecap="round"
-          />
-        </svg>
-      </button>
       <StationOperationsPanel
         ref={operationPanel}
         active={operationVisible}
@@ -421,7 +399,7 @@ export function VoiceStation({
           setOperationVisible(true);
           setEditor(null);
         }}
-        onReceiving={() => changeMode('filled')}
+        onReceiving={() => changeMode('all')}
         onManualChange={()=>session.current?.inform({})}
         onWeight={(value) => manual('weight', value)}
         onResult={(result) => session.current?.inform({ deviceResult: result })}
@@ -440,12 +418,14 @@ export function VoiceStation({
               </button>
             ))}
           </nav>
-          <div className={css.cards} data-count={entries.length} aria-label="下書きの内容"
+          <div className={css.cards} data-count={entries.length} data-receiving="true" aria-label="下書きの内容"
             onTouchStart={e=>{const t=e.touches[0];swipe.current={x:t.clientX,y:t.clientY};}}
             onTouchEnd={e=>{const start=swipe.current;swipe.current=null;if(start){const t=e.changedTouches[0];const direction=swipeDirection(t.clientX-start.x,t.clientY-start.y);if(direction)setPage(Math.max(0,Math.min(pages.length-1,pageIndex+direction)));}}}
             onTouchCancel={()=>{swipe.current=null;}}>
             {entries.map(([key, field]) => {
-              const value = receivingReviewValue(field, displayValues[key], combinedOptions[key]);
+              const grouped=key===HEALTH_GROUP;
+              const value = grouped?healthSummary(form,merged):receivingReviewValue(field, displayValues[key], combinedOptions[key]);
+              const initial=grouped?healthEntries(form,merged).every(([k])=>defaultKeys.includes(k)&&!(k in pending)):defaultKeys.includes(key)&&!(key in pending);
               const wide = value.length > 12 || field.label.length > 14;
               return (
                 <button
@@ -453,21 +433,23 @@ export function VoiceStation({
                   key={key}
                   className={css.card}
                   style={{ '--basis': wide ? '46%' : '21%' } as CSSProperties}
-                  data-missing={missingValue(displayValues[key])}
-                  data-warning={field.warnValues?.includes(String(displayValues[key]))}
+                  data-default={initial}
+                  aria-label={`${field.label}：${value}`}
+                  data-missing={!grouped&&missingValue(displayValues[key])}
+                  data-warning={grouped?value.startsWith('異常あり'):field.warnValues?.includes(String(displayValues[key]))}
                   onClick={() => setEditor({ key })}
                 >
-                  <span className={css.label}>
+                  {!labelOptional(key,displayValues[key])&&<span className={css.label}>
                     {field.label}
                     {field.required && <small>必須</small>}
-                    {defaultKeys.includes(key) && !(key in pending) && <small>初期値</small>}
-                  </span>
+                  </span>}
                   <strong>
                     {value}
                     {!missingValue(displayValues[key]) && field.suffix && (
                       <small>{field.suffix}</small>
                     )}
                   </strong>
+                  {initial&&<small className={css.defaultNote}>初期値</small>}
                 </button>
               );
             })}
@@ -538,19 +520,33 @@ export function VoiceStation({
           ))}
       </div>
       <div className={css.controls}>
-        <button
-          type="button"
-          aria-label={voice !== 'off' ? 'マイクをオフにする' : 'マイクで話す'}
-          aria-pressed={voice !== 'off'}
-          disabled={disabled}
-          onClick={voiceAction}
-        >
-          <svg viewBox="0 0 24 24">
-            <rect x="9" y="2" width="6" height="13" rx="3" />
-            <path d="M5 10v2a7 7 0 0014 0v-2M12 19v3m-4 0h8" />
-          </svg>
-          <span>{voice !== 'off' ? 'マイク ON' : '話す'}</span>
-        </button>
+      <button
+        className={css.faceButton}
+        type="button"
+        aria-pressed={voice!=='off'}
+        disabled={disabled}
+        aria-label="顔を押すと会話、長押しで作業を選ぶ"
+        onClick={() => {if(Date.now() > suppressFaceClick.current) voiceAction();}}
+        onContextMenu={(event) => {event.preventDefault(); suppressFaceClick.current=Date.now()+900; chooseWork();}}
+      >
+        {!board && !operationVisible && <span className={css.faceHint}>私の顔を押したり、長押ししてね</span>}
+        <svg viewBox="0 0 320 180" role="img" aria-label="案内する表情">
+          <g className={css.eyes}>
+            <ellipse cx="108" cy="69" rx="11" ry="16" />
+            <ellipse cx="212" cy="69" rx="11" ry="16" />
+          </g>
+          <ellipse className={css.cheek} cx="67" cy="104" rx="21" ry="9" />
+          <ellipse className={css.cheek} cx="253" cy="104" rx="21" ry="9" />
+          <path
+            className={css.mouth}
+            d="M142 109Q160 129 178 109"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="6"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
         <span className={css.status} role="status">
           {voice === 'connecting'
             ? '考えています…'
@@ -563,7 +559,7 @@ export function VoiceStation({
       </div>
       {editor && (
         <div className={css.overlay}>
-          <StationFieldEditor
+          {editor.key===HEALTH_GROUP?<HealthEditor form={form} values={merged} defaults={defaultKeys.filter(k=>!(k in pending))} onSave={manual} onClose={()=>setEditor(null)}/>:<StationFieldEditor
             key={`${editor.key}-${editor.query ?? ''}`}
             fieldKey={editor.key}
             field={form.fields[editor.key]}
@@ -590,7 +586,7 @@ export function VoiceStation({
                   }
                 : undefined
             }
-          />
+          />}
         </div>
       )}
     </section>

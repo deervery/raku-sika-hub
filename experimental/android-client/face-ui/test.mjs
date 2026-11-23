@@ -88,3 +88,18 @@ const {interpretationInput}=await bundled('src/interpretationInput.ts');
 const input=interpretationInput('😀'.repeat(1000),{weight:'0.07',secret:'never'},{hunterName:Array.from({length:200},()=>({value:'名'.repeat(100),label:'名'.repeat(100)}))},Array.from({length:10},()=>({role:'user',text:'話'.repeat(400)})));
 assert.ok(Buffer.byteLength(JSON.stringify(input))<=12000);assert.equal(input.values.secret,undefined);assert.ok(input.options.hunterName.length<=10);
 console.log('Catalog mapping, QR allowlist, swipe, incomplete autosave and bounded Gemini context passed');
+
+const {receivingEntries,healthEntries,healthSummary,labelOptional,HEALTH_GROUP}=await bundled('src/receivingLayout.ts');
+const {RECEIVING_FORM}=await bundled('src/lib/constants/form-definitions.ts');
+const initial=draftValues(RECEIVING_FORM,{});
+const first=receivingEntries(RECEIVING_FORM,initial,'all');
+assert.equal(first[0][0],'weight');assert.ok(first.some(([k])=>k==='individualNumber'));
+assert.equal(first.filter(([k])=>k===HEALTH_GROUP).length,1);
+assert.ok(!first.some(([k])=>k==='unstableGait_hunter'));
+assert.equal(healthSummary(RECEIVING_FORM,initial),'異常なし');
+assert.equal(healthSummary(RECEIVING_FORM,{...initial,unstableGait_hunter:'異常あり'}),'異常あり 1項目');
+assert.equal(initial.unstableGait_hunter,'異常なし','summary does not confirm or mutate default health facts');
+assert.equal(labelOptional('species','シカ'),true);assert.equal(labelOptional('weight','70'),false);assert.equal(labelOptional('sex',''),false);
+console.log('Receiving empty fields, grouped health checks and semantic labels passed');
+
+assert.equal(localIntent('計量して登録').operation,'weigh');assert.equal(localIntent('スキャンして出庫').navigate,'/input/meat-outbound');assert.equal(localIntent('スキャンして印刷').operation,'scan');assert.equal(localIntent('スキャン').operation,'menu');

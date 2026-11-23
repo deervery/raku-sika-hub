@@ -17,6 +17,12 @@ final class CatalogApi {
     static JSONObject read(String origin,String token,String facility,JSONObject args)throws Exception {
         String kind=args.optString("kind"),query=args.optString("query"),cursor=args.optString("cursor");
         if(query.length()>100||cursor.length()>2048)throw new Exception("検索条件を短くしてください。");
+        if(kind.equals("facility")){
+            JSONObject row=get(origin,token,facility,"/api/facilities/current").getJSONObject("data").getJSONObject("facility");
+            if(!facility.isEmpty()&&!facility.equals(row.optString("id")))throw new Exception("施設が切り替わりました。業務画面で選び直してください。");
+            JSONObject out=new JSONObject();for(String key:new String[]{"name","facilityName","companyName","companyAddress","address","tel","phoneNumber"}){Object value=row.opt(key);if(value instanceof String&&((String)value).length()<=500)out.put(key,value);}
+            return new JSONObject().put("item",out);
+        }
         if(kind.equals("trace")){
             String code=id(args.optString("id"));JSONObject row;
             try {row=get(origin,token,facility,"/api/individuals/"+code);}

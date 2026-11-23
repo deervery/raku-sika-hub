@@ -104,11 +104,12 @@ public final class MainActivity extends ComponentActivity {
         super.onCreate(state);
         getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){
             @Override public void handleOnBackPressed(){
-                if(agentMode&&panes!=null)showAgent(false);
+                if(agentMode&&panes!=null){final int epoch=workspaceEpoch;agent.evaluateJavascript("window.stationBack ? window.stationBack() : false",handled->{if(agentMode&&epoch==workspaceEpoch&&!"true".equals(handled))showAgent(false);});}
                 else if(web!=null&&web.canGoBack())web.goBack();
                 else {setEnabled(false);getOnBackPressedDispatcher().onBackPressed();setEnabled(true);}
             }
         });
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         settings = getSharedPreferences("lite-client", MODE_PRIVATE);
         usbMode=settings.getBoolean("usbScale",false);
@@ -137,7 +138,8 @@ public final class MainActivity extends ComponentActivity {
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
-                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                int ime=insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom,ime));
             } else view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
             return insets;
         });
@@ -301,7 +303,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void cancelAuthCheck(){authAttempt++;authBusy=false;pendingSession=null;pendingTokenFingerprint="";if(agentTab!=null)agentTab.setText("アシスタント");}
-    private void lockAssistant(){cancelAuthCheck();liteSession=null;authClock.removeCallbacksAndMessages(null);if(agent!=null)agent.clearSession();showAgent(false);}
+    private void lockAssistant(){if(panes!=null)panes.showVerifying(false);cancelAuthCheck();liteSession=null;authClock.removeCallbacksAndMessages(null);if(agent!=null)agent.clearSession();showAgent(false);}
     private void requestAssistant(boolean opening){
         if(authBusy||web==null||!visible)return;
         if(!EndpointPolicy.sameOrigin(webUrl,web.getUrl())||!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
@@ -332,7 +334,7 @@ public final class MainActivity extends ComponentActivity {
         });
     }
     private void showAgent(boolean value){
-        if(panes==null||agentMode==value)return;if(value&&(liteSession==null||!liteSession.valid()))return;workspaceEpoch++;agentMode=value;
+        if(panes==null)return;if(value&&(liteSession==null||!liteSession.valid()))return;if(agentMode==value){if(value){agent.activate();panes.showVerifying(false);}return;}workspaceEpoch++;agentMode=value;panes.showVerifying(false);
         usbScale.disconnect();connectUsb();scannerBuffer.clear();
         denyPendingMedia();
         if(value){
@@ -346,7 +348,7 @@ public final class MainActivity extends ComponentActivity {
     }
     private void navigateWork(String path){
         if(path.isEmpty()){showAgent(false);return;}
-        if(!java.util.Arrays.asList("/inventory/history","/reports/labels","/input/sales/new","/input/meat-inbound").contains(path))return;
+        if(!java.util.Arrays.asList("/inventory/history","/reports/labels","/input/sales/new","/input/meat-inbound","/input/meat-outbound","/input/receiving","/input/settings/facility").contains(path))return;
         web.evaluateJavascript("Boolean(window.__stationEdited)",dirty->{
             if(isDestroyed()||web==null)return;
             Runnable go=()->{showAgent(false);web.loadUrl(EndpointPolicy.origin(webUrl)+path);};
@@ -508,7 +510,7 @@ public final class MainActivity extends ComponentActivity {
             }catch(Exception e){Toast.makeText(this,"保存できませんでした",Toast.LENGTH_SHORT).show();}
         }).show();
     }
-    @Override protected void onResume(){super.onResume();visible=true;if(web!=null&&!agentMode){web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}if(agent!=null&&agentMode){showAgent(false);requestAssistant(true);}connectUsb();}
+    @Override protected void onResume(){super.onResume();visible=true;if(web!=null&&!agentMode){web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}if(agent!=null&&agentMode){panes.showVerifying(true);requestAssistant(true);}connectUsb();}
     @Override protected void onPause(){visible=false;workspaceEpoch++;cancelAuthCheck();authClock.removeCallbacks(authRefresh);if(agent!=null)agent.suspend();usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();if(scanDialog!=null)scanDialog.dismiss();}
     @Override protected void onStop(){denyPendingMedia();super.onStop();}
     @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();authChecks.shutdownNow();checks.shutdownNow();super.onDestroy();catalogExecutor.shutdownNow();}

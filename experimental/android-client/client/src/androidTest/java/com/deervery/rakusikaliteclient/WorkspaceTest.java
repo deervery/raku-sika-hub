@@ -25,6 +25,15 @@ public class WorkspaceTest {
             assertTrue(done.await(10,TimeUnit.SECONDS));assertEquals("\"AbortError:print-result\"",value.get());scenario.onActivity(a->holder.get().destroy());
         }
     }
+    @Test public void authenticationCoverNeverRevealsWorkPane()throws Exception{
+        try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
+            scenario.onActivity(a->{View work=new View(a),agent=new View(a);WorkspacePanes panes=new WorkspacePanes(a,work,agent);a.setContentView(panes);panes.showAgent(true);panes.showVerifying(true);
+                assertEquals(View.GONE,work.getVisibility());assertEquals(View.VISIBLE,agent.getVisibility());assertEquals(1f,agent.getAlpha(),0f);
+                View cover=panes.getChildAt(panes.getChildCount()-1);assertEquals(View.VISIBLE,cover.getVisibility());assertTrue(cover.isClickable());
+                panes.showVerifying(false);assertEquals(View.GONE,work.getVisibility());assertEquals(View.GONE,cover.getVisibility());
+            });
+        }
+    }
     @Test public void switchingRetainsWebInstanceInputAndNavigation()throws Exception{
         android.content.Context context=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().getTargetContext();
         context.getSharedPreferences("lite-client",0).edit().putBoolean("configured",true).putBoolean("usbScale",false).putString("web","https://rakusika.com/home").putString("hub","").commit();

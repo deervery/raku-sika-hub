@@ -2,8 +2,11 @@
 export function localIntent(text:string):any {
   const s=text.normalize('NFKC').replace(/[。!！\s]/g,'');
   if(/^(はい|いいね|もういい|確定)$/.test(s))return {question:'入力内容の確認、会話の終了、どちらにしますか？'};
-  if(/^(計量|量って|計って|重量を確認)$/.test(s))return {operation:'weigh'};
-  if(/^(スキャン|コードを読む)$/.test(s))return {operation:'scan'};
+  if(/^(スキャンして出庫|読み取って出庫|出庫)$/.test(s))return {navigate:'/input/meat-outbound'};
+  if(/^(搬入入力|搬入登録)$/.test(s))return {operation:'receiving'};
+  if(/^(スキャンして印刷|読み取って印刷)$/.test(s))return {operation:'scan'};
+  if(/^(計量して登録|量って登録|計量|量って|計って|重量を確認)$/.test(s))return {operation:'weigh'};
+  if(/^(スキャン|コードを読む)$/.test(s))return {operation:'menu',question:'出庫とラベル印刷、どちらに進みますか？'};
   if(/^(ラベル|ラベル印刷)$/.test(s))return {operation:'labels'};
   if(/^(確認|入力内容|入力済み)$/.test(s))return {review:'filled'};
   if(/^(未入力|残りの項目)$/.test(s))return {review:'missing'};

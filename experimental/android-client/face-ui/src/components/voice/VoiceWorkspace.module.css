@@ -581,3 +581,35 @@
 
 .operationToolbar button[data-page='true'] {background:var(--station-transparent);color:var(--station-primary);padding:8px;}
 .operationToolbar button[aria-haspopup='dialog']:after {content:'⌄';margin-left:8px;}
+
+/* Keep the character in the thumb zone; it is the single conversation control. */
+.workspace {min-height:0;}
+.workspace .controls {flex:0 0 66px;position:relative;}
+.workspace .controls .faceButton {flex:0 0 108px;min-width:108px;min-height:60px;height:60px;padding:0;border:2px solid var(--station-border);border-radius:30px;background:var(--station-surface);color:var(--station-primary);}
+.workspace .controls .faceButton[aria-pressed='true'] {border-color:var(--station-primary);background:var(--station-user);}
+.workspace .controls .faceButton svg {width:100px;height:56px;fill:currentColor;}
+.workspace[data-board='false'] .chat {flex:1;display:flex;justify-content:flex-end;}
+.workspace .controls .faceHint {top:auto;bottom:76px;font-size:16px;}
+.card[data-default='true'] strong {color:var(--station-muted);opacity:.72;}
+.defaultNote {font-size:12px;color:var(--station-muted);}
+.cards[data-receiving='true'] .card {gap:6px;padding:10px;}
+.cards[data-receiving='true'] .card strong {font-size:clamp(20px,4vw,32px);}
+.cards[data-receiving='true'] .label {font-size:16px;}
+.overlay {position:fixed;inset:auto 0;top:var(--station-visible-top,0px);height:var(--station-visible-height,100dvh);align-items:flex-start;padding:12px;overflow:hidden;}
+.overlay .editor {max-height:100%;min-height:0;overscroll-behavior:contain;scroll-padding-block:75px 30px;border-radius:22px;padding:16px;gap:14px;}
+.editor header {position:sticky;top:-16px;background:var(--station-paper);z-index:1;padding-block:8px;flex-shrink:0;}
+.editor input,.editor select {scroll-margin-block:85px 30px;}
+.healthRow {border:1px solid var(--station-border);border-radius:16px;padding:12px;margin:0;min-width:0;}
+.healthRow legend {font-size:17px;font-weight:750;}
+.healthRow button[data-default='true'][aria-pressed='true'] {background:var(--station-soft);color:var(--station-muted);}
+
+[data-operation='labels'] .cards[data-group='basic'] {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));}
+[data-operation='labels'] .cards[data-group='basic'] .card:first-child {grid-column:1/-1;}
+[data-operation='labels'] .cards[data-group='basic'] .card {padding:8px;gap:4px;}
+[data-operation='labels'] .cards[data-group='basic'] .label {font-size:14px;}
+[data-operation='labels'] .cards[data-group='basic'] .card strong {font-size:clamp(20px,3.5vw,28px);line-height:1.2;overflow:hidden;}
+.confirmFields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.confirmFields button {display:flex;flex-direction:column;gap:6px;text-align:left;min-width:0;overflow-wrap:anywhere;}
+.confirmFields span {font-size:14px;}
+.confirmFields strong {font-size:20px;}
+.facilitySummary {padding:12px;border:1px solid var(--station-border);border-radius:16px;}

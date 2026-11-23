@@ -31,6 +31,7 @@ import {native} from '../../bridge';
 
 export type StationOperationsHandle = {
   context: () => {operation:string};
+  back:()=>boolean;
   show: (raw: unknown) => object;
   prepare: (raw: unknown) => object;
 };
@@ -46,8 +47,8 @@ type Props = {
 const titles = {
   receiving: '搬入入力',
   labels: 'ラベル印刷',
-  weigh: '計量',
-  scan: 'スキャン',
+  weigh: '計量して登録',
+  scan: 'スキャンして印刷',
   devices: '機器状態',
   menu: '作業を選ぶ',
 };
@@ -74,6 +75,9 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     const printLockedRef = useRef(false);
     const [confirm, setConfirm] = useState<'print' | 'test' | 'tare' | 'zero' | null>(null);
     const [error, setError] = useState('');
+    const [facility,setFacility]=useState<Record<string,string>>({});
+    const [facilityError,setFacilityError]=useState('');
+    useEffect(()=>{if(confirm!=='print')return;let current=true;setFacility({});setFacilityError('');native('catalog',{kind:'facility'}).then(r=>{if(current){setFacility(r.item||{});if(!Object.keys(r.item||{}).length)setFacilityError('表示できる施設情報がありません。');}}).catch(e=>{if(current)setFacilityError(e.message);});return()=>{current=false;};},[confirm,devices?.identity]);
     const generation = useRef(0);
     const identity = useRef(devices?.identity);
     useEffect(()=>{if(!active){generation.current++;busyRef.current=false;setBusy(false);}},[active]);
@@ -152,6 +156,8 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     }
     function show(next: StationOperation) {
       if(next==='devices')next='menu';
+      if(next==='weigh'){void native('work',{path:'/input/meat-inbound'}).catch(e=>setError(e.message));return;}
+      if(next==='scan'){setOperation('labels');setConfirm(null);setPage(0);setGroup('individual');setEditing('individualNumber');onShow();return;}
       if (busyRef.current) throw new Error('機器の応答を待っています。');
       setConfirm(null);
       setEditing(null);
@@ -168,6 +174,7 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     }
     useImperativeHandle(ref, () => ({
       context:()=>({operation}),
+      back:()=>{if(editing){setEditing(null);return true;}if(confirm){setConfirm(null);return true;}if(operation!=='menu'){show('menu');return true;}return false;},
       show: (raw) => {
         const next = readOperation(raw);
         show(next);
@@ -198,13 +205,13 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
     const fields = labelFields(draft);
     const groups=labelGroups(draft);
     const currentGroup=groups.find(item=>item.id===group)||groups[0];
-    const groupKeys=group==='system'?[]:currentGroup?.keys||[];
-    const fieldCapacity=groupKeys.some(key=>(draft.data[key]?.length||0)>12)?Math.max(1,capacity/2):capacity;
+    const groupKeys=currentGroup?.keys||[];
+    const fieldCapacity=currentGroup?.id==='basic'?Math.max(1,groupKeys.length):groupKeys.some(key=>(draft.data[key]?.length||0)>12)?Math.max(1,capacity/2):capacity;
     const pageIndex=Math.min(page,Math.max(0,Math.ceil(groupKeys.length/fieldCapacity)-1));
     const shownFields=groupKeys.slice(pageIndex*fieldCapacity,pageIndex*fieldCapacity+fieldCapacity);
     const issues=labelIssues(draft);
-    const allGroups=[...groups.map(g=>g.id),'system'];
-    const advance=(direction:number)=>{if(!direction||editing||confirm)return;const max=Math.max(0,Math.ceil(groupKeys.length/fieldCapacity)-1);if(direction>0&&pageIndex<max)setPage(pageIndex+1);else if(direction<0&&pageIndex>0)setPage(pageIndex-1);else {const index=allGroups.indexOf(group==='system'?'system':currentGroup.id);const next=allGroups[index+direction];if(next){setGroup(next);setPage(0);}}};
+    const allGroups=groups.map(g=>g.id);
+    const advance=(direction:number)=>{if(!direction||editing||confirm)return;const max=Math.max(0,Math.ceil(groupKeys.length/fieldCapacity)-1);if(direction>0&&pageIndex<max)setPage(pageIndex+1);else if(direction<0&&pageIndex>0)setPage(pageIndex-1);else {const index=allGroups.indexOf(currentGroup.id);const next=allGroups[index+direction];if(next){setGroup(next);setPage(0);}}};
     async function scanLabel(camera:boolean){const ticket=++generation.current;setError('');onManualChange();try{await native('stop');const result=scanQuery((await native(camera?'cameraScan':'scan')).value);if(ticket!==generation.current)return;if('query'in result){setScanSeed(result.query);setEditing('individualNumber');}else {const row=(await native('catalog',{kind:result.trace?'trace':'individual',id:result.id})).item;if(ticket!==generation.current)return;update({template:'traceable',data:individualData(row)});show('labels');setGroup('individual');}}catch(e){if(ticket===generation.current)setError(e instanceof Error?e.message:'読み取れませんでした');}}
 
     const fieldFor=(key:string)=>fieldForLabel(key,draft);
@@ -224,12 +231,13 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
           <strong>{titles[operation]}</strong>
         </nav>
         {operation === 'menu' ? (
-          <div className={css.cards} data-count="4">
+          <div className={css.cards} data-count="5">
             {(['receiving', 'labels', 'weigh', 'scan'] as const).map((key) => (
               <button className={css.card} key={key} type="button" onClick={() => show(key)}>
                 <strong>{titles[key]}</strong>
               </button>
             ))}
+            <button type="button" className={css.card} onClick={()=>void native('work',{path:'/input/meat-outbound'}).catch(e=>setError(e.message))}><strong>スキャンして出庫</strong></button>
           </div>
         ) : operation === 'labels' ? (
           <>
@@ -243,20 +251,18 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
               <button type="button" aria-label="カメラスキャン" disabled={busy||printLocked} onClick={()=>void scanLabel(true)}>カメラ</button>
             </div>
             <nav className={css.labelGroups} role="tablist" aria-label="ラベルの入力項目">
-              {groups.map(item=><button type="button" key={item.id} role="tab" aria-selected={group!=='system'&&currentGroup?.id===item.id} onClick={()=>{setGroup(item.id);setPage(0);}}>{item.label}</button>)}
-              <button type="button" role="tab" aria-selected={group==='system'} onClick={()=>{setGroup('system');setPage(0);}}>施設・確認</button>
+              {groups.map(item=><button type="button" key={item.id} role="tab" aria-selected={currentGroup?.id===item.id} onClick={()=>{setGroup(item.id);setPage(0);}}>{item.label}</button>)}
+
             </nav>
             <div
               className={css.cards}
-              data-count={group==='system'?1:shownFields.length}
-              aria-label="ラベルの印刷内容" role="tabpanel"
+              data-count={shownFields.length}
+              aria-label="ラベルの印刷内容" role="tabpanel" data-group={currentGroup?.id}
               onTouchStart={e=>{const t=e.touches[0];swipe.current={x:t.clientX,y:t.clientY};}}
               onTouchEnd={e=>{const start=swipe.current;swipe.current=null;if(start){const t=e.changedTouches[0];advance(swipeDirection(t.clientX-start.x,t.clientY-start.y));}}}
               onTouchCancel={()=>{swipe.current=null;}}
             >
-              {group==='system'?<>
-                <div className={css.card}><span className={css.label}>施設情報・個体との対応</span><strong>業務画面で確認</strong></div>
-              </>:shownFields.map((key) => (
+              {shownFields.map((key) => (
                 <button
                   type="button"
                   key={key}
@@ -291,18 +297,17 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
               <button
                 type="button"
                 disabled={
-                  busy || printLocked || !!issues.length
+                  busy || printLocked
                 }
                 onClick={() => requestConfirm('print')}
               >
                 入力内容を確認
               </button>
-              {group==='system'&&<button type="button" disabled={busy} onClick={() => void native('work',{path:'/reports/labels'})}>業務のラベル画面を開く</button>}
+
             </div>
             {!printLocked && (
               <p className={css.operationHint}>
-                {group==='system'?devices?.labelUnavailable:issues.length?`確認が必要な項目：${issues.length}件`:'入力内容を確認できます'}
-                {group==='system'&&<span className={css.secondaryHint}>下書きは端末に保存します。業務画面への自動転記はありません。</span>}
+                {issues.length?`確認が必要な項目：${issues.length}件`:'入力内容を確認できます'}
               </p>
             )}
             {printLocked && !busy && (
@@ -427,16 +432,11 @@ export const StationOperationsPanel = forwardRef<StationOperationsHandle, Props>
                       ? '風袋引きを実行'
                       : 'ゼロ点を合わせる'}
               </h2>
-              <p>
-                {confirm === 'print'
-                  ? Object.entries(draft.data)
-                      .filter(([key]) => fields.includes(key as (typeof fields)[number]))
-                      .map(([key, value]) => `${fieldFor(key).label}：${value}`)
-                      .join(' ／ ')
-                  : confirm === 'test'
-                    ? '画面の業務ラベルではなく、プリンタの接続試験です。'
-                    : '計量器に載っている物を確認してください。'}
-              </p>
+              {confirm==='print'?<>
+                <div className={css.confirmFields}>{fields.map(key=><button type="button" key={key} onClick={()=>{setConfirm(null);setEditing(key);}}><span>{fieldFor(key).label}</span><strong>{draft.data[key]||'未入力'}</strong></button>)}</div>
+                {!!issues.length&&<p role="status">未入力・確認が必要な項目があります。項目を押して編集できます。</p>}
+                <section className={css.facilitySummary}><h3>印刷元の施設</h3>{Object.entries(facility).map(([key,value])=><p key={key}>{value}</p>)}{!Object.keys(facility).length&&<p>{facilityError||'施設情報を読み取り中…'}</p>}<button type="button" onClick={()=>void native('work',{path:'/input/settings/facility'})}>施設情報を編集する</button></section>
+              </>:<p>計量器に載っている物を確認してください。</p>}
               <p>{devices?.printer}</p>
               {confirm==='print'&&devices?.labelUnavailable&&<p>下書きはこの端末に保存されています。業務画面への自動転記はないため、登録済みの記録と照合して印刷してください。</p>}
               <button

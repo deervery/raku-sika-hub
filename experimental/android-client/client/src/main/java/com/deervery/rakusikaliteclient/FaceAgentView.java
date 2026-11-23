@@ -88,7 +88,7 @@ final class FaceAgentView extends WebView {
                 if(scanning!=null)scanning.accept(error("新しい読取りを開始しました。"));scanning=reply;
                 postDelayed(()->{if(scanning==reply){scanning=null;reply.accept(error("スキャナを操作してください。メニューの機器設定で読取り機を選べます。"));}},20000);break;
             case "work":
-                String path=args.optString("path");if(Arrays.asList("","/inventory/history","/reports/labels","/input/sales/new","/input/meat-inbound").contains(path)){reply.accept(new JSONObject());host.openWork(path);}else reply.accept(error("対応していない画面です。"));break;
+                String path=args.optString("path");if(Arrays.asList("","/inventory/history","/reports/labels","/input/sales/new","/input/meat-inbound","/input/meat-outbound","/input/receiving","/input/settings/facility").contains(path)){reply.accept(new JSONObject());host.openWork(path);}else reply.accept(error("対応していない画面です。"));break;
             case "interpret":
                 if(!host.session().optBoolean("geminiEnabled")){reply.accept(error("音声・AI設定でGeminiの利用をオンにしてください。"));break;}
                 cancelInterpretation();final JSONObject input=new JSONObject();

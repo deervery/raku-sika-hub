@@ -25,6 +25,8 @@ function App({scope}:{scope:string}){
   return <VoiceStation form={RECEIVING_FORM} values={values} enteredKeys={Object.keys(values)} defaultKeys={defaults} connect={connect} devices={devices} onApply={save} onManualPatch={save} onReview={()=>{}}/>;
 }
 function SessionRoot(){
+  useEffect(()=>{const viewport=window.visualViewport;const resize=()=>{document.documentElement.style.setProperty('--station-visible-height',`${viewport?.height||window.innerHeight}px`);document.documentElement.style.setProperty('--station-visible-top',`${viewport?.offsetTop||0}px`);};resize();viewport?.addEventListener('resize',resize);viewport?.addEventListener('scroll',resize);window.addEventListener('resize',resize);return()=>{viewport?.removeEventListener('resize',resize);viewport?.removeEventListener('scroll',resize);window.removeEventListener('resize',resize);};},[]);
+
   const [session,setSession]=useState<{scope:string;geminiEnabled:boolean}|null>(null);
   const generation=useRef(0);
   useEffect(()=>{

@@ -18,8 +18,14 @@ public class LoginGateTest {
             s.onActivity(a->{android.webkit.WebView w=a.findViewById(R.id.work_web);w.stopLoading();w.setWebViewClient(new android.webkit.WebViewClient(){@Override public void onPageFinished(android.webkit.WebView v,String url){if(url.contains("fixture"))ready.countDown();}});
                 CookieManager.getInstance().setCookie("https://rakusika.com","__session_exists=true; path=/");
                 w.loadDataWithBaseURL("https://rakusika.com/fixture","<body>login fixture</body>","text/html","UTF-8",null);});
-            assertTrue(ready.await(10,TimeUnit.SECONDS));s.onActivity(a->a.findViewById(R.id.tab_agent).performClick());
-            Thread.sleep(1200);
+            boolean fixtureReady=false;
+            for(int i=0;i<40;i++){
+                java.util.concurrent.atomic.AtomicBoolean loaded=new java.util.concurrent.atomic.AtomicBoolean();CountDownLatch checked=new CountDownLatch(1);
+                s.onActivity(a->((android.webkit.WebView)a.findViewById(R.id.work_web)).evaluateJavascript("document.body&&document.body.textContent==='login fixture'",value->{loaded.set("true".equals(value));checked.countDown();}));
+                assertTrue(checked.await(5,TimeUnit.SECONDS));if(loaded.get()){fixtureReady=true;break;}Thread.sleep(100);
+            }
+            assertTrue("Login fixture DOM must load",fixtureReady);s.onActivity(a->a.findViewById(R.id.tab_agent).performClick());
+            Thread.sleep(2800);
             s.onActivity(a->{assertNotEquals(View.VISIBLE,a.findViewById(R.id.agent_panel).getVisibility());assertEquals(View.VISIBLE,a.findViewById(R.id.work_web).getVisibility());CookieManager.getInstance().setCookie("https://rakusika.com","__session_exists=; path=/; max-age=0");});
         }
     }

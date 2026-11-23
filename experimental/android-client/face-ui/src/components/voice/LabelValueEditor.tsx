@@ -1,3 +1,4 @@
+import {ClearField} from './ClearField';
 import {useState,useEffect,useRef} from 'react';
 import {QUANTITY_UNITS,parseQuantity,validQuantity,validDate} from '../../lib/voice-guidance/labelEditor';
 import css from './VoiceWorkspace.module.css';
@@ -22,7 +23,7 @@ export function LabelValueEditor({kind,label,value,onSave,onClose}:{kind:'date'|
       <div className={css.dateSelects}>{['年','月','日'].map((title,index)=><label key={title}>{title}<select aria-label={title} value={parts[index]} onChange={e=>updatePart(index,e.target.value)}><option value="">選択</option>{(index===0?years:Array.from({length:index===1?12:days},(_,i)=>i+1)).map(n=><option key={n} value={index===0?String(n):String(n).padStart(2,'0')}>{n}{title}</option>)}</select></label>)}</div>
       <div className={css.choices}><button type="button" onClick={()=>{const now=new Date();setParts([String(now.getFullYear()),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')]);}}>今日</button><button type="button" onClick={()=>setParts(['','',''])}>クリア</button></div>
     </>:<>
-      <div className={css.quantityEntry}><output aria-label="内容量の数値" className={css.number}>{amount||'—'}</output><label>単位<select aria-label="内容量の単位" value={unit} onChange={e=>setUnit(e.target.value)}><option value="">選択</option>{QUANTITY_UNITS.map(unit=><option key={unit}>{unit}</option>)}</select></label></div>
+      <div className={css.quantityEntry}><ClearField label="内容量" empty={!amount} onClear={()=>setAmount('')}><output aria-label="内容量の数値" className={css.number}>{amount||'—'}</output></ClearField><label>単位<select aria-label="内容量の単位" value={unit} onChange={e=>setUnit(e.target.value)}><option value="">選択</option>{QUANTITY_UNITS.map(unit=><option key={unit}>{unit}</option>)}</select></label></div>
       <div className={css.keypad}>{['1','2','3','4','5','6','7','8','9','.','0','⌫'].map(key=><button type="button" key={key} onClick={()=>setAmount(previous=>key==='⌫'?previous.slice(0,-1):key==='.'&&previous.includes('.')?previous:(previous+key).slice(0,9))}>{key}</button>)}</div>
     </>}
     <p role="status">{valid?'下書きに保存済み':'入力途中の下書きです。日付・数値・単位を選んでください。'}</p>

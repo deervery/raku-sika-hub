@@ -51,7 +51,7 @@ import java.util.concurrent.Executors;
 
 /** Existing Lite UI, native local assistant and USB/HID peripherals in one workspace. */
 public final class MainActivity extends ComponentActivity {
-    private static final int MEDIA_PERMISSION = 71, FILE_PICKER = 72, AGENT_MICROPHONE=73, AGENT_CAMERA=74;
+    private static final int MEDIA_PERMISSION = 71, FILE_PICKER = 72, AGENT_MICROPHONE=73, AGENT_CAMERA=74, SCALE_BLUETOOTH=75;
     private SharedPreferences settings;
     private WebView web;
     private PermissionRequest pendingMedia;
@@ -63,6 +63,8 @@ public final class MainActivity extends ComponentActivity {
     private Button workTab,agentTab;
     private volatile boolean agentMode;
     private int workspaceEpoch;
+    private int authSnapshotRetries;
+    private final BluetoothScale bluetoothScale=new BluetoothScale();
     private LiteSession liteSession;
     private AlertDialog scanDialog;
     private final ExecutorService catalogExecutor=Executors.newFixedThreadPool(2);
@@ -104,7 +106,7 @@ public final class MainActivity extends ComponentActivity {
         super.onCreate(state);
         getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){
             @Override public void handleOnBackPressed(){
-                if(agentMode&&panes!=null){final int epoch=workspaceEpoch;agent.evaluateJavascript("window.stationBack ? window.stationBack() : false",handled->{if(agentMode&&epoch==workspaceEpoch&&!"true".equals(handled))showAgent(false);});}
+                if(agentMode&&panes!=null){final int epoch=workspaceEpoch;agent.evaluateJavascript("window.stationBack ? window.stationBack() : false",handled->{if(agentMode&&epoch==workspaceEpoch&&!"true".equals(handled))moveTaskToBack(true);});}
                 else if(web!=null&&web.canGoBack())web.goBack();
                 else {setEnabled(false);getOnBackPressedDispatcher().onBackPressed();setEnabled(true);}
             }
@@ -243,6 +245,18 @@ public final class MainActivity extends ComponentActivity {
                 catalogExecutor.submit(()->{JSONObject result;try{result=session.catalog(args);}catch(Exception e){result=jsonError(e.getMessage()==null?"候補を取得できません。":e.getMessage());}final JSONObject value=result;
                     runOnUiThread(()->{if(visible&&agentMode&&epoch==workspaceEpoch&&liteSession!=null&&liteSession.valid()&&session.scope.equals(liteSession.scope))reply.accept(value);});});
             }
+            public void settings(){showDeviceSettings();}
+            public void print(JSONObject args,java.util.function.Consumer<JSONObject> reply){
+                final LiteSession session=liteSession;final int epoch=workspaceEpoch;final String hub=hubUrl;
+                if(session==null||!session.valid()){reply.accept(jsonError("ログインを確認してください。"));return;}
+                catalogExecutor.submit(()->{JSONObject result;try{JSONObject payload=session.printPayload(args);if(!session.valid())throw new Exception("ログインを確認し直してください。");result=HubPrint.execute(settings,session.scope,hub,args,payload);}catch(Exception e){result=jsonError(e.getMessage());}final JSONObject value=result;runOnUiThread(()->{if(visible&&agentMode&&epoch==workspaceEpoch&&liteSession!=null&&session.scope.equals(liteSession.scope))reply.accept(value);});});
+            }
+            public void business(JSONObject args,java.util.function.Consumer<JSONObject> reply){
+                final LiteSession session=liteSession;final int epoch=workspaceEpoch;
+                if(session==null||!session.valid()){reply.accept(jsonError("ログインを確認してください。"));return;}
+                catalogExecutor.submit(()->{JSONObject result;try{result=session.business(args);}catch(Exception e){result=jsonError(e.getMessage()==null?"受付結果が不明です。同じ受付番号で確認してください。":e.getMessage());}final JSONObject value=result;
+                    runOnUiThread(()->{if(visible&&agentMode&&epoch==workspaceEpoch&&liteSession!=null&&session.scope.equals(liteSession.scope))reply.accept(value);});});
+            }
             public void camera(java.util.function.Consumer<JSONObject> reply){openCameraScanner(reply);}
             public JSONObject session(){
                 if(liteSession==null||!liteSession.valid())return new JSONObject();
@@ -309,7 +323,7 @@ public final class MainActivity extends ComponentActivity {
         if(!EndpointPolicy.sameOrigin(webUrl,web.getUrl())||!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
             lockAssistant();Toast.makeText(this,"業務画面でログインしてください。",Toast.LENGTH_LONG).show();return;
         }
-        authBusy=true;authOpening=opening;final int ticket=++authAttempt;agentTab.setText("確認中…");
+        authBusy=true;authSnapshotRetries=0;authOpening=opening;final int ticket=++authAttempt;agentTab.setText("確認中…");
         web.evaluateJavascript(LiteSession.snapshotScript(ticket),null);
         authClock.postDelayed(()->{if(authBusy&&authAttempt==ticket){lockAssistant();Toast.makeText(this,"ログインを確認できませんでした。業務画面と通信状態を確認してください。",Toast.LENGTH_LONG).show();}},10000);
     }
@@ -318,10 +332,11 @@ public final class MainActivity extends ComponentActivity {
         final String token=candidate.optString("token"),uid=candidate.optString("uid"),facility=candidate.optString("facility");
         final boolean opening=authOpening;
         if(candidate.optBoolean("confirm")){
-            if(pendingSession==null||!pendingSession.valid()||!pendingSession.scope.equals(uid+":"+facility)||!pendingTokenFingerprint.equals(LiteSession.fingerprint(token))){lockAssistant();return;}
+            if(pendingSession==null||!pendingSession.valid()||(!pendingSession.scope.startsWith(uid+":" )||!pendingSession.selectedFacility.equals(facility))||!pendingTokenFingerprint.equals(LiteSession.fingerprint(token))){lockAssistant();return;}
             liteSession=pendingSession;pendingSession=null;pendingTokenFingerprint="";authBusy=false;agentTab.setText("アシスタント");agent.refreshSession();if(opening)showAgent(true);
             authClock.removeCallbacks(authRefresh);authClock.postDelayed(authRefresh,50000);return;
         }
+        if(token.isEmpty()&&authSnapshotRetries++<5){authClock.postDelayed(()->{if(authBusy&&ticket==authAttempt&&visible)web.evaluateJavascript(LiteSession.snapshotScript(ticket),null);},400);return;}
         authChecks.submit(()->{
             LiteSession verified=token.isEmpty()?null:LiteSession.verify(EndpointPolicy.origin(webUrl),token,uid,facility);
             runOnUiThread(()->{
@@ -372,7 +387,7 @@ public final class MainActivity extends ComponentActivity {
                     .setMultiChoiceItems(new String[]{"認識した文章・下書きをGeminiへ送って会話する"},new boolean[]{settings.getBoolean("geminiConsent:"+liteSession.scope,false)},(dialog,which,checked)->{settings.edit().putBoolean("geminiConsent:"+liteSession.scope,checked).apply();if(agent!=null){agent.stopConversation();agent.refreshSession();}})
                     .setPositiveButton("閉じる",null).show();break;
                 case 6:new AlertDialog.Builder(this).setTitle("アシスタント")
-                    .setMessage("顔かマイクをタップして会話し、長押しで作業を選びます。会話中はマイクをオンに保ち、話し始めると自動で読み上げを止めて訂正を受け付けます。マイクを押すと会話を終了します。既存の顔と確認カードをアプリ内に同梱し、端末内の日本語音声認識・計量・スキャナを利用します。\n\n例：個体001、0.07キロ、未入力\n\n下書きは端末内に保存します。業務フォームへの自動反映、登録、印刷の確定は行いません。自動割り込みはAndroid 13以降の対応する端末内日本語音声モデルが必要です。エコー抑制を利用できない端末では返答を画面に表示します。画面を閉じると録音は停止します。Geminiを有効にすると、認識した文章と下書きを会話サービスへ送ります。音声データとAPIキーは送信しません。")
+                    .setMessage("顔をタップしてマイクをオン・オフします。ホームのメニューから作業を選べます。会話中はマイクをオンに保ち、話し始めると自動で読み上げを止めて訂正を受け付けます。マイクを押すと会話を終了します。既存の顔と確認カードをアプリ内に同梱し、端末内の日本語音声認識・計量・スキャナを利用します。\n\n例：個体001、0.07キロ、未入力\n\n下書きは端末内に保存します。搬入・在庫・出庫・定期報告はアシスタント内の確認画面から登録します。印刷は設定した施設ハブへ送信します。結果が不明な印刷は自動再送しません。自動割り込みはAndroid 13以降の対応する端末内日本語音声モデルが必要です。エコー抑制を利用できない端末では返答を画面に表示します。画面を閉じると録音は停止します。Geminiを有効にすると、認識した文章と下書きを会話サービスへ送ります。音声データとAPIキーは送信しません。")
                     .setPositiveButton("閉じる",null).show();break;
             }
         }).setNegativeButton("閉じる",null).show();
@@ -381,7 +396,10 @@ public final class MainActivity extends ComponentActivity {
         int token=workspaceEpoch;
         checks.submit(()->{
             JSONObject result;
-            if(usbMode)result=usbScale.command("Q");
+            if(settings.getString("scaleTransport","").equals("bluetooth")){
+                try{android.bluetooth.BluetoothManager manager=(android.bluetooth.BluetoothManager)getSystemService(BLUETOOTH_SERVICE);android.bluetooth.BluetoothAdapter adapter=manager.getAdapter();result=bluetoothScale.weigh(adapter==null?null:adapter.getRemoteDevice(settings.getString("scaleBluetooth","")));}
+                catch(Exception e){result=UsbScale.error("BLUETOOTH_SCALE","設定からペアリング済みの計量器を選んでください。");}
+            }else if(usbMode)result=usbScale.command("Q");
             else if(hubUrl.isEmpty())result=UsbScale.error("NOT_CONNECTED","メニューの機器設定から計量器を接続してください。");
             else{
                 HttpURLConnection c=null;
@@ -406,7 +424,8 @@ public final class MainActivity extends ComponentActivity {
     }
     private void chooseScale(){
         new AlertDialog.Builder(this).setTitle("計量器の接続")
-            .setItems(new String[]{"AndroidのUSBへ直結する","施設ハブの計量器を使う","USBで試しに計量する（登録しません）"},(d,index)->{
+            .setItems(new String[]{"AndroidのUSBへ直結する","施設ハブの計量器を使う","USBで試しに計量する（登録しません）","Bluetoothアダプタを選ぶ"},(d,index)->{
+                if(index==3){chooseBluetoothScale();return;}
                 if(index==2){
                     if(!usbMode){Toast.makeText(this,"先にUSB直結を選んでください",Toast.LENGTH_LONG).show();return;}
                     checks.submit(()->{JSONObject result=usbScale.command("Q");runOnUiThread(()->{
@@ -418,10 +437,23 @@ public final class MainActivity extends ComponentActivity {
                     .setMessage("画面を読み直します。編集中の内容を保存してから切り替えてください。USBが切れても、別の計量器へ自動切替はしません。")
                     .setNegativeButton("戻る",null).setPositiveButton("切り替える",(dialog,which)->{
                         usbScale.disconnect();selectedScale=null;usbMode=index==0;
-                        settings.edit().putBoolean("usbScale",usbMode).apply();openLite();
+                        settings.edit().putBoolean("usbScale",usbMode).putString("scaleTransport",usbMode?"usb":"hub").apply();
+                        if(connection!=null)showUsbStatus();
                         if(usbMode)selectUsbDevice();
                     }).show();
             }).setNegativeButton("閉じる",null).show();
+    }
+    private void chooseBluetoothScale(){
+        if(android.os.Build.VERSION.SDK_INT>=31&&checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT},SCALE_BLUETOOTH);return;}
+        try{
+            android.bluetooth.BluetoothAdapter adapter=((android.bluetooth.BluetoothManager)getSystemService(BLUETOOTH_SERVICE)).getAdapter();
+            if(adapter==null||!adapter.isEnabled())throw new Exception("Androidの設定でBluetoothをオンにしてください。");
+            java.util.List<android.bluetooth.BluetoothDevice> devices=new java.util.ArrayList<>(adapter.getBondedDevices());
+            if(devices.isEmpty())throw new Exception("AndroidのBluetooth設定でSPP対応の計量アダプタをペアリングしてください。USBモジュール単体では無線接続できません。");
+            String[] names=new String[devices.size()];for(int i=0;i<names.length;i++)names[i]=devices.get(i).getName()+" · "+devices.get(i).getAddress();
+            new AlertDialog.Builder(this).setTitle("計量アダプタを選ぶ（SPP）").setItems(names,(d,i)->new AlertDialog.Builder(this).setTitle("計量器用アダプタの確認").setMessage("A&Dのコマンドに対応し、RS-232側が2400bps・7E1のアダプタを選んでください。BLE専用機器には対応しません。接続失敗時の自動切替はしません。")
+                .setNegativeButton("戻る",null).setPositiveButton("この計量器を使う",(dialog,which)->{usbScale.disconnect();bluetoothScale.disconnect();usbMode=false;settings.edit().putBoolean("usbScale",false).putString("scaleTransport","bluetooth").putString("scaleBluetooth",devices.get(i).getAddress()).apply();}).show()).setNegativeButton("閉じる",null).show();
+        }catch(Exception e){new AlertDialog.Builder(this).setTitle("Bluetooth計量器").setMessage(e.getMessage()).setPositiveButton("閉じる",null).show();}
     }
     private void selectUsbDevice(){
         UsbManager manager=(UsbManager)getSystemService(USB_SERVICE);
@@ -486,6 +518,7 @@ public final class MainActivity extends ComponentActivity {
     private void denyPendingMedia(){if(pendingMedia!=null){pendingMedia.deny();pendingMedia=null;}}
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){
         super.onRequestPermissionsResult(code,permissions,results);
+        if(code==SCALE_BLUETOOTH){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)chooseBluetoothScale();return;}
         if(code!=MEDIA_PERMISSION||pendingMedia==null)return;
         boolean all=results.length>0;for(int value:results)all&=value==PackageManager.PERMISSION_GRANTED;
         if(all&&EndpointPolicy.sameOrigin(webUrl,pendingMedia.getOrigin().toString()))pendingMedia.grant(pendingMedia.getResources());else pendingMedia.deny();pendingMedia=null;
@@ -511,9 +544,9 @@ public final class MainActivity extends ComponentActivity {
         }).show();
     }
     @Override protected void onResume(){super.onResume();visible=true;if(web!=null&&!agentMode){web.onResume();web.evaluateJavascript("window.dispatchEvent(new Event('station-resume'))",null);}if(agent!=null&&agentMode){panes.showVerifying(true);requestAssistant(true);}connectUsb();}
-    @Override protected void onPause(){visible=false;workspaceEpoch++;cancelAuthCheck();authClock.removeCallbacks(authRefresh);if(agent!=null)agent.suspend();usbScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();if(scanDialog!=null)scanDialog.dismiss();}
+    @Override protected void onPause(){visible=false;workspaceEpoch++;cancelAuthCheck();authClock.removeCallbacks(authRefresh);if(agent!=null)agent.suspend();usbScale.disconnect();bluetoothScale.disconnect();scannerBuffer.clear();if(web!=null&&pendingMedia==null){web.evaluateJavascript("window.dispatchEvent(new Event('station-pause'))",null);web.onPause();}super.onPause();if(scanDialog!=null)scanDialog.dismiss();}
     @Override protected void onStop(){denyPendingMedia();super.onStop();}
-    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();authChecks.shutdownNow();checks.shutdownNow();super.onDestroy();catalogExecutor.shutdownNow();}
+    @Override protected void onDestroy(){((InputManager)getSystemService(INPUT_SERVICE)).unregisterInputDeviceListener(inputListener);unregisterReceiver(usbReceiver);disposeWeb();usbScale.destroy();bluetoothScale.destroy();authChecks.shutdownNow();checks.shutdownNow();super.onDestroy();catalogExecutor.shutdownNow();}
     private static JSONObject jsonError(String message){try{return new JSONObject().put("error",message);}catch(Exception e){return new JSONObject();}}
     private void openCameraScanner(java.util.function.Consumer<JSONObject> reply){
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){reply.accept(jsonError("カメラを許可してから、もう一度カメラスキャンを押してください。"));requestPermissions(new String[]{Manifest.permission.CAMERA},AGENT_CAMERA);return;}

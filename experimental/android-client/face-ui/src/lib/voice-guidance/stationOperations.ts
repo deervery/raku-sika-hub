@@ -14,6 +14,10 @@ export const STATION_OPERATIONS = [
   'weigh',
   'scan',
   'devices',
+  'inventory',
+  'reports',
+  'settings',
+  'outbound',
 ] as const;
 export type StationOperation = (typeof STATION_OPERATIONS)[number];
 export const LABEL_TEMPLATES: Record<TemplateKey, string> = {
@@ -59,7 +63,7 @@ export type StationDevices = {
   draftStorageKey?: string;
   printer: string;
   labelUnavailable?: string;
-  printLabel: (draft: LabelDraft) => Promise<DeviceResult>;
+  printLabel: (draft: LabelDraft, facility?:Record<string,string>) => Promise<DeviceResult>;
   testPrint: () => Promise<DeviceResult>;
   weigh: () => Promise<DeviceResult>;
   scan: () => Promise<DeviceResult>;

@@ -22,3 +22,10 @@ export function scanQuery(value:string):{query:string}|{id:string;trace:boolean}
   const match=url.pathname.match(/^\/(t|trace)\/([A-Za-z0-9_-]{1,128})(?:\/[^/]+)?\/?$/);if(!match)throw new Error('このコードには対応していません。個体番号で検索してください。');return {id:match[2],trace:match[1]==='t'};
 }
 export function swipeDirection(dx:number,dy:number){return Math.abs(dx)>=48&&Math.abs(dx)>Math.abs(dy)*1.5?(dx<0?1:-1):0;}
+
+export function productFamilyMatches(row:CatalogItem,family?:string){
+ if(!family)return true;if(family==='meat')return row.isTraceable===true;
+ if(row.isTraceable===true)return false;
+ const type=String(row.productType||'').trim().toLowerCase();
+ return family==='pet'?['pet','ペットフード','ペット向け製品'].includes(type):['','processed','加工品'].includes(type);
+}

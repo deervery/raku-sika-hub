@@ -17,6 +17,17 @@ final class CatalogApi {
     static JSONObject read(String origin,String token,String facility,JSONObject args)throws Exception {
         String kind=args.optString("kind"),query=args.optString("query"),cursor=args.optString("cursor");
         if(query.length()>100||cursor.length()>2048)throw new Exception("検索条件を短くしてください。");
+        if(kind.equals("configuration")){
+            JSONObject row=get(origin,token,facility,"/api/facilities/current").getJSONObject("data").getJSONObject("facility");
+            if(!facility.equals(row.optString("id")))throw new Exception("施設が切り替わりました。ログイン状態を確認してください。");
+            JSONObject out=new JSONObject();for(String key:new String[]{"id","name","address","phoneNumber","employees","coldStorages","captureLocations","formSettings","ezoshikaCertified","plaMark"})if(row.has(key))out.put(key,row.get(key));
+            return new JSONObject().put("item",out);
+        }
+        if(kind.equals("lot")){
+            JSONObject row=get(origin,token,facility,"/api/meat-lots/"+id(args.optString("id"))).getJSONObject("data").getJSONObject("lot");
+            if(!facility.equals(row.optString("facilityId")))throw new Exception("この施設の在庫を選んでください。");
+            JSONObject out=project(row);for(String key:new String[]{"productName","currentWeightKg","status","individualId"})if(row.has(key))out.put(key,row.get(key));return new JSONObject().put("item",out);
+        }
         if(kind.equals("facility")){
             JSONObject row=get(origin,token,facility,"/api/facilities/current").getJSONObject("data").getJSONObject("facility");
             if(!facility.isEmpty()&&!facility.equals(row.optString("id")))throw new Exception("施設が切り替わりました。業務画面で選び直してください。");
@@ -39,6 +50,7 @@ final class CatalogApi {
         }
         String path;
         if(kind.equals("individuals"))path="/api/individuals?limit=24&fields=summary&archived=exclude&individualNumber="+encode(query);
+        else if(kind.equals("hunters"))path="/api/hunters/query?limit=1000&archived=false&name="+encode(query);
         else if(kind.equals("products"))path="/api/products/query?limit=24&archived=false&name="+encode(query);
         else throw new Exception("対応していない検索です。");
         if(!facility.isEmpty())path+="&facilityId="+encode(facility);
@@ -46,12 +58,12 @@ final class CatalogApi {
         JSONObject body=get(origin,token,facility,path),data=body.optJSONObject("data");
         JSONArray rows=data==null?body.optJSONArray("items"):data.optJSONArray("items"),out=new JSONArray();
         if(rows==null)throw new Exception("候補を読み取れませんでした。");
-        for(int i=0;i<Math.min(rows.length(),24);i++)out.put(project(rows.getJSONObject(i)));
+        for(int i=0;i<Math.min(rows.length(),kind.equals("hunters")?1000:24);i++)out.put(project(rows.getJSONObject(i)));
         JSONObject meta=body.optJSONObject("meta");
         return new JSONObject().put("items",out).put("cursor",meta!=null&&meta.optBoolean("hasNext")?meta.optString("nextCursor"):"");
     }
     private static final class ApiFailure extends Exception{final int status;ApiFailure(int status,String message){super(message);this.status=status;}}
-    private static JSONObject get(String origin,String token,String facility,String path)throws Exception {
+    static JSONObject get(String origin,String token,String facility,String path)throws Exception {
         HttpURLConnection c=(HttpURLConnection)new URL(origin+path).openConnection();
         try{
             c.setRequestMethod("GET");c.setInstanceFollowRedirects(false);c.setConnectTimeout(4000);c.setReadTimeout(8000);c.setRequestProperty("Authorization","Bearer "+token);

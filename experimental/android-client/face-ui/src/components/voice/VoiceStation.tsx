@@ -67,13 +67,14 @@ export function VoiceStation({
   const [mode, setMode] = useState<ReviewMode>('all');
   const [focus, setFocus] = useState<string[] | undefined>();
   const [board, setBoard] = useState(false);
-  const [operationVisible, setOperationVisible] = useState(false);
-  const operationShown=useRef(false);
+  const [operationVisible, setOperationVisible] = useState(true);
+  const operationShown=useRef(true);
   const operationPanel = useRef<StationOperationsHandle>(null);
   const [page, setPage] = useState(0);
   const swipe=useRef<{x:number;y:number}|null>(null);
   const [editor, setEditor] = useState<{ key: string; query?: string } | null>(null);
-  const suppressFaceClick = useRef(0);
+  const [chatStarted,setChatStarted]=useState(false);
+  const [home,setHome]=useState(true);
   const [voice, setVoice] = useState('off');
   const [history, setHistory] = useState(false);
   const historyRef = useRef(false);
@@ -134,7 +135,7 @@ export function VoiceStation({
     generation.current++;
     session.current?.stop();
     session.current = null;
-    setVoice('off');
+    setVoice('off');setChatStarted(false);
   }
   useEffect(() => {
     const activeGeneration = generation;
@@ -222,6 +223,7 @@ export function VoiceStation({
     };
   }
   function propose(raw: unknown) {
+    if(operationShown.current&&operationPanel.current?.context().operation.startsWith('business:'))return operationPanel.current.form(raw);
     const state = current.current;
     if (state.disabled) throw new Error('今は入力できません。');
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
@@ -281,6 +283,7 @@ export function VoiceStation({
         },
         message: (id, role, text, order = 0) => {
           if (ticket !== generation.current) return;
+          if(role==='user'&&text.trim())setChatStarted(true);
           const position = orderBase + order;
           counter.current = Math.max(counter.current, position);
           const key = `${ticket}-${id}`;
@@ -318,6 +321,7 @@ export function VoiceStation({
         },
         review: (raw) => {
           if (ticket !== generation.current) throw new Error('会話は終了しました');
+          if(operationShown.current&&operationPanel.current?.context().operation.startsWith('business:'))return operationPanel.current.form({__review:true});
           const args = (raw ?? {}) as { mode?: unknown; fields?: unknown };
           if (args.mode && !['filled', 'missing', 'all'].includes(String(args.mode)))
             throw new Error('表示方法を確認してください');
@@ -346,9 +350,9 @@ export function VoiceStation({
   }
   useEffect(()=>{
     const host=window as Window & {stationBack?:()=>boolean};
-    host.stationBack=()=>{if(editor){setEditor(null);return true;}if(operationVisible){if(operationPanel.current?.back())return true;setOperationVisible(false);operationShown.current=false;setBoard(false);return true;}if(board){setBoard(false);return true;}return false;};
+    host.stationBack=()=>{if(editor){setEditor(null);return true;}if(operationVisible){if(operationPanel.current?.back())return true;if(chatStarted){stop();setChatStarted(false);return true;}return false;}if(board){setBoard(false);chooseWork();setChatStarted(false);return true;}chooseWork();return true;};
     return()=>{delete host.stationBack;};
-  },[editor,operationVisible,board]);
+  },[editor,operationVisible,board,chatStarted]);
   function chooseWork() {
     session.current?.inform({});
     try {operationPanel.current?.show({operation:'menu'});}
@@ -386,16 +390,20 @@ export function VoiceStation({
   return (
     <section
       className={css.workspace}
-      data-board={board || operationVisible}
+      data-board={board || (operationVisible&&!home)}
+      data-home={home&&!board}
+      data-chatting={chatStarted}
       data-voice={voice}
       aria-label="会話で搬入入力"
     >
       <StationOperationsPanel
         ref={operationPanel}
         active={operationVisible}
+        onHome={setHome}
         devices={devices}
         onShow={() => {
           operationShown.current=true;
+          setBoard(false);
           setOperationVisible(true);
           setEditor(null);
         }}
@@ -483,11 +491,11 @@ export function VoiceStation({
                 </button>
               </nav>
             )}
-            <button type="button" onClick={() => setBoard(false)}>
+            <button type="button" onClick={() => {setBoard(false);chooseWork();setChatStarted(false);}}>
               ホームに戻る
             </button>
             <button type="button" onClick={finish} disabled={disabled}>
-              下書きを保存
+              搬入登録を確認
             </button>
           </div>
         </div>
@@ -520,16 +528,17 @@ export function VoiceStation({
           ))}
       </div>
       <div className={css.controls}>
+      {chatStarted&&home&&<button type="button" onClick={()=>{stop();chooseWork();}}>メニュー</button>}
       <button
         className={css.faceButton}
         type="button"
         aria-pressed={voice!=='off'}
         disabled={disabled}
-        aria-label="顔を押すと会話、長押しで作業を選ぶ"
-        onClick={() => {if(Date.now() > suppressFaceClick.current) voiceAction();}}
-        onContextMenu={(event) => {event.preventDefault(); suppressFaceClick.current=Date.now()+900; chooseWork();}}
+        aria-label="マイクをオン・オフ"
+        onClick={voiceAction}
+
       >
-        {!board && !operationVisible && <span className={css.faceHint}>私の顔を押したり、長押ししてね</span>}
+
         <svg viewBox="0 0 320 180" role="img" aria-label="案内する表情">
           <g className={css.eyes}>
             <ellipse cx="108" cy="69" rx="11" ry="16" />

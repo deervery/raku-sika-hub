@@ -55,3 +55,9 @@ export class DurableBusiness {
     this.storage.removeItem(this.key);
   }
 }
+
+/** A parent report must remain reachable until its child receipt is settled. */
+export function assertReceiptSettled(storage:Pick<Storage,'getItem'>,key:string){
+ const raw=storage.getItem(key);if(!raw)return;
+ const receipt=JSON.parse(raw);if(!receipt?.result?.id)throw Error('従業員の健康確認に結果未確認の受付があります。先に受付結果を確認してください。');
+}

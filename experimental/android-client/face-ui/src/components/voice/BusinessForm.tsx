@@ -26,7 +26,7 @@ import {
 } from "../../lib/voice-guidance/stationUi";
 import { draftValues } from "../../draftDefaults";
 import { native } from "../../bridge";
-import { DurableBusiness } from "../../durableBusiness";
+import { DurableBusiness, assertReceiptSettled } from "../../durableBusiness";
 import { CatalogPicker } from "./CatalogPicker";
 import { StationFieldEditor } from "./StationFieldEditor";
 import { swipeDirection, scanQuery } from "../../catalog";
@@ -434,6 +434,7 @@ export const BusinessForm = forwardRef<
               <button
                 type="button"
                 onClick={() => {
+                  try{if(kind==='daily')assertReceiptSettled(localStorage,`business-draft:v035:${scope}:employee-checks:${String(existing.result.id)}:receipt`);}catch(e){setError(e instanceof Error?e.message:'従業員の受付結果を確認してください。');return;}
                   receipt.next();
                   localStorage.removeItem(key);
                   setOverrides({});

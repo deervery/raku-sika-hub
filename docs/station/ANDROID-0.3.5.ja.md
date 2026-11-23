@@ -37,4 +37,6 @@ USBは既存FTDI対応モジュール（VID 0403/PID 6015）、2400bps・7E1。B
 
 APK配布：https://glwin.zapus-opah.ts.net:8445/index.html （tailnet内限定）。リリースタグは作らない。
 
-配布APK: 88927134 bytes / SHA-256 `48e0a7ea00eae4023f1f2711b096e502285018821c2936ed2f0a2ec46c19be67`
+配布APK: 88927134 bytes / SHA-256 `04a8d85c4ff3cf2a88d479a542a3a8d75a4916c78d0858b6fd8473bbc206dfe3`
+
+従業員チェックが結果未確認の場合、親の日報の受付を消さず結果確認へ戻れることも単体テストで確認した。

@@ -132,3 +132,9 @@ const {productFamilyMatches}=await bundled('src/catalog.ts');
 assert.equal(productFamilyMatches({id:'p',isTraceable:true},'meat'),true);
 assert.equal(productFamilyMatches({id:'p',isTraceable:false,productType:'ペットフード'},'processed'),false);
 assert.equal(productFamilyMatches({id:'p',isTraceable:false,productType:'ペットフード'},'pet'),true);
+
+const {assertReceiptSettled}=await bundled('src/durableBusiness.ts');
+store.setItem('child',JSON.stringify({requestId:'receipt-1234567890',data:{},kind:'employee-checks'}));
+assert.throws(()=>assertReceiptSettled(store,'child'));
+store.setItem('child',JSON.stringify({result:{id:'employee-record'}}));assertReceiptSettled(store,'child');
+console.log('Unresolved child receipts keep the parent report accessible');
